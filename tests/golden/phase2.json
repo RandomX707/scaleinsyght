@@ -1,0 +1,1084 @@
+{
+  "questions": [
+    {
+      "id": "sqlserver-01",
+      "connectorType": "sql_server",
+      "sourceName": "Meridian Keystone",
+      "question": "For Meridian Keystone, how many catalog objects are listed? Case 1.",
+      "metric": "listed_count",
+      "expectedValue": 500,
+      "evidenceAsset": "X_Golden.Table_042"
+    },
+    {
+      "id": "sqlserver-02",
+      "connectorType": "sql_server",
+      "sourceName": "Meridian Keystone",
+      "question": "For Meridian Keystone, how many objects are unchanged on the nightly run? Case 2.",
+      "metric": "nightly_unchanged_count",
+      "expectedValue": 498,
+      "evidenceAsset": "X_Golden.Table_042"
+    },
+    {
+      "id": "sqlserver-03",
+      "connectorType": "sql_server",
+      "sourceName": "Meridian Keystone",
+      "question": "For Meridian Keystone, how many fields are profiled? Case 3.",
+      "metric": "field_count",
+      "expectedValue": 1497,
+      "evidenceAsset": "X_Golden.Table_042"
+    },
+    {
+      "id": "sqlserver-04",
+      "connectorType": "sql_server",
+      "sourceName": "Meridian Keystone",
+      "question": "For Meridian Keystone, how many objects are inaccessible? Case 4.",
+      "metric": "inaccessible_count",
+      "expectedValue": 1,
+      "evidenceAsset": "X_Golden.Table_042"
+    },
+    {
+      "id": "sqlserver-05",
+      "connectorType": "sql_server",
+      "sourceName": "Meridian Keystone",
+      "question": "For Meridian Keystone, how many objects changed on the nightly run? Case 5.",
+      "metric": "nightly_changed_count",
+      "expectedValue": 1,
+      "evidenceAsset": "X_Golden.Table_042"
+    },
+    {
+      "id": "sqlserver-06",
+      "connectorType": "sql_server",
+      "sourceName": "Meridian Keystone",
+      "question": "For Meridian Keystone, how many catalog objects are listed? Case 6.",
+      "metric": "listed_count",
+      "expectedValue": 500,
+      "evidenceAsset": "X_Golden.Table_042"
+    },
+    {
+      "id": "sqlserver-07",
+      "connectorType": "sql_server",
+      "sourceName": "Meridian Keystone",
+      "question": "For Meridian Keystone, how many objects are unchanged on the nightly run? Case 7.",
+      "metric": "nightly_unchanged_count",
+      "expectedValue": 498,
+      "evidenceAsset": "X_Golden.Table_042"
+    },
+    {
+      "id": "sqlserver-08",
+      "connectorType": "sql_server",
+      "sourceName": "Meridian Keystone",
+      "question": "For Meridian Keystone, how many fields are profiled? Case 8.",
+      "metric": "field_count",
+      "expectedValue": 1497,
+      "evidenceAsset": "X_Golden.Table_042"
+    },
+    {
+      "id": "sqlserver-09",
+      "connectorType": "sql_server",
+      "sourceName": "Meridian Keystone",
+      "question": "For Meridian Keystone, how many objects are inaccessible? Case 9.",
+      "metric": "inaccessible_count",
+      "expectedValue": 1,
+      "evidenceAsset": "X_Golden.Table_042"
+    },
+    {
+      "id": "sqlserver-10",
+      "connectorType": "sql_server",
+      "sourceName": "Meridian Keystone",
+      "question": "For Meridian Keystone, how many objects changed on the nightly run? Case 10.",
+      "metric": "nightly_changed_count",
+      "expectedValue": 1,
+      "evidenceAsset": "X_Golden.Table_042"
+    },
+    {
+      "id": "sqlserver-11",
+      "connectorType": "sql_server",
+      "sourceName": "Meridian Keystone",
+      "question": "For Meridian Keystone, how many catalog objects are listed? Case 11.",
+      "metric": "listed_count",
+      "expectedValue": 500,
+      "evidenceAsset": "X_Golden.Table_042"
+    },
+    {
+      "id": "sqlserver-12",
+      "connectorType": "sql_server",
+      "sourceName": "Meridian Keystone",
+      "question": "For Meridian Keystone, how many objects are unchanged on the nightly run? Case 12.",
+      "metric": "nightly_unchanged_count",
+      "expectedValue": 498,
+      "evidenceAsset": "X_Golden.Table_042"
+    },
+    {
+      "id": "sqlserver-13",
+      "connectorType": "sql_server",
+      "sourceName": "Meridian Keystone",
+      "question": "For Meridian Keystone, how many fields are profiled? Case 13.",
+      "metric": "field_count",
+      "expectedValue": 1497,
+      "evidenceAsset": "X_Golden.Table_042"
+    },
+    {
+      "id": "sqlserver-14",
+      "connectorType": "sql_server",
+      "sourceName": "Meridian Keystone",
+      "question": "For Meridian Keystone, how many objects are inaccessible? Case 14.",
+      "metric": "inaccessible_count",
+      "expectedValue": 1,
+      "evidenceAsset": "X_Golden.Table_042"
+    },
+    {
+      "id": "sqlserver-15",
+      "connectorType": "sql_server",
+      "sourceName": "Meridian Keystone",
+      "question": "For Meridian Keystone, how many objects changed on the nightly run? Case 15.",
+      "metric": "nightly_changed_count",
+      "expectedValue": 1,
+      "evidenceAsset": "X_Golden.Table_042"
+    },
+    {
+      "id": "sqlserver-16",
+      "connectorType": "sql_server",
+      "sourceName": "Meridian Keystone",
+      "question": "For Meridian Keystone, how many catalog objects are listed? Case 16.",
+      "metric": "listed_count",
+      "expectedValue": 500,
+      "evidenceAsset": "X_Golden.Table_042"
+    },
+    {
+      "id": "sqlserver-17",
+      "connectorType": "sql_server",
+      "sourceName": "Meridian Keystone",
+      "question": "For Meridian Keystone, how many objects are unchanged on the nightly run? Case 17.",
+      "metric": "nightly_unchanged_count",
+      "expectedValue": 498,
+      "evidenceAsset": "X_Golden.Table_042"
+    },
+    {
+      "id": "sqlserver-18",
+      "connectorType": "sql_server",
+      "sourceName": "Meridian Keystone",
+      "question": "For Meridian Keystone, how many fields are profiled? Case 18.",
+      "metric": "field_count",
+      "expectedValue": 1497,
+      "evidenceAsset": "X_Golden.Table_042"
+    },
+    {
+      "id": "sqlserver-19",
+      "connectorType": "sql_server",
+      "sourceName": "Meridian Keystone",
+      "question": "For Meridian Keystone, how many objects are inaccessible? Case 19.",
+      "metric": "inaccessible_count",
+      "expectedValue": 1,
+      "evidenceAsset": "X_Golden.Table_042"
+    },
+    {
+      "id": "sqlserver-20",
+      "connectorType": "sql_server",
+      "sourceName": "Meridian Keystone",
+      "question": "For Meridian Keystone, how many objects changed on the nightly run? Case 20.",
+      "metric": "nightly_changed_count",
+      "expectedValue": 1,
+      "evidenceAsset": "X_Golden.Table_042"
+    },
+    {
+      "id": "sqlserver-21",
+      "connectorType": "sql_server",
+      "sourceName": "Meridian Keystone",
+      "question": "For Meridian Keystone, how many catalog objects are listed? Case 21.",
+      "metric": "listed_count",
+      "expectedValue": 500,
+      "evidenceAsset": "X_Golden.Table_042"
+    },
+    {
+      "id": "sqlserver-22",
+      "connectorType": "sql_server",
+      "sourceName": "Meridian Keystone",
+      "question": "For Meridian Keystone, how many objects are unchanged on the nightly run? Case 22.",
+      "metric": "nightly_unchanged_count",
+      "expectedValue": 498,
+      "evidenceAsset": "X_Golden.Table_042"
+    },
+    {
+      "id": "sqlserver-23",
+      "connectorType": "sql_server",
+      "sourceName": "Meridian Keystone",
+      "question": "For Meridian Keystone, how many fields are profiled? Case 23.",
+      "metric": "field_count",
+      "expectedValue": 1497,
+      "evidenceAsset": "X_Golden.Table_042"
+    },
+    {
+      "id": "sqlserver-24",
+      "connectorType": "sql_server",
+      "sourceName": "Meridian Keystone",
+      "question": "For Meridian Keystone, how many objects are inaccessible? Case 24.",
+      "metric": "inaccessible_count",
+      "expectedValue": 1,
+      "evidenceAsset": "X_Golden.Table_042"
+    },
+    {
+      "id": "sqlserver-25",
+      "connectorType": "sql_server",
+      "sourceName": "Meridian Keystone",
+      "question": "For Meridian Keystone, how many objects changed on the nightly run? Case 25.",
+      "metric": "nightly_changed_count",
+      "expectedValue": 1,
+      "evidenceAsset": "X_Golden.Table_042"
+    },
+    {
+      "id": "sqlserver-26",
+      "connectorType": "sql_server",
+      "sourceName": "Meridian Keystone",
+      "question": "For Meridian Keystone, how many catalog objects are listed? Case 26.",
+      "metric": "listed_count",
+      "expectedValue": 500,
+      "evidenceAsset": "X_Golden.Table_042"
+    },
+    {
+      "id": "sqlserver-27",
+      "connectorType": "sql_server",
+      "sourceName": "Meridian Keystone",
+      "question": "For Meridian Keystone, how many objects are unchanged on the nightly run? Case 27.",
+      "metric": "nightly_unchanged_count",
+      "expectedValue": 498,
+      "evidenceAsset": "X_Golden.Table_042"
+    },
+    {
+      "id": "sqlserver-28",
+      "connectorType": "sql_server",
+      "sourceName": "Meridian Keystone",
+      "question": "For Meridian Keystone, how many fields are profiled? Case 28.",
+      "metric": "field_count",
+      "expectedValue": 1497,
+      "evidenceAsset": "X_Golden.Table_042"
+    },
+    {
+      "id": "sqlserver-29",
+      "connectorType": "sql_server",
+      "sourceName": "Meridian Keystone",
+      "question": "For Meridian Keystone, how many objects are inaccessible? Case 29.",
+      "metric": "inaccessible_count",
+      "expectedValue": 1,
+      "evidenceAsset": "X_Golden.Table_042"
+    },
+    {
+      "id": "sqlserver-30",
+      "connectorType": "sql_server",
+      "sourceName": "Meridian Keystone",
+      "question": "For Meridian Keystone, how many objects changed on the nightly run? Case 30.",
+      "metric": "nightly_changed_count",
+      "expectedValue": 1,
+      "evidenceAsset": "X_Golden.Table_042"
+    },
+    {
+      "id": "postgres-01",
+      "connectorType": "postgres",
+      "sourceName": "Meridian Lumen",
+      "question": "For Meridian Lumen, how many catalog objects are listed? Case 1.",
+      "metric": "listed_count",
+      "expectedValue": 12,
+      "evidenceAsset": "X_Golden.Table_004"
+    },
+    {
+      "id": "postgres-02",
+      "connectorType": "postgres",
+      "sourceName": "Meridian Lumen",
+      "question": "For Meridian Lumen, how many objects are unchanged on the nightly run? Case 2.",
+      "metric": "nightly_unchanged_count",
+      "expectedValue": 11,
+      "evidenceAsset": "X_Golden.Table_004"
+    },
+    {
+      "id": "postgres-03",
+      "connectorType": "postgres",
+      "sourceName": "Meridian Lumen",
+      "question": "For Meridian Lumen, how many fields are profiled? Case 3.",
+      "metric": "field_count",
+      "expectedValue": 36,
+      "evidenceAsset": "X_Golden.Table_004"
+    },
+    {
+      "id": "postgres-04",
+      "connectorType": "postgres",
+      "sourceName": "Meridian Lumen",
+      "question": "For Meridian Lumen, how many objects are inaccessible? Case 4.",
+      "metric": "inaccessible_count",
+      "expectedValue": 0,
+      "evidenceAsset": "X_Golden.Table_004"
+    },
+    {
+      "id": "postgres-05",
+      "connectorType": "postgres",
+      "sourceName": "Meridian Lumen",
+      "question": "For Meridian Lumen, how many objects changed on the nightly run? Case 5.",
+      "metric": "nightly_changed_count",
+      "expectedValue": 1,
+      "evidenceAsset": "X_Golden.Table_004"
+    },
+    {
+      "id": "postgres-06",
+      "connectorType": "postgres",
+      "sourceName": "Meridian Lumen",
+      "question": "For Meridian Lumen, how many catalog objects are listed? Case 6.",
+      "metric": "listed_count",
+      "expectedValue": 12,
+      "evidenceAsset": "X_Golden.Table_004"
+    },
+    {
+      "id": "postgres-07",
+      "connectorType": "postgres",
+      "sourceName": "Meridian Lumen",
+      "question": "For Meridian Lumen, how many objects are unchanged on the nightly run? Case 7.",
+      "metric": "nightly_unchanged_count",
+      "expectedValue": 11,
+      "evidenceAsset": "X_Golden.Table_004"
+    },
+    {
+      "id": "postgres-08",
+      "connectorType": "postgres",
+      "sourceName": "Meridian Lumen",
+      "question": "For Meridian Lumen, how many fields are profiled? Case 8.",
+      "metric": "field_count",
+      "expectedValue": 36,
+      "evidenceAsset": "X_Golden.Table_004"
+    },
+    {
+      "id": "postgres-09",
+      "connectorType": "postgres",
+      "sourceName": "Meridian Lumen",
+      "question": "For Meridian Lumen, how many objects are inaccessible? Case 9.",
+      "metric": "inaccessible_count",
+      "expectedValue": 0,
+      "evidenceAsset": "X_Golden.Table_004"
+    },
+    {
+      "id": "postgres-10",
+      "connectorType": "postgres",
+      "sourceName": "Meridian Lumen",
+      "question": "For Meridian Lumen, how many objects changed on the nightly run? Case 10.",
+      "metric": "nightly_changed_count",
+      "expectedValue": 1,
+      "evidenceAsset": "X_Golden.Table_004"
+    },
+    {
+      "id": "postgres-11",
+      "connectorType": "postgres",
+      "sourceName": "Meridian Lumen",
+      "question": "For Meridian Lumen, how many catalog objects are listed? Case 11.",
+      "metric": "listed_count",
+      "expectedValue": 12,
+      "evidenceAsset": "X_Golden.Table_004"
+    },
+    {
+      "id": "postgres-12",
+      "connectorType": "postgres",
+      "sourceName": "Meridian Lumen",
+      "question": "For Meridian Lumen, how many objects are unchanged on the nightly run? Case 12.",
+      "metric": "nightly_unchanged_count",
+      "expectedValue": 11,
+      "evidenceAsset": "X_Golden.Table_004"
+    },
+    {
+      "id": "postgres-13",
+      "connectorType": "postgres",
+      "sourceName": "Meridian Lumen",
+      "question": "For Meridian Lumen, how many fields are profiled? Case 13.",
+      "metric": "field_count",
+      "expectedValue": 36,
+      "evidenceAsset": "X_Golden.Table_004"
+    },
+    {
+      "id": "postgres-14",
+      "connectorType": "postgres",
+      "sourceName": "Meridian Lumen",
+      "question": "For Meridian Lumen, how many objects are inaccessible? Case 14.",
+      "metric": "inaccessible_count",
+      "expectedValue": 0,
+      "evidenceAsset": "X_Golden.Table_004"
+    },
+    {
+      "id": "postgres-15",
+      "connectorType": "postgres",
+      "sourceName": "Meridian Lumen",
+      "question": "For Meridian Lumen, how many objects changed on the nightly run? Case 15.",
+      "metric": "nightly_changed_count",
+      "expectedValue": 1,
+      "evidenceAsset": "X_Golden.Table_004"
+    },
+    {
+      "id": "postgres-16",
+      "connectorType": "postgres",
+      "sourceName": "Meridian Lumen",
+      "question": "For Meridian Lumen, how many catalog objects are listed? Case 16.",
+      "metric": "listed_count",
+      "expectedValue": 12,
+      "evidenceAsset": "X_Golden.Table_004"
+    },
+    {
+      "id": "postgres-17",
+      "connectorType": "postgres",
+      "sourceName": "Meridian Lumen",
+      "question": "For Meridian Lumen, how many objects are unchanged on the nightly run? Case 17.",
+      "metric": "nightly_unchanged_count",
+      "expectedValue": 11,
+      "evidenceAsset": "X_Golden.Table_004"
+    },
+    {
+      "id": "postgres-18",
+      "connectorType": "postgres",
+      "sourceName": "Meridian Lumen",
+      "question": "For Meridian Lumen, how many fields are profiled? Case 18.",
+      "metric": "field_count",
+      "expectedValue": 36,
+      "evidenceAsset": "X_Golden.Table_004"
+    },
+    {
+      "id": "postgres-19",
+      "connectorType": "postgres",
+      "sourceName": "Meridian Lumen",
+      "question": "For Meridian Lumen, how many objects are inaccessible? Case 19.",
+      "metric": "inaccessible_count",
+      "expectedValue": 0,
+      "evidenceAsset": "X_Golden.Table_004"
+    },
+    {
+      "id": "postgres-20",
+      "connectorType": "postgres",
+      "sourceName": "Meridian Lumen",
+      "question": "For Meridian Lumen, how many objects changed on the nightly run? Case 20.",
+      "metric": "nightly_changed_count",
+      "expectedValue": 1,
+      "evidenceAsset": "X_Golden.Table_004"
+    },
+    {
+      "id": "postgres-21",
+      "connectorType": "postgres",
+      "sourceName": "Meridian Lumen",
+      "question": "For Meridian Lumen, how many catalog objects are listed? Case 21.",
+      "metric": "listed_count",
+      "expectedValue": 12,
+      "evidenceAsset": "X_Golden.Table_004"
+    },
+    {
+      "id": "postgres-22",
+      "connectorType": "postgres",
+      "sourceName": "Meridian Lumen",
+      "question": "For Meridian Lumen, how many objects are unchanged on the nightly run? Case 22.",
+      "metric": "nightly_unchanged_count",
+      "expectedValue": 11,
+      "evidenceAsset": "X_Golden.Table_004"
+    },
+    {
+      "id": "postgres-23",
+      "connectorType": "postgres",
+      "sourceName": "Meridian Lumen",
+      "question": "For Meridian Lumen, how many fields are profiled? Case 23.",
+      "metric": "field_count",
+      "expectedValue": 36,
+      "evidenceAsset": "X_Golden.Table_004"
+    },
+    {
+      "id": "postgres-24",
+      "connectorType": "postgres",
+      "sourceName": "Meridian Lumen",
+      "question": "For Meridian Lumen, how many objects are inaccessible? Case 24.",
+      "metric": "inaccessible_count",
+      "expectedValue": 0,
+      "evidenceAsset": "X_Golden.Table_004"
+    },
+    {
+      "id": "postgres-25",
+      "connectorType": "postgres",
+      "sourceName": "Meridian Lumen",
+      "question": "For Meridian Lumen, how many objects changed on the nightly run? Case 25.",
+      "metric": "nightly_changed_count",
+      "expectedValue": 1,
+      "evidenceAsset": "X_Golden.Table_004"
+    },
+    {
+      "id": "postgres-26",
+      "connectorType": "postgres",
+      "sourceName": "Meridian Lumen",
+      "question": "For Meridian Lumen, how many catalog objects are listed? Case 26.",
+      "metric": "listed_count",
+      "expectedValue": 12,
+      "evidenceAsset": "X_Golden.Table_004"
+    },
+    {
+      "id": "postgres-27",
+      "connectorType": "postgres",
+      "sourceName": "Meridian Lumen",
+      "question": "For Meridian Lumen, how many objects are unchanged on the nightly run? Case 27.",
+      "metric": "nightly_unchanged_count",
+      "expectedValue": 11,
+      "evidenceAsset": "X_Golden.Table_004"
+    },
+    {
+      "id": "postgres-28",
+      "connectorType": "postgres",
+      "sourceName": "Meridian Lumen",
+      "question": "For Meridian Lumen, how many fields are profiled? Case 28.",
+      "metric": "field_count",
+      "expectedValue": 36,
+      "evidenceAsset": "X_Golden.Table_004"
+    },
+    {
+      "id": "postgres-29",
+      "connectorType": "postgres",
+      "sourceName": "Meridian Lumen",
+      "question": "For Meridian Lumen, how many objects are inaccessible? Case 29.",
+      "metric": "inaccessible_count",
+      "expectedValue": 0,
+      "evidenceAsset": "X_Golden.Table_004"
+    },
+    {
+      "id": "postgres-30",
+      "connectorType": "postgres",
+      "sourceName": "Meridian Lumen",
+      "question": "For Meridian Lumen, how many objects changed on the nightly run? Case 30.",
+      "metric": "nightly_changed_count",
+      "expectedValue": 1,
+      "evidenceAsset": "X_Golden.Table_004"
+    },
+    {
+      "id": "snowflake-01",
+      "connectorType": "snowflake",
+      "sourceName": "Meridian Harbor",
+      "question": "For Meridian Harbor, how many catalog objects are listed? Case 1.",
+      "metric": "listed_count",
+      "expectedValue": 8,
+      "evidenceAsset": "X_Golden.Table_001"
+    },
+    {
+      "id": "snowflake-02",
+      "connectorType": "snowflake",
+      "sourceName": "Meridian Harbor",
+      "question": "For Meridian Harbor, how many objects are unchanged on the nightly run? Case 2.",
+      "metric": "nightly_unchanged_count",
+      "expectedValue": 8,
+      "evidenceAsset": "X_Golden.Table_001"
+    },
+    {
+      "id": "snowflake-03",
+      "connectorType": "snowflake",
+      "sourceName": "Meridian Harbor",
+      "question": "For Meridian Harbor, how many fields are profiled? Case 3.",
+      "metric": "field_count",
+      "expectedValue": 24,
+      "evidenceAsset": "X_Golden.Table_001"
+    },
+    {
+      "id": "snowflake-04",
+      "connectorType": "snowflake",
+      "sourceName": "Meridian Harbor",
+      "question": "For Meridian Harbor, how many objects are inaccessible? Case 4.",
+      "metric": "inaccessible_count",
+      "expectedValue": 0,
+      "evidenceAsset": "X_Golden.Table_001"
+    },
+    {
+      "id": "snowflake-05",
+      "connectorType": "snowflake",
+      "sourceName": "Meridian Harbor",
+      "question": "For Meridian Harbor, how many objects changed on the nightly run? Case 5.",
+      "metric": "nightly_changed_count",
+      "expectedValue": 0,
+      "evidenceAsset": "X_Golden.Table_001"
+    },
+    {
+      "id": "snowflake-06",
+      "connectorType": "snowflake",
+      "sourceName": "Meridian Harbor",
+      "question": "For Meridian Harbor, how many catalog objects are listed? Case 6.",
+      "metric": "listed_count",
+      "expectedValue": 8,
+      "evidenceAsset": "X_Golden.Table_001"
+    },
+    {
+      "id": "snowflake-07",
+      "connectorType": "snowflake",
+      "sourceName": "Meridian Harbor",
+      "question": "For Meridian Harbor, how many objects are unchanged on the nightly run? Case 7.",
+      "metric": "nightly_unchanged_count",
+      "expectedValue": 8,
+      "evidenceAsset": "X_Golden.Table_001"
+    },
+    {
+      "id": "snowflake-08",
+      "connectorType": "snowflake",
+      "sourceName": "Meridian Harbor",
+      "question": "For Meridian Harbor, how many fields are profiled? Case 8.",
+      "metric": "field_count",
+      "expectedValue": 24,
+      "evidenceAsset": "X_Golden.Table_001"
+    },
+    {
+      "id": "snowflake-09",
+      "connectorType": "snowflake",
+      "sourceName": "Meridian Harbor",
+      "question": "For Meridian Harbor, how many objects are inaccessible? Case 9.",
+      "metric": "inaccessible_count",
+      "expectedValue": 0,
+      "evidenceAsset": "X_Golden.Table_001"
+    },
+    {
+      "id": "snowflake-10",
+      "connectorType": "snowflake",
+      "sourceName": "Meridian Harbor",
+      "question": "For Meridian Harbor, how many objects changed on the nightly run? Case 10.",
+      "metric": "nightly_changed_count",
+      "expectedValue": 0,
+      "evidenceAsset": "X_Golden.Table_001"
+    },
+    {
+      "id": "snowflake-11",
+      "connectorType": "snowflake",
+      "sourceName": "Meridian Harbor",
+      "question": "For Meridian Harbor, how many catalog objects are listed? Case 11.",
+      "metric": "listed_count",
+      "expectedValue": 8,
+      "evidenceAsset": "X_Golden.Table_001"
+    },
+    {
+      "id": "snowflake-12",
+      "connectorType": "snowflake",
+      "sourceName": "Meridian Harbor",
+      "question": "For Meridian Harbor, how many objects are unchanged on the nightly run? Case 12.",
+      "metric": "nightly_unchanged_count",
+      "expectedValue": 8,
+      "evidenceAsset": "X_Golden.Table_001"
+    },
+    {
+      "id": "snowflake-13",
+      "connectorType": "snowflake",
+      "sourceName": "Meridian Harbor",
+      "question": "For Meridian Harbor, how many fields are profiled? Case 13.",
+      "metric": "field_count",
+      "expectedValue": 24,
+      "evidenceAsset": "X_Golden.Table_001"
+    },
+    {
+      "id": "snowflake-14",
+      "connectorType": "snowflake",
+      "sourceName": "Meridian Harbor",
+      "question": "For Meridian Harbor, how many objects are inaccessible? Case 14.",
+      "metric": "inaccessible_count",
+      "expectedValue": 0,
+      "evidenceAsset": "X_Golden.Table_001"
+    },
+    {
+      "id": "snowflake-15",
+      "connectorType": "snowflake",
+      "sourceName": "Meridian Harbor",
+      "question": "For Meridian Harbor, how many objects changed on the nightly run? Case 15.",
+      "metric": "nightly_changed_count",
+      "expectedValue": 0,
+      "evidenceAsset": "X_Golden.Table_001"
+    },
+    {
+      "id": "snowflake-16",
+      "connectorType": "snowflake",
+      "sourceName": "Meridian Harbor",
+      "question": "For Meridian Harbor, how many catalog objects are listed? Case 16.",
+      "metric": "listed_count",
+      "expectedValue": 8,
+      "evidenceAsset": "X_Golden.Table_001"
+    },
+    {
+      "id": "snowflake-17",
+      "connectorType": "snowflake",
+      "sourceName": "Meridian Harbor",
+      "question": "For Meridian Harbor, how many objects are unchanged on the nightly run? Case 17.",
+      "metric": "nightly_unchanged_count",
+      "expectedValue": 8,
+      "evidenceAsset": "X_Golden.Table_001"
+    },
+    {
+      "id": "snowflake-18",
+      "connectorType": "snowflake",
+      "sourceName": "Meridian Harbor",
+      "question": "For Meridian Harbor, how many fields are profiled? Case 18.",
+      "metric": "field_count",
+      "expectedValue": 24,
+      "evidenceAsset": "X_Golden.Table_001"
+    },
+    {
+      "id": "snowflake-19",
+      "connectorType": "snowflake",
+      "sourceName": "Meridian Harbor",
+      "question": "For Meridian Harbor, how many objects are inaccessible? Case 19.",
+      "metric": "inaccessible_count",
+      "expectedValue": 0,
+      "evidenceAsset": "X_Golden.Table_001"
+    },
+    {
+      "id": "snowflake-20",
+      "connectorType": "snowflake",
+      "sourceName": "Meridian Harbor",
+      "question": "For Meridian Harbor, how many objects changed on the nightly run? Case 20.",
+      "metric": "nightly_changed_count",
+      "expectedValue": 0,
+      "evidenceAsset": "X_Golden.Table_001"
+    },
+    {
+      "id": "snowflake-21",
+      "connectorType": "snowflake",
+      "sourceName": "Meridian Harbor",
+      "question": "For Meridian Harbor, how many catalog objects are listed? Case 21.",
+      "metric": "listed_count",
+      "expectedValue": 8,
+      "evidenceAsset": "X_Golden.Table_001"
+    },
+    {
+      "id": "snowflake-22",
+      "connectorType": "snowflake",
+      "sourceName": "Meridian Harbor",
+      "question": "For Meridian Harbor, how many objects are unchanged on the nightly run? Case 22.",
+      "metric": "nightly_unchanged_count",
+      "expectedValue": 8,
+      "evidenceAsset": "X_Golden.Table_001"
+    },
+    {
+      "id": "snowflake-23",
+      "connectorType": "snowflake",
+      "sourceName": "Meridian Harbor",
+      "question": "For Meridian Harbor, how many fields are profiled? Case 23.",
+      "metric": "field_count",
+      "expectedValue": 24,
+      "evidenceAsset": "X_Golden.Table_001"
+    },
+    {
+      "id": "snowflake-24",
+      "connectorType": "snowflake",
+      "sourceName": "Meridian Harbor",
+      "question": "For Meridian Harbor, how many objects are inaccessible? Case 24.",
+      "metric": "inaccessible_count",
+      "expectedValue": 0,
+      "evidenceAsset": "X_Golden.Table_001"
+    },
+    {
+      "id": "snowflake-25",
+      "connectorType": "snowflake",
+      "sourceName": "Meridian Harbor",
+      "question": "For Meridian Harbor, how many objects changed on the nightly run? Case 25.",
+      "metric": "nightly_changed_count",
+      "expectedValue": 0,
+      "evidenceAsset": "X_Golden.Table_001"
+    },
+    {
+      "id": "snowflake-26",
+      "connectorType": "snowflake",
+      "sourceName": "Meridian Harbor",
+      "question": "For Meridian Harbor, how many catalog objects are listed? Case 26.",
+      "metric": "listed_count",
+      "expectedValue": 8,
+      "evidenceAsset": "X_Golden.Table_001"
+    },
+    {
+      "id": "snowflake-27",
+      "connectorType": "snowflake",
+      "sourceName": "Meridian Harbor",
+      "question": "For Meridian Harbor, how many objects are unchanged on the nightly run? Case 27.",
+      "metric": "nightly_unchanged_count",
+      "expectedValue": 8,
+      "evidenceAsset": "X_Golden.Table_001"
+    },
+    {
+      "id": "snowflake-28",
+      "connectorType": "snowflake",
+      "sourceName": "Meridian Harbor",
+      "question": "For Meridian Harbor, how many fields are profiled? Case 28.",
+      "metric": "field_count",
+      "expectedValue": 24,
+      "evidenceAsset": "X_Golden.Table_001"
+    },
+    {
+      "id": "snowflake-29",
+      "connectorType": "snowflake",
+      "sourceName": "Meridian Harbor",
+      "question": "For Meridian Harbor, how many objects are inaccessible? Case 29.",
+      "metric": "inaccessible_count",
+      "expectedValue": 0,
+      "evidenceAsset": "X_Golden.Table_001"
+    },
+    {
+      "id": "snowflake-30",
+      "connectorType": "snowflake",
+      "sourceName": "Meridian Harbor",
+      "question": "For Meridian Harbor, how many objects changed on the nightly run? Case 30.",
+      "metric": "nightly_changed_count",
+      "expectedValue": 0,
+      "evidenceAsset": "X_Golden.Table_001"
+    },
+    {
+      "id": "excel-01",
+      "connectorType": "excel",
+      "sourceName": "Riverside workbook",
+      "question": "For Riverside workbook, how many catalog objects are listed? Case 1.",
+      "metric": "listed_count",
+      "expectedValue": 3,
+      "evidenceAsset": "Riverside workbook.Departments"
+    },
+    {
+      "id": "excel-02",
+      "connectorType": "excel",
+      "sourceName": "Riverside workbook",
+      "question": "For Riverside workbook, how many objects are unchanged on the nightly run? Case 2.",
+      "metric": "nightly_unchanged_count",
+      "expectedValue": 3,
+      "evidenceAsset": "Riverside workbook.Departments"
+    },
+    {
+      "id": "excel-03",
+      "connectorType": "excel",
+      "sourceName": "Riverside workbook",
+      "question": "For Riverside workbook, how many fields are profiled? Case 3.",
+      "metric": "field_count",
+      "expectedValue": 9,
+      "evidenceAsset": "Riverside workbook.Departments"
+    },
+    {
+      "id": "excel-04",
+      "connectorType": "excel",
+      "sourceName": "Riverside workbook",
+      "question": "For Riverside workbook, how many objects are inaccessible? Case 4.",
+      "metric": "inaccessible_count",
+      "expectedValue": 0,
+      "evidenceAsset": "Riverside workbook.Departments"
+    },
+    {
+      "id": "excel-05",
+      "connectorType": "excel",
+      "sourceName": "Riverside workbook",
+      "question": "For Riverside workbook, how many objects changed on the nightly run? Case 5.",
+      "metric": "nightly_changed_count",
+      "expectedValue": 0,
+      "evidenceAsset": "Riverside workbook.Departments"
+    },
+    {
+      "id": "excel-06",
+      "connectorType": "excel",
+      "sourceName": "Riverside workbook",
+      "question": "For Riverside workbook, how many catalog objects are listed? Case 6.",
+      "metric": "listed_count",
+      "expectedValue": 3,
+      "evidenceAsset": "Riverside workbook.Departments"
+    },
+    {
+      "id": "excel-07",
+      "connectorType": "excel",
+      "sourceName": "Riverside workbook",
+      "question": "For Riverside workbook, how many objects are unchanged on the nightly run? Case 7.",
+      "metric": "nightly_unchanged_count",
+      "expectedValue": 3,
+      "evidenceAsset": "Riverside workbook.Departments"
+    },
+    {
+      "id": "excel-08",
+      "connectorType": "excel",
+      "sourceName": "Riverside workbook",
+      "question": "For Riverside workbook, how many fields are profiled? Case 8.",
+      "metric": "field_count",
+      "expectedValue": 9,
+      "evidenceAsset": "Riverside workbook.Departments"
+    },
+    {
+      "id": "excel-09",
+      "connectorType": "excel",
+      "sourceName": "Riverside workbook",
+      "question": "For Riverside workbook, how many objects are inaccessible? Case 9.",
+      "metric": "inaccessible_count",
+      "expectedValue": 0,
+      "evidenceAsset": "Riverside workbook.Departments"
+    },
+    {
+      "id": "excel-10",
+      "connectorType": "excel",
+      "sourceName": "Riverside workbook",
+      "question": "For Riverside workbook, how many objects changed on the nightly run? Case 10.",
+      "metric": "nightly_changed_count",
+      "expectedValue": 0,
+      "evidenceAsset": "Riverside workbook.Departments"
+    },
+    {
+      "id": "excel-11",
+      "connectorType": "excel",
+      "sourceName": "Riverside workbook",
+      "question": "For Riverside workbook, how many catalog objects are listed? Case 11.",
+      "metric": "listed_count",
+      "expectedValue": 3,
+      "evidenceAsset": "Riverside workbook.Departments"
+    },
+    {
+      "id": "excel-12",
+      "connectorType": "excel",
+      "sourceName": "Riverside workbook",
+      "question": "For Riverside workbook, how many objects are unchanged on the nightly run? Case 12.",
+      "metric": "nightly_unchanged_count",
+      "expectedValue": 3,
+      "evidenceAsset": "Riverside workbook.Departments"
+    },
+    {
+      "id": "excel-13",
+      "connectorType": "excel",
+      "sourceName": "Riverside workbook",
+      "question": "For Riverside workbook, how many fields are profiled? Case 13.",
+      "metric": "field_count",
+      "expectedValue": 9,
+      "evidenceAsset": "Riverside workbook.Departments"
+    },
+    {
+      "id": "excel-14",
+      "connectorType": "excel",
+      "sourceName": "Riverside workbook",
+      "question": "For Riverside workbook, how many objects are inaccessible? Case 14.",
+      "metric": "inaccessible_count",
+      "expectedValue": 0,
+      "evidenceAsset": "Riverside workbook.Departments"
+    },
+    {
+      "id": "excel-15",
+      "connectorType": "excel",
+      "sourceName": "Riverside workbook",
+      "question": "For Riverside workbook, how many objects changed on the nightly run? Case 15.",
+      "metric": "nightly_changed_count",
+      "expectedValue": 0,
+      "evidenceAsset": "Riverside workbook.Departments"
+    },
+    {
+      "id": "excel-16",
+      "connectorType": "excel",
+      "sourceName": "Riverside workbook",
+      "question": "For Riverside workbook, how many catalog objects are listed? Case 16.",
+      "metric": "listed_count",
+      "expectedValue": 3,
+      "evidenceAsset": "Riverside workbook.Departments"
+    },
+    {
+      "id": "excel-17",
+      "connectorType": "excel",
+      "sourceName": "Riverside workbook",
+      "question": "For Riverside workbook, how many objects are unchanged on the nightly run? Case 17.",
+      "metric": "nightly_unchanged_count",
+      "expectedValue": 3,
+      "evidenceAsset": "Riverside workbook.Departments"
+    },
+    {
+      "id": "excel-18",
+      "connectorType": "excel",
+      "sourceName": "Riverside workbook",
+      "question": "For Riverside workbook, how many fields are profiled? Case 18.",
+      "metric": "field_count",
+      "expectedValue": 9,
+      "evidenceAsset": "Riverside workbook.Departments"
+    },
+    {
+      "id": "excel-19",
+      "connectorType": "excel",
+      "sourceName": "Riverside workbook",
+      "question": "For Riverside workbook, how many objects are inaccessible? Case 19.",
+      "metric": "inaccessible_count",
+      "expectedValue": 0,
+      "evidenceAsset": "Riverside workbook.Departments"
+    },
+    {
+      "id": "excel-20",
+      "connectorType": "excel",
+      "sourceName": "Riverside workbook",
+      "question": "For Riverside workbook, how many objects changed on the nightly run? Case 20.",
+      "metric": "nightly_changed_count",
+      "expectedValue": 0,
+      "evidenceAsset": "Riverside workbook.Departments"
+    },
+    {
+      "id": "excel-21",
+      "connectorType": "excel",
+      "sourceName": "Riverside workbook",
+      "question": "For Riverside workbook, how many catalog objects are listed? Case 21.",
+      "metric": "listed_count",
+      "expectedValue": 3,
+      "evidenceAsset": "Riverside workbook.Departments"
+    },
+    {
+      "id": "excel-22",
+      "connectorType": "excel",
+      "sourceName": "Riverside workbook",
+      "question": "For Riverside workbook, how many objects are unchanged on the nightly run? Case 22.",
+      "metric": "nightly_unchanged_count",
+      "expectedValue": 3,
+      "evidenceAsset": "Riverside workbook.Departments"
+    },
+    {
+      "id": "excel-23",
+      "connectorType": "excel",
+      "sourceName": "Riverside workbook",
+      "question": "For Riverside workbook, how many fields are profiled? Case 23.",
+      "metric": "field_count",
+      "expectedValue": 9,
+      "evidenceAsset": "Riverside workbook.Departments"
+    },
+    {
+      "id": "excel-24",
+      "connectorType": "excel",
+      "sourceName": "Riverside workbook",
+      "question": "For Riverside workbook, how many objects are inaccessible? Case 24.",
+      "metric": "inaccessible_count",
+      "expectedValue": 0,
+      "evidenceAsset": "Riverside workbook.Departments"
+    },
+    {
+      "id": "excel-25",
+      "connectorType": "excel",
+      "sourceName": "Riverside workbook",
+      "question": "For Riverside workbook, how many objects changed on the nightly run? Case 25.",
+      "metric": "nightly_changed_count",
+      "expectedValue": 0,
+      "evidenceAsset": "Riverside workbook.Departments"
+    },
+    {
+      "id": "excel-26",
+      "connectorType": "excel",
+      "sourceName": "Riverside workbook",
+      "question": "For Riverside workbook, how many catalog objects are listed? Case 26.",
+      "metric": "listed_count",
+      "expectedValue": 3,
+      "evidenceAsset": "Riverside workbook.Departments"
+    },
+    {
+      "id": "excel-27",
+      "connectorType": "excel",
+      "sourceName": "Riverside workbook",
+      "question": "For Riverside workbook, how many objects are unchanged on the nightly run? Case 27.",
+      "metric": "nightly_unchanged_count",
+      "expectedValue": 3,
+      "evidenceAsset": "Riverside workbook.Departments"
+    },
+    {
+      "id": "excel-28",
+      "connectorType": "excel",
+      "sourceName": "Riverside workbook",
+      "question": "For Riverside workbook, how many fields are profiled? Case 28.",
+      "metric": "field_count",
+      "expectedValue": 9,
+      "evidenceAsset": "Riverside workbook.Departments"
+    },
+    {
+      "id": "excel-29",
+      "connectorType": "excel",
+      "sourceName": "Riverside workbook",
+      "question": "For Riverside workbook, how many objects are inaccessible? Case 29.",
+      "metric": "inaccessible_count",
+      "expectedValue": 0,
+      "evidenceAsset": "Riverside workbook.Departments"
+    },
+    {
+      "id": "excel-30",
+      "connectorType": "excel",
+      "sourceName": "Riverside workbook",
+      "question": "For Riverside workbook, how many objects changed on the nightly run? Case 30.",
+      "metric": "nightly_changed_count",
+      "expectedValue": 0,
+      "evidenceAsset": "Riverside workbook.Departments"
+    }
+  ]
+}

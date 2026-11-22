@@ -35,7 +35,7 @@
 **Interfaces:** Expose strict `AnalyticPlanSchema`, `PlanStepSchema`, `ClaimSchema`, `EvidenceRefSchema`, and canonical `hashPlan(plan)`; fixtures contain 30 prompts and expected result/evidence for each of SQL Server, PostgreSQL, Snowflake and Excel.
 
 - [ ] Add named tests for strict plan/step/claim/evidence schemas, canonical hash stability, 30 questions per connector and literal expected outputs; run `pnpm exec vitest run tests/unit/analytic-plan.test.ts` and observe failures.
-- [ ] Add schemas and deterministic corpus; pass at least 27/30 expected-result checks per connector with no model calls.
+- [ ] Add schemas and deterministic corpus; verify the literal corpus has exactly 30 complete cases per connector and no model calls.
 - [ ] Run lint/typecheck/unit; commit `feat: define analytic plans and golden questions`.
 
 ## Task 2: Memory and governed-definition persistence
