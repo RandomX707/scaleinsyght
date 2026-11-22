@@ -1,6 +1,6 @@
 # Phase 1 report — Profiler mode and workspace shell
 
-**Status:** built on `phase-1`; PR and CI pending.
+**Status:** merged to `main` in [PR #2](https://github.com/RandomX707/scaleinsyght/pull/2) after GitHub CI passed.
 
 ## Assumptions (pending Yashaswi)
 
@@ -41,7 +41,7 @@ Open `http://127.0.0.1:5173`, then sign in with the synthetic account `analyst@n
 - `pnpm test:integration` — passed (1 PostgreSQL 16 integration case).
 - `pnpm test:contracts` — passed (12 files, 32 cases, including the phase-0 contracts and phase-1 C6/C7 contracts).
 - `pnpm test:e2e` — passed (3 Playwright cases: phase 0 login/usage; phase 1 connector activation/profile/dictionary/notification; keyboard navigation and catalog-only search).
-- GitHub phase-0 PR checks — passed and merged. Phase-1 CI will run after its PR is opened.
+- GitHub phase-0 and phase-1 PR checks — passed; both phase PRs were merged to `main`.
 
 ## Limits
 

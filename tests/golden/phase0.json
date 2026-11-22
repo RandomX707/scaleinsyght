@@ -5,6 +5,7 @@
   ],
   "users": [
     { "id": "golden-user-north", "tenantId": "golden-tenant-north", "email": "analyst@north.example" },
+    { "id": "golden-approver-north", "tenantId": "golden-tenant-north", "email": "approver@north.example" },
     { "id": "golden-user-south", "tenantId": "golden-tenant-south", "email": "analyst@south.example" }
   ],
   "scriptedRun": {

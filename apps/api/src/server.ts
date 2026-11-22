@@ -2,10 +2,13 @@ import { createHash, createHmac, randomBytes, randomUUID, scryptSync, timingSafe
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { withTenant, getUsage } from '@scaleinsyght/db';
-import { activateConnection, createConnectionDraft, type ConnectorType } from '@scaleinsyght/registry';
+import { activateConnection, approveGovernedVersion, createConnectionDraft, createGovernedDraft, deletePersonalMemory, getApprovedGovernedVersion, getPersonalMemory, moveConnectionToGroup, putPersonalMemory, type ConnectorType, type PersonalMemoryData } from '@scaleinsyght/registry';
 import { createGoldenConnector, listGoldenSources } from '@scaleinsyght/connectors';
 import { EncryptedArtifactStore } from '@scaleinsyght/artifacts';
 import { getNotifications, markNotificationRead, readConnectionScope, readWorkbook, retireConnection, runGoldenProfile, saveConnectionScope, storeWorkbook } from '@scaleinsyght/profiler';
+import { applyPersonalContext, createAnalyticPlan, startAnalyticRun, submitFeedback, type StructuredAnswer } from '@scaleinsyght/analytic';
+import { eventsAfter } from '@scaleinsyght/runner';
+import { AnalyticPlanSchema, hashPlan } from '@scaleinsyght/contracts';
 
 export interface GoldenAccount { tenantId: string; email: string; }
 export interface ServerOptions { pool: Pool; sessionSecret: string; goldenAccounts: GoldenAccount[]; artifactStore?: EncryptedArtifactStore; }
@@ -74,10 +77,98 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const from=new Date();from.setUTCDate(1);from.setUTCHours(0,0,0,0);const to=new Date(from);to.setUTCMonth(to.getUTCMonth()+1);
     return reply.send(await getUsage(options.pool,current.tenantId,from,to));
   });
+  app.get('/api/me/agent',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const memory=await getPersonalMemory(options.pool,{tenantId:current.tenantId,principalId:current.userId});
+    if(memory.defaultSources.length){
+      const visible=await withTenant(options.pool,current.tenantId,async(client)=>{
+        const active=await client.query<{connection_id:string}>("SELECT connection_id FROM registry.connections WHERE tenant_id=$1 AND status='active' AND connection_id=ANY($2::uuid[])",[current.tenantId,memory.defaultSources]);
+        const grants=await client.query<{resource_id:string|null}>("SELECT resource_id FROM core.entitlements WHERE tenant_id=$1 AND principal_id=$2 AND capability_id='analytic.read' AND allowed AND (resource_id IS NULL OR resource_id=ANY($3::text[]))",[current.tenantId,current.userId,memory.defaultSources]);
+        const global=grants.rows.some((row)=>row.resource_id===null);return memory.defaultSources.filter((id)=>active.rows.some((row)=>row.connection_id===id)&&(global||grants.rows.some((row)=>row.resource_id===id)));
+      });
+      memory.defaultSources=visible;
+    }
+    return reply.send({memory});
+  });
+  app.put<{Body:Partial<PersonalMemoryData>}>('/api/me/agent',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const body=request.body as Record<string,unknown>|undefined;const allowedKeys=['vocabulary','defaultSources','savedPlanIds','answerStyle','corrections'];
+    if(!body||Object.keys(body).some((key)=>!allowedKeys.includes(key)))return reply.code(400).send({error:'invalid_personal_memory'});
+    const vocabulary=body.vocabulary??{};const defaultSources=body.defaultSources??[];const savedPlanIds=body.savedPlanIds??[];const corrections=body.corrections??[];const answerStyle=body.answerStyle??null;
+    if(!vocabulary||typeof vocabulary!=='object'||Array.isArray(vocabulary)||Object.values(vocabulary).some((value)=>typeof value!=='string')
+      ||!Array.isArray(defaultSources)||defaultSources.some((id)=>typeof id!=='string'||! /^[0-9a-f-]{36}$/i.test(id))
+      ||!Array.isArray(savedPlanIds)||savedPlanIds.some((id)=>typeof id!=='string'||! /^[0-9a-f-]{36}$/i.test(id))
+      ||!Array.isArray(corrections)||corrections.some((item)=>!item||typeof item!=='object'||Array.isArray(item)||Object.keys(item).sort().join(',')!=='meaning,term'||typeof (item as {term?:unknown}).term!=='string'||typeof (item as {meaning?:unknown}).meaning!=='string')
+      ||!([null,'concise','detailed','sql_first','lineage_first'] as unknown[]).includes(answerStyle))return reply.code(400).send({error:'invalid_personal_memory'});
+    const permitted=await withTenant(options.pool,current.tenantId,async(client)=>{
+      if(!defaultSources.length)return true;
+      const active=await client.query<{connection_id:string}>("SELECT connection_id FROM registry.connections WHERE tenant_id=$1 AND status='active' AND connection_id=ANY($2::uuid[])",[current.tenantId,defaultSources]);
+      if(active.rowCount!==new Set(defaultSources as string[]).size)return false;
+      const grants=await client.query<{resource_id:string|null}>("SELECT resource_id FROM core.entitlements WHERE tenant_id=$1 AND principal_id=$2 AND capability_id='analytic.read' AND allowed AND (resource_id IS NULL OR resource_id=ANY($3::text[]))",[current.tenantId,current.userId,defaultSources]);
+      return grants.rows.some((row)=>row.resource_id===null)||(defaultSources as string[]).every((id)=>grants.rows.some((row)=>row.resource_id===id));
+    });
+    if(!permitted)return reply.code(403).send({error:'default_source_not_authorized'});
+    try{const memory={vocabulary:vocabulary as Record<string,string>,defaultSources:defaultSources as string[],savedPlanIds:savedPlanIds as string[],answerStyle:answerStyle as PersonalMemoryData['answerStyle'],corrections:corrections as NonNullable<PersonalMemoryData['corrections']>};await putPersonalMemory(options.pool,{tenantId:current.tenantId,principalId:current.userId,memory});return reply.send({memory});}
+    catch(error){if(error instanceof Error&&error.message==='invalid_personal_memory')return reply.code(400).send({error:'invalid_personal_memory'});throw error;}
+  });
+  app.delete('/api/me/agent',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    return reply.send({deleted:await deletePersonalMemory(options.pool,{tenantId:current.tenantId,principalId:current.userId})});
+  });
+
+  app.post<{Body:{question?:string;sourceIds?:string[]}}>('/api/runs',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const question=request.body?.question;const sourceIds=request.body?.sourceIds;
+    if(typeof question!=='string'||!question.trim()||!Array.isArray(sourceIds)||sourceIds.length===0||sourceIds.some((id)=>typeof id!=='string'||! /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))||new Set(sourceIds).size!==sourceIds.length)return reply.code(400).send({error:'invalid_analytic_request'});
+    const sources=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{source_id:string;agent_id:string;group_id:string;group_version:number}>(
+      `SELECT connection_id AS source_id,connector_agent_id AS agent_id,source_group_id AS group_id,source_group_version AS group_version
+       FROM registry.connections WHERE tenant_id=$1 AND status='active' AND connection_id=ANY($2::uuid[])`,[current.tenantId,sourceIds]));
+    if(sources.rowCount!==new Set(sourceIds).size)return reply.code(403).send({error:'source_not_active_or_available'});
+    try{const plan=await createAnalyticPlan({question,runId:randomUUID(),sources:sources.rows.map((row)=>({sourceId:row.source_id,agentId:row.agent_id,groupId:row.group_id,groupVersion:row.group_version}))});return reply.code(201).send(await startAnalyticRun(options.pool,{tenantId:current.tenantId,principalId:current.userId,plan}));}
+    catch(error){const code=error instanceof Error?error.message:'analytic_request_rejected';if(['principal_not_entitled','source_not_active','source_group_version_not_pinned'].includes(code))return reply.code(403).send({error:code});if(code.startsWith('analytic_plan'))return reply.code(400).send({error:code});throw error;}
+  });
+  app.get<{Params:{runId:string}}>('/api/runs/:runId',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const result=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{run_id:string;state:string;state_version:number;plan:Record<string,unknown>;plan_hash:string;answer:Record<string,unknown>|null}>(
+      `SELECT r.run_id,r.state,r.state_version,p.plan,p.plan_hash,a.answer FROM runs.runs r JOIN runs.analytic_plans p USING(tenant_id,run_id)
+       LEFT JOIN runs.analytic_answers a USING(tenant_id,run_id)
+       WHERE r.tenant_id=$1 AND r.principal_id=$2 AND r.run_id=$3`,[current.tenantId,current.userId,request.params.runId]));
+    if(!result.rowCount)return reply.code(404).send({error:'run_not_found'});
+    const row=result.rows[0]!;const memory=await getPersonalMemory(options.pool,{tenantId:current.tenantId,principalId:current.userId});
+    return reply.send({runId:row.run_id,state:row.state,stateVersion:row.state_version,plan:row.plan,planHash:row.plan_hash,answer:row.answer?applyPersonalContext(row.answer as unknown as StructuredAnswer,memory):null});
+  });
+  app.post<{ Params: { runId: string }; Body: { verdict?: 'useful' | 'not_useful'; correction?: { term: string; meaning: string } } }>('/api/runs/:runId/feedback',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const body=request.body;
+    if(!body||!['useful','not_useful'].includes(String(body.verdict))||(body.correction&&(Object.keys(body.correction).sort().join(',')!=='meaning,term'||typeof body.correction.term!=='string'||typeof body.correction.meaning!=='string')))return reply.code(400).send({error:'invalid_feedback'});
+    try{return reply.code(201).send(await submitFeedback(options.pool,{tenantId:current.tenantId,principalId:current.userId,runId:request.params.runId,verdict:body.verdict!,...(body.correction?{correction:body.correction}:{})}));}
+    catch(error){const code=error instanceof Error?error.message:'feedback_failed';if(code==='run_not_found')return reply.code(404).send({error:code});if(code==='unsafe_correction'||code==='correction_not_allowed_for_useful_verdict')return reply.code(400).send({error:code});throw error;}
+  });
+  app.get<{Params:{runId:string};Querystring:{after?:string}}>('/api/runs/:runId/events',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const owner=await withTenant(options.pool,current.tenantId,async(client)=>client.query('SELECT 1 FROM runs.runs WHERE tenant_id=$1 AND run_id=$2 AND principal_id=$3',[current.tenantId,request.params.runId,current.userId]));
+    if(!owner.rowCount)return reply.code(404).send({error:'run_not_found'});
+    const lastId=request.headers['last-event-id'];const cursor=typeof lastId==='string'?lastId:request.query.after??'0';
+    if(!/^\d+$/.test(cursor)||Number(cursor)>Number.MAX_SAFE_INTEGER)return reply.code(400).send({error:'invalid_event_cursor'});
+    return reply.send({events:await eventsAfter(options.pool,current.tenantId,request.params.runId,Number(cursor))});
+  });
 
   app.get('/api/sources',async(request,reply)=>{
     if(!await authenticatedSession(request))return reply.code(401).send({error:'unauthorized'});
     return reply.send({sources:listGoldenSources()});
+  });
+  app.get('/api/agents',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const result=await withTenant(options.pool,current.tenantId,async(client)=>{
+      const groups=await client.query<{group_id:string;version:number;connection_id:string;connector_type:string;agent_id:string}>('SELECT g.source_group_id AS group_id,g.version,c.connection_id,c.connector_type,c.connector_agent_id AS agent_id FROM registry.source_groups g JOIN registry.source_group_members m ON m.tenant_id=g.tenant_id AND m.source_group_id=g.source_group_id AND m.group_version=g.version AND m.valid_to IS NULL JOIN registry.connections c ON c.tenant_id=m.tenant_id AND c.connection_id=m.connection_id WHERE g.tenant_id=$1 ORDER BY g.source_group_id,c.connection_id',[current.tenantId]);
+      const governed=await client.query<{governed_id:string;name:string;owner_id:string;version:number;approved_by:string|null}>('SELECT d.governed_id,d.name,d.owner_id,v.version,a.approved_by FROM registry.governed_definitions d JOIN registry.governed_versions v USING(tenant_id,governed_id) LEFT JOIN registry.governed_approvals a USING(tenant_id,governed_id,version) WHERE d.tenant_id=$1 ORDER BY d.governed_id,v.version',[current.tenantId]);
+      const agents=await client.query<{agent_id:string;agent_type:string;status:string;owner_id:string|null;active_version:number}>('SELECT agent_id,agent_type,status,owner_id,active_version FROM registry.agents WHERE tenant_id=$1 ORDER BY created_at',[current.tenantId]);
+      return{groups:groups.rows.map(row=>({groupId:row.group_id,version:row.version,connectionId:row.connection_id,connectorType:row.connector_type,agentId:row.agent_id})),governed:governed.rows.map(row=>({governedId:row.governed_id,name:row.name,ownerId:row.owner_id,version:row.version,approvedBy:row.approved_by})),agents:agents.rows};
+    });return reply.send(result);
+  });
+  app.get('/api/evaluation',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    return reply.send(await withTenant(options.pool,current.tenantId,async(client)=>{const result=await client.query<{question_hash:string}>('SELECT question_hash FROM memory.evaluation_cases WHERE tenant_id=$1 ORDER BY created_at',[current.tenantId]);return{count:result.rowCount??0,questionIds:result.rows.map(row=>row.question_hash)};}));
   });
   app.get('/api/connections',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
@@ -92,6 +183,48 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
       agentId:row.connector_agent_id,
       lastJobState:row.last_job_state,
     }))});
+  });
+  app.get('/api/analytic/sources',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const result=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{connection_id:string;connector_type:string}>(
+      `SELECT c.connection_id,c.connector_type FROM registry.connections c JOIN registry.capabilities cap ON cap.tenant_id=c.tenant_id AND cap.capability_id='analytic.read'
+       WHERE c.tenant_id=$1 AND c.status='active' AND cap.enabled AND cap.effect_class='READ' AND cap.active_version=1
+       AND EXISTS(SELECT 1 FROM core.entitlements e WHERE e.tenant_id=c.tenant_id AND e.principal_id=$2 AND e.capability_id='analytic.read' AND e.allowed AND (e.resource_id IS NULL OR e.resource_id=c.connection_id::text))
+       ORDER BY c.created_at`,[current.tenantId,current.userId]));
+    return reply.send({sources:result.rows.map(row=>({id:row.connection_id,type:row.connector_type}))});
+  });
+  app.post<{Params:{groupId:string;connectionId:string}}>('/api/groups/:groupId/members/:connectionId',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    try{return reply.send(await moveConnectionToGroup(options.pool,{tenantId:current.tenantId,connectionId:request.params.connectionId,targetGroupId:request.params.groupId,actor:'person'}));}
+    catch(error){const code=error instanceof Error?error.message:'group_move_failed';if(code==='connection_not_found'||code==='source_group_not_found')return reply.code(404).send({error:code});throw error;}
+  });
+  app.post<{Body:{name?:string;question?:string;sourceIds?:string[];governedId?:string}}>('/api/governed-agents',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const {name,question,sourceIds,governedId}=request.body??{};
+    if(typeof name!=='string'||!name.trim()||typeof question!=='string'||!question.trim()||!Array.isArray(sourceIds)||!sourceIds.length||sourceIds.some((id)=>typeof id!=='string'||! /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)))return reply.code(400).send({error:'invalid_governed_draft'});
+    const sources=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{source_id:string;agent_id:string;group_id:string;group_version:number}>(
+      `SELECT connection_id AS source_id,connector_agent_id AS agent_id,source_group_id AS group_id,source_group_version AS group_version
+       FROM registry.connections WHERE tenant_id=$1 AND status='active' AND connection_id=ANY($2::uuid[])`,[current.tenantId,sourceIds]));
+    if(sources.rowCount!==new Set(sourceIds).size)return reply.code(403).send({error:'source_not_active_or_available'});
+    try{const plan=await createAnalyticPlan({question,runId:randomUUID(),sources:sources.rows.map((source)=>({sourceId:source.source_id,agentId:source.agent_id,groupId:source.group_id,groupVersion:source.group_version}))});const draft=await createGovernedDraft(options.pool,{tenantId:current.tenantId,principalId:current.userId,name,plan, ...(governedId?{governedId}:{})});return reply.code(201).send(draft);}
+    catch(error){const code=error instanceof Error?error.message:'governed_draft_failed';if(['governed_definition_not_found','governed_definition_forbidden'].includes(code))return reply.code(404).send({error:code});if(code.startsWith('invalid_'))return reply.code(400).send({error:code});throw error;}
+  });
+  app.post<{Params:{governedId:string};Body:{version?:number}}>('/api/governed-agents/:governedId/approve',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    if(!Number.isInteger(request.body?.version)||request.body!.version!<1)return reply.code(400).send({error:'invalid_governed_version'});
+    try{return reply.send(await approveGovernedVersion(options.pool,{tenantId:current.tenantId,principalId:current.userId,governedId:request.params.governedId,version:request.body!.version!}));}
+    catch(error){const code=error instanceof Error?error.message:'governed_approval_failed';if(code==='governed_self_approval_not_allowed')return reply.code(403).send({error:code});if(code==='governed_version_not_found')return reply.code(404).send({error:code});throw error;}
+  });
+  app.post<{Params:{governedId:string};Body:{version?:number}}>('/api/governed-agents/:governedId/runs',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    if(!Number.isInteger(request.body?.version)||request.body!.version!<1)return reply.code(400).send({error:'invalid_governed_version'});
+    try{
+      const approved=await getApprovedGovernedVersion(options.pool,{tenantId:current.tenantId,governedId:request.params.governedId,version:request.body!.version!});
+      const plan=AnalyticPlanSchema.parse({...approved.plan,run_id:randomUUID(),plan_hash:'0'.repeat(64)});
+      plan.plan_hash=await hashPlan({...plan,plan_hash:''});
+      const run=await startAnalyticRun(options.pool,{tenantId:current.tenantId,principalId:current.userId,plan,governed:{governedId:request.params.governedId,version:approved.version}});
+      return reply.code(201).send({...run,governedId:request.params.governedId,version:approved.version});
+    }catch(error){const code=error instanceof Error?error.message:'governed_run_failed';if(['governed_version_not_found','governed_version_not_approved'].includes(code))return reply.code(404).send({error:code});if(code==='principal_not_entitled')return reply.code(403).send({error:code});if(code==='governed_plan_mismatch'||code.startsWith('analytic_plan'))return reply.code(400).send({error:code});throw error;}
   });
   app.post<{Body:{sourceId?:string}}>('/api/connections',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
@@ -117,6 +250,12 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const checked=await createGoldenConnector(source.id).test();if(!checked.ok)return reply.code(400).send({error:'connection_test_failed'});
     const scope=request.body?.scope??[];
     const activated=await activateConnection(options.pool,{tenantId:current.tenantId,principalId:current.userId,connectorType:source.type as ConnectorType,connectionId:request.params.connectionId,sourceRef:source.id,scope});
+    await withTenant(options.pool,current.tenantId,async(client)=>{
+      await client.query("INSERT INTO registry.capabilities(tenant_id,capability_id,active_version,effect_class,effect_safety,enabled) VALUES($1,'analytic.read',1,'READ','not_applicable',true) ON CONFLICT(tenant_id,capability_id) DO UPDATE SET enabled=true,effect_class='READ',effect_safety='not_applicable'",[current.tenantId]);
+      await client.query("INSERT INTO registry.capability_versions(tenant_id,capability_id,version,input_schema,output_schema) VALUES($1,'analytic.read',1,'{}'::jsonb,'{}'::jsonb) ON CONFLICT DO NOTHING",[current.tenantId]);
+      const existing=await client.query("SELECT 1 FROM core.entitlements WHERE tenant_id=$1 AND principal_id=$2 AND capability_id='analytic.read' AND resource_id=$3 AND allowed",[current.tenantId,current.userId,activated.connectionId]);
+      if(!existing.rowCount)await client.query("INSERT INTO core.entitlements(tenant_id,principal_id,capability_id,resource_id,allowed) VALUES($1,$2,'analytic.read',$3,true)",[current.tenantId,current.userId,activated.connectionId]);
+    });
     const profile=await runGoldenProfile(options.pool,{tenantId:current.tenantId,connectionId:activated.connectionId,connector:createGoldenConnector(source.id),jobType:'discovery'});
     return reply.send({connectionId:activated.connectionId,agentId:activated.agentId,sourceName:source.name,profile});
   });

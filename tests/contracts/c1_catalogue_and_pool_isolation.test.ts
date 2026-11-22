@@ -39,7 +39,7 @@ describe('contract 1 PostgreSQL catalogue and pooled isolation', () => {
       FROM pg_class c
       JOIN pg_namespace n ON n.oid = c.relnamespace
       LEFT JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
-      WHERE n.nspname IN ('core', 'registry', 'runs', 'graph', 'profiler', 'artifacts') AND c.relkind IN ('r', 'p')
+      WHERE n.nspname IN ('core', 'registry', 'runs', 'graph', 'profiler', 'artifacts', 'memory') AND c.relkind IN ('r', 'p')
       GROUP BY n.nspname, c.relname, c.relrowsecurity, c.relforcerowsecurity, c.relowner
       ORDER BY n.nspname, c.relname
     `);

@@ -2,7 +2,7 @@ import{afterAll,describe,expect,it}from'vitest';
 import{config}from'dotenv';
 import{Pool}from'pg';
 import{withTenant}from'@scaleinsyght/db';
-import{activateConnection,moveConnectionToGroup,savePersonalMemory,readPersonalMemory}from'@scaleinsyght/registry';
+import{activateConnection,moveConnectionToGroup,putPersonalMemory,getPersonalMemory}from'@scaleinsyght/registry';
 import{createRun,addRunStep,claimNextStep,completeStep,transitionRun}from'@scaleinsyght/runner';
 config({path:'.env'});
 function testUrl(key:'DATABASE_URL'|'DATABASE_URL_WORKER'|'DATABASE_URL_MIGRATE'){const value=process.env[key];if(!value)throw new Error(`${key} is required; PostgreSQL contract tests are never skipped`);const url=new URL(value);url.pathname='/si_test';return url.toString();}
@@ -30,9 +30,9 @@ describe('contract 2 source groups and personal memory',()=>{
  it('c2_personal_agent_memory_isolation_and_safe_storage',async()=>{
   const tenant=`memory-${crypto.randomUUID()}`;let personA='';let personB='';
   await withTenant(migrate,tenant,async(db)=>{await db.query('INSERT INTO core.tenants(tenant_id,name) VALUES($1,$1)',[tenant]);personA=(await db.query<{user_id:string}>(`INSERT INTO core.users(tenant_id,email,password_hash) VALUES($1,$2,'synthetic') RETURNING user_id`,[tenant,`${tenant}-a@synthetic.example`])).rows[0]!.user_id;personB=(await db.query<{user_id:string}>(`INSERT INTO core.users(tenant_id,email,password_hash) VALUES($1,$2,'synthetic') RETURNING user_id`,[tenant,`${tenant}-b@synthetic.example`])).rows[0]!.user_id;});
-  await savePersonalMemory(app,{tenantId:tenant,personId:personA,memory:{roleTemplate:'analyst',vocabulary:{turnover:'net revenue'},defaultSources:[],savedPlanIds:[],answerStyle:'concise'}});
-  expect((await readPersonalMemory(app,{tenantId:tenant,personId:personB})).roleTemplate).toBeNull();
-  const stored=await readPersonalMemory(app,{tenantId:tenant,personId:personA});
+  await putPersonalMemory(app,{tenantId:tenant,principalId:personA,memory:{vocabulary:{turnover:'net revenue'},defaultSources:[],savedPlanIds:[],answerStyle:'concise'}});
+  expect((await getPersonalMemory(app,{tenantId:tenant,principalId:personB})).vocabulary).toEqual({});
+  const stored=await getPersonalMemory(app,{tenantId:tenant,principalId:personA});
   expect(stored.vocabulary).toEqual({turnover:'net revenue'});
   expect(JSON.stringify(stored)).not.toMatch(/result_rows|identifier_values|raw_id/i);
  });

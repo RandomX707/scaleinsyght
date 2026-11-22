@@ -55,6 +55,116 @@ export const AgentSchema = z.object({
 }).strict();
 export type Agent = z.infer<typeof AgentSchema>;
 
+const Uuid = z.string().uuid();
+export const PlanStepSchema = z.object({
+  step_id: Uuid,
+  capability_id: z.string().min(1),
+  capability_version: z.number().int().positive(),
+  agent_id: Uuid,
+  source_id: Uuid,
+  via_collating_agent_id: Uuid,
+  group_version: z.number().int().positive(),
+  inputs: z.record(z.string(), z.unknown()),
+  depends_on: z.array(Uuid),
+  effect_class: z.literal('READ'),
+  timeout_s: z.number().int().positive().max(600),
+  retry: z.object({
+    max: z.number().int().min(0).max(3),
+    backoff: z.enum(['none', 'linear', 'exponential']),
+  }).strict(),
+  idempotency_key: z.string().min(1).max(200),
+}).strict();
+export type PlanStep = z.infer<typeof PlanStepSchema>;
+
+export const JoinKeySchema = z.object({
+  left: z.string().min(1),
+  right: z.string().min(1),
+  assertion_id: Uuid,
+}).strict();
+
+export const PlanCombineSchema = z.object({
+  level: z.enum(['group', 'cross_group']),
+  collating_agent_id: Uuid.nullable(),
+  inputs: z.array(Uuid).min(1),
+  join_keys: z.array(JoinKeySchema),
+  output_schema: z.record(z.string(), z.unknown()),
+}).strict();
+
+export const AnalyticPlanSchema = z.object({
+  plan_id: Uuid,
+  run_id: Uuid,
+  version: z.number().int().positive(),
+  plan_hash: z.string().regex(/^[a-f0-9]{64}$/),
+  question: z.string().trim().min(1).max(2000),
+  scope: z.object({
+    source_ids: z.array(Uuid).min(1),
+    as_of: z.string().datetime({ offset: true }),
+  }).strict(),
+  steps: z.array(PlanStepSchema).min(1),
+  combine: z.array(PlanCombineSchema),
+  budgets: z.object({
+    max_parallel: z.number().int().positive().max(32),
+    max_runtime_s: z.number().int().positive().max(1800),
+    max_tokens: z.number().int().min(0).max(100_000),
+    max_source_queries: z.number().int().positive().max(1000),
+  }).strict(),
+}).strict();
+export type AnalyticPlan = z.infer<typeof AnalyticPlanSchema>;
+
+export const ClaimSchema = z.object({
+  claim_id: Uuid,
+  kind: z.enum(['fact', 'metric', 'lineage', 'interpretation']),
+  statement: z.string().min(1).max(4000),
+  evidence_ids: z.array(Uuid).min(1),
+}).strict();
+export type Claim = z.infer<typeof ClaimSchema>;
+
+export const EvidenceRefSchema = z.object({
+  evidence_id: Uuid,
+  kind: z.enum(['query', 'api_call', 'manifest', 'code', 'run_event', 'document', 'profile', 'test']),
+  source_id: Uuid,
+  asset_ids: z.array(Uuid),
+  locator: z.string().min(1).max(1000),
+  content_hash: z.string().regex(/^[a-f0-9]{64}$/),
+  captured_at: z.string().datetime({ offset: true }),
+  source_time: z.string().datetime({ offset: true }).nullable().optional(),
+  collector_version: z.string().min(1).max(100),
+  redacted_summary: z.string().max(1000),
+}).strict();
+export type EvidenceRef = z.infer<typeof EvidenceRefSchema>;
+
+function canonicalJson(value: unknown, seen = new Set<object>()): string {
+  if (value === null || typeof value === 'boolean' || typeof value === 'string') return JSON.stringify(value);
+  if (typeof value === 'number' && Number.isFinite(value)) return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    if (seen.has(value)) throw new Error('plan_not_json_serializable');
+    seen.add(value);
+    const result = `[${value.map((item) => canonicalJson(item, seen)).join(',')}]`;
+    seen.delete(value);
+    return result;
+  }
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    if (seen.has(record) || (Object.getPrototypeOf(record) !== Object.prototype && Object.getPrototypeOf(record) !== null)) {
+      throw new Error('plan_not_json_serializable');
+    }
+    seen.add(record);
+    const result = `{${Object.keys(record).sort().map((key) => {
+      if (record[key] === undefined) throw new Error('plan_not_json_serializable');
+      return `${JSON.stringify(key)}:${canonicalJson(record[key], seen)}`;
+    }).join(',')}}`;
+    seen.delete(record);
+    return result;
+  }
+  throw new Error('plan_not_json_serializable');
+}
+
+export async function hashPlan(plan: unknown): Promise<string> {
+  const serialized = canonicalJson(plan);
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(serialized));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 export const RunStateSchema = z.enum([
   'CREATED', 'PLANNING', 'PLAN_VALIDATED', 'RUNNING', 'AWAITING_APPROVAL', 'FINALISING',
   'COMPLETED', 'PARTIAL', 'FAILED', 'CANCELLED', 'EXPIRED', 'POLICY_BLOCKED',

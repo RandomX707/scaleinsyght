@@ -23,7 +23,7 @@ The product is **industry-agnostic and cloud-agnostic**. The prototype's hospita
 |---|---|---|
 | `docs/system-design-v3.2.md` | The approved system design: product architecture, Release 1 scope, the 8 frozen contracts with acceptance tests, and 20 decisions | Before starting any phase, and whenever you touch a contract |
 | `docs/prototype/index.html` | The clickable prototype, one file. Open it in a browser. It is the reference for screens, layout, wording and behaviour | Before building any screen |
-| `docs/decisions.md` | Decision log, seeded with decisions 1–25 and their status. Add new ones from 27 | Before assuming a default |
+| `docs/decisions.md` | Decision log, seeded with decisions 1–26 and their status. Add new ones from 27 | Before assuming a default |
 | `docs/phases/phase-N.md` | Per-phase spec: routes, tables, events, tests. Write it at the start of each phase, citing the contracts it implements | At the start of each phase |
 
 **When documents disagree:**

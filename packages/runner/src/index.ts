@@ -77,23 +77,32 @@ export async function claimNextStep(pool:Pool,workerId:string,leaseMs:number):Pr
   }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
 }
 
-export async function completeStep(pool:Pool,claim:StepClaim,input:{resultRef:string}):Promise<boolean>{
+export async function completeStep(pool:Pool,claim:StepClaim,input:{resultRef:string;analyticResult?:object}):Promise<boolean>{
   if(!input.resultRef || input.resultRef.length>500) throw new Error('invalid_result_ref');
   return withRunTenant(pool,claim.runId,async(client,stored)=>{
     const changed=await client.query(`UPDATE runs.steps SET state='SUCCEEDED',result_ref=$4,lease_owner=NULL,lease_expires_at=NULL
       WHERE run_id=$1 AND step_id=$2 AND tenant_id=$3 AND state IN ('CLAIMED','RUNNING') AND lease_owner=$5 AND fencing_token=$6 AND lease_expires_at>clock_timestamp()`,
       [claim.runId,claim.stepId,stored.tenant_id,input.resultRef,claim.workerId,claim.fencingToken]);
     if(!changed.rowCount) return false;
+    const analytic=await client.query('SELECT 1 FROM runs.analytic_plans WHERE tenant_id=$1 AND run_id=$2',[stored.tenant_id,claim.runId]);
+    if(analytic.rowCount&&input.analyticResult){
+      await client.query('INSERT INTO runs.analytic_results(tenant_id,run_id,step_id,result) VALUES($1,$2,$3,$4::jsonb)',[stored.tenant_id,claim.runId,claim.stepId,JSON.stringify(input.analyticResult)]);
+      await appendEvent(client,claim.runId,'evidence_added',{step_id:claim.stepId,result_ref:input.resultRef},claim.stepId,claim.fencingToken);
+    }
     await appendEvent(client,claim.runId,'step_succeeded',{step_id:claim.stepId,result_ref:input.resultRef,fencing_token:claim.fencingToken},claim.stepId,claim.fencingToken);
-    const remaining=await client.query<{count:string}>("SELECT count(*)::text AS count FROM runs.steps WHERE run_id=$1 AND state<>'SUCCEEDED'",[claim.runId]);
+    const remaining=await client.query<{count:string}>(analytic.rowCount
+      ? "SELECT count(*)::text AS count FROM runs.steps WHERE run_id=$1 AND state IN ('PENDING','CLAIMED','RUNNING')"
+      : "SELECT count(*)::text AS count FROM runs.steps WHERE run_id=$1 AND state<>'SUCCEEDED'",[claim.runId]);
     if(Number(remaining.rows[0]?.count??0)===0){
       const run=await client.query<{state:RunState;state_version:number}>('SELECT state,state_version FROM runs.runs WHERE run_id=$1 FOR UPDATE',[claim.runId]);
       if(run.rows[0]?.state==='RUNNING'){
         const version=run.rows[0].state_version+1;
         await client.query("UPDATE runs.runs SET state='FINALISING',state_version=$2,updated_at=clock_timestamp() WHERE run_id=$1",[claim.runId,version]);
         await appendEvent(client,claim.runId,'run_state_changed',{state:'FINALISING',state_version:version});
-        await client.query("UPDATE runs.runs SET state='COMPLETED',state_version=state_version+1,updated_at=clock_timestamp() WHERE run_id=$1",[claim.runId]);
-        await appendEvent(client,claim.runId,'run_terminal',{state:'COMPLETED',state_version:version+1});
+        if(!analytic.rowCount){
+          await client.query("UPDATE runs.runs SET state='COMPLETED',state_version=state_version+1,updated_at=clock_timestamp() WHERE run_id=$1",[claim.runId]);
+          await appendEvent(client,claim.runId,'run_terminal',{state:'COMPLETED',state_version:version+1});
+        }
       }
     }
     return true;
@@ -108,6 +117,14 @@ export async function failStep(pool:Pool,claim:StepClaim,input:{reasonCode:strin
       [stored.tenant_id,claim.runId,claim.stepId,claim.workerId,claim.fencingToken]);
     if(!changed.rowCount)return false;
     await appendEvent(client,claim.runId,'step_failed',{step_id:claim.stepId,attempt:claim.attempt,fencing_token:claim.fencingToken,reason_codes:[input.reasonCode]},claim.stepId,claim.fencingToken);
+    const analytic=await client.query('SELECT 1 FROM runs.analytic_plans WHERE tenant_id=$1 AND run_id=$2',[stored.tenant_id,claim.runId]);
+    if(analytic.rowCount){
+      const remaining=await client.query<{count:string}>("SELECT count(*)::text AS count FROM runs.steps WHERE tenant_id=$1 AND run_id=$2 AND state IN ('PENDING','CLAIMED','RUNNING')",[stored.tenant_id,claim.runId]);
+      if(Number(remaining.rows[0]?.count??0)===0){
+        const run=await client.query<{state_version:number}>('UPDATE runs.runs SET state=\'FINALISING\',state_version=state_version+1,updated_at=clock_timestamp() WHERE tenant_id=$1 AND run_id=$2 AND state=\'RUNNING\' RETURNING state_version',[stored.tenant_id,claim.runId]);
+        if(run.rowCount)await appendEvent(client,claim.runId,'run_state_changed',{state:'FINALISING',state_version:run.rows[0]!.state_version});
+      }
+    }
     return true;
   });
 }
