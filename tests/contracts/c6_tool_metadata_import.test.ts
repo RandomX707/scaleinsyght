@@ -3,6 +3,7 @@ import { config } from 'dotenv';
 import { Pool } from 'pg';
 import { withTenant } from '@scaleinsyght/db';
 import { buildServer, hashPassword } from '@scaleinsyght/api/server';
+import { fingerprintIdentifier } from '@scaleinsyght/graph';
 
 config({ path: '.env' });
 function testUrl(key: 'DATABASE_URL'|'DATABASE_URL_MIGRATE'): string {
@@ -32,6 +33,29 @@ describe('c6 synthetic metadata import',()=>{
       expect(imported.statusCode).toBe(200);
       expect((imported.json() as {assets:number}).assets).toBeGreaterThan(0);
       expect((await server.inject({method:'POST',url:`/api/metadata/import/${connectionId}`,headers:{cookie},payload:{fixtureKey:'../../other'}})).statusCode).toBe(400);
+      const idField=await withTenant(migrate,tenantId,async(client)=>{
+        const row=await client.query<{asset_id:string;field_name:string}>('SELECT asset_id,field_name FROM graph.id_fields WHERE tenant_id=$1 LIMIT 1',[tenantId]);
+        const value='SYNTHETIC-CUSTOMER-IDENTIFIER-NEVER-PERSIST';
+        const fingerprint=fingerprintIdentifier(Buffer.from(process.env.ARTIFACT_MASTER_KEY!,'base64'),tenantId,value);
+        await client.query('INSERT INTO graph.id_fingerprints(tenant_id,asset_id,field_name,fingerprint,key_version) VALUES($1,$2,$3,$4,1)',[tenantId,row.rows[0]!.asset_id,row.rows[0]!.field_name,Buffer.from(fingerprint,'hex')]);
+        return {...row.rows[0]!,value};
+      });
+      const trace=await server.inject({method:'POST',url:`/api/ids/${idField.asset_id}/trace`,headers:{cookie},payload:{value:idField.value}});
+      expect(trace.statusCode).toBe(200);
+      expect(JSON.stringify(trace.json())).toContain(idField.field_name);
+      expect(JSON.stringify(trace.json())).not.toContain(idField.value);
+      const listed=await server.inject({method:'GET',url:'/api/ids',headers:{cookie}});
+      expect(listed.statusCode).toBe(200);
+      expect(JSON.stringify(listed.json())).not.toContain(fingerprintIdentifier(Buffer.from(process.env.ARTIFACT_MASTER_KEY!,'base64'),tenantId,idField.value));
+      const path=await server.inject({method:'GET',url:`/api/ids/${idField.asset_id}/path`,headers:{cookie}});
+      expect(path.statusCode, path.body).toBe(200);
+      expect(JSON.stringify(path.json())).toContain(idField.field_name);
+      const persistedIdentifiers=await withTenant(migrate,tenantId,async(client)=>client.query<{raw_matches:number}>(
+        `SELECT ((SELECT count(*) FROM graph.assets WHERE tenant_id=$1 AND qualified_name LIKE '%'||$2||'%')+
+         (SELECT count(*) FROM graph.evidence WHERE tenant_id=$1 AND safe_metadata::text LIKE '%'||$2||'%')+
+         (SELECT count(*) FROM graph.events WHERE tenant_id=$1 AND safe_payload::text LIKE '%'||$2||'%')+
+         (SELECT count(*) FROM graph.assertions WHERE tenant_id=$1 AND coalesce(explanation,'') LIKE '%'||$2||'%'))::int raw_matches`,[tenantId,idField.value]));
+      expect(persistedIdentifiers.rows[0]?.raw_matches).toBe(0);
       const assertion=await withTenant(migrate,tenantId,async(client)=>{
         const user=await client.query<{user_id:string}>('SELECT user_id FROM core.users WHERE tenant_id=$1',[tenantId]);
         const row=await client.query<{assertion_id:string;from_asset_id:string;to_asset_id:string;granularity:string}>(
@@ -63,14 +87,16 @@ describe('c6 synthetic metadata import',()=>{
       expect(reconciled.statusCode).toBe(200);
       expect((reconciled.json() as {verification:string}).verification).toBe('reconciled');
     }finally{await server.close();}
-    const persisted=await withTenant(migrate,tenantId,async(client)=>client.query<{datasets:number;reports:number;flows:number;assertions:number;events:number}>(
+      const persisted=await withTenant(migrate,tenantId,async(client)=>client.query<{datasets:number;reports:number;flows:number;assertions:number;events:number;id_fields:number}>(
       `SELECT (SELECT count(*)::int FROM graph.assets WHERE tenant_id=$1 AND asset_type='dataset') datasets,
        (SELECT count(*)::int FROM graph.assets WHERE tenant_id=$1 AND asset_type='report') reports,
        (SELECT count(*)::int FROM graph.relationships WHERE tenant_id=$1 AND family='data_flow') flows,
        (SELECT count(*)::int FROM graph.assertions WHERE tenant_id=$1) assertions,
-       (SELECT count(*)::int FROM graph.events WHERE tenant_id=$1 AND event_type='metadata_imported') events`,[tenantId]));
+       (SELECT count(*)::int FROM graph.events WHERE tenant_id=$1 AND event_type='metadata_imported') events,
+       (SELECT count(*)::int FROM graph.id_fields WHERE tenant_id=$1) id_fields`,[tenantId]));
     expect(persisted.rows[0]).toMatchObject({datasets:expect.any(Number),reports:expect.any(Number),flows:expect.any(Number),assertions:expect.any(Number),events:1});
     expect(persisted.rows[0]!.datasets).toBeGreaterThan(0);
     expect(persisted.rows[0]!.reports).toBeGreaterThan(0);
+    expect(persisted.rows[0]!.id_fields).toBe(3);
   });
 });

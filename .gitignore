@@ -5,6 +5,7 @@ playwright-report/
 test-results/
 .env
 .venv/
+__pycache__/
 .local/
 *.log
 *.tsbuildinfo

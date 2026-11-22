@@ -9,7 +9,7 @@ import { getNotifications, markNotificationRead, readConnectionScope, readWorkbo
 import { applyPersonalContext, createAnalyticPlan, startAnalyticRun, submitFeedback, type StructuredAnswer } from '@scaleinsyght/analytic';
 import { eventsAfter } from '@scaleinsyght/runner';
 import { AnalyticPlanSchema, hashPlan } from '@scaleinsyght/contracts';
-import { importGoldenMetadata, queryLineage, reconcileAssertion, reviewGraphAssertion, verifyAssertionFromRun } from '@scaleinsyght/graph';
+import { getIdentifierPath, importGoldenMetadata, listIdentifierFields, queryLineage, reconcileAssertion, reviewGraphAssertion, traceIdentifier, verifyAssertionFromRun } from '@scaleinsyght/graph';
 
 export interface GoldenAccount { tenantId: string; email: string; }
 export interface ServerOptions { pool: Pool; sessionSecret: string; goldenAccounts: GoldenAccount[]; artifactStore?: EncryptedArtifactStore; }
@@ -66,6 +66,23 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const {assetId,direction='both',asOf}=request.query;
     if(!assetId||!['upstream','downstream','both'].includes(direction)|| (asOf!==undefined&&!Number.isFinite(Date.parse(asOf))))return reply.code(400).send({error:'invalid_lineage_query'});
     return reply.send(await queryLineage(options.pool,{tenantId:current.tenantId,assetId,direction,...(asOf?{asOf:new Date(asOf)}:{})}));
+  });
+  app.get('/api/ids',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    return reply.send({fields:await listIdentifierFields(options.pool,current.tenantId)});
+  });
+  app.get<{Params:{assetId:string}}>('/api/ids/:assetId/path',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    if(!/^[0-9a-f-]{36}$/i.test(request.params.assetId))return reply.code(400).send({error:'invalid_asset_id'});
+    return reply.send(await getIdentifierPath(options.pool,{tenantId:current.tenantId,assetId:request.params.assetId}));
+  });
+  app.post<{Params:{assetId:string};Body:{value?:string}}>('/api/ids/:assetId/trace',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    if(!/^[0-9a-f-]{36}$/i.test(request.params.assetId)||typeof request.body?.value!=='string'||request.body.value.length<1||request.body.value.length>256)return reply.code(400).send({error:'invalid_identifier_request'});
+    const key=process.env.ARTIFACT_MASTER_KEY;
+    if(!key)return reply.code(503).send({error:'identifier_trace_unavailable'});
+    try{return reply.send({matches:await traceIdentifier(options.pool,{tenantId:current.tenantId,assetId:request.params.assetId,value:request.body.value,masterKey:Buffer.from(key,'base64')})});}
+    catch(error){if(error instanceof Error&&error.message==='invalid_identifier_input')return reply.code(503).send({error:'identifier_trace_unavailable'});throw error;}
   });
   app.post<{Params:{assertionId:string};Body:{status?:string}}>('/api/lineage/assertions/:assertionId/review',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});

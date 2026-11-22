@@ -90,7 +90,7 @@ export async function queryLineage(pool: Pool, input: QueryLineageInput): Promis
        AND ($4::text[] IS NULL OR a.evidence_method=ANY($4::text[]))`,
       [input.tenantId,edges.rows.map((row) => row.relationship_id),input.asOf ?? null,input.methods ?? null],
     );
-    const assertions = assertionRows.rows.map((row) => ({ ...row, captured_at:row.captured_at.toISOString(),valid_from:row.valid_from?.toISOString() ?? null,valid_to:row.valid_to?.toISOString() ?? null }));
+    const assertions = assertionRows.rows.map((row) => ({ ...row, confidence_score:row.confidence_score===null?null:Number(row.confidence_score),captured_at:row.captured_at.toISOString(),valid_from:row.valid_from?.toISOString() ?? null,valid_to:row.valid_to?.toISOString() ?? null }));
     const evidenceIds = [...new Set(assertions.flatMap((row) => row.evidence_ids))];
     const evidenceRows = evidenceIds.length ? await client.query<{ evidence_id:string;evidence_type:string;safe_metadata:Record<string,unknown>;captured_at:Date }>(
       'SELECT evidence_id,evidence_type,safe_metadata,captured_at FROM graph.evidence WHERE tenant_id=$1 AND evidence_id=ANY($2::uuid[])',[input.tenantId,evidenceIds]) : { rows:[] };
@@ -172,8 +172,8 @@ export async function importGoldenMetadata(pool: Pool, input: ImportGoldenMetada
       if(ids.length<1)continue;
       await client.query('INSERT INTO graph.gaps(tenant_id,between_asset_ids,reason) VALUES($1,$2::uuid[],$3)',[input.tenantId,ids,gap.reason]);gapCount++;
     }
-    for(const fieldName of ['customer_id','customer_key']){
-      const asset=corpus.assets.find((candidate)=>candidate.kind==='field'&&candidate.name.endsWith(`.${fieldName}`));
+    for(const asset of corpus.assets.filter((candidate)=>candidate.kind==='field'&&/\.(customer_id|customer_key)$/.test(candidate.name))){
+      const fieldName=asset.name.split('.').at(-1)!;
       const assetId=asset&&assetIds.get(asset.name);
       if(assetId)await client.query(`INSERT INTO graph.id_fields(tenant_id,asset_id,field_name,entity_hint,format_pattern,detection,confidence)
         VALUES($1,$2,$3,'customer','opaque_customer_key','inferred',0.900) ON CONFLICT(tenant_id,asset_id,field_name) DO UPDATE SET active=true`,[input.tenantId,assetId,fieldName]);
@@ -236,5 +236,38 @@ export async function reconcileAssertion(pool:Pool,input:{tenantId:string;assert
     if(!result.rowCount)throw new Error('reconciliation_evidence_not_found');
     await writeGraphEvent(client,{event_type:'assertion_verification_changed',assertion_id:input.assertionId,safe_payload:{verification:'reconciled'}});
     return result.rows[0]!;
+  });
+}
+
+export async function listIdentifierFields(pool:Pool,tenantId:string):Promise<Array<{asset_id:string;field_name:string;entity_hint:string|null;format_pattern:string;detection:'declared'|'inferred';confidence:number;assertion_id:string|null}>>{
+  return withTenant(pool,tenantId,async(client)=>{
+    const result=await client.query<{asset_id:string;field_name:string;entity_hint:string|null;format_pattern:string;detection:'declared'|'inferred';confidence:number;assertion_id:string|null}>(
+      `SELECT asset_id,field_name,entity_hint,format_pattern,detection,confidence,assertion_id FROM graph.id_fields WHERE tenant_id=$1 AND active ORDER BY field_name,asset_id`,[tenantId]);
+    return result.rows.map((row)=>({...row,confidence:Number(row.confidence)}));
+  });
+}
+
+export async function traceIdentifier(pool:Pool,input:{tenantId:string;assetId:string;value:string;masterKey:Uint8Array}):Promise<Array<{asset_id:string;field_name:string;entity_hint:string|null;format_pattern:string}>>{
+  if(typeof input.value!=='string'||input.value.length<1||input.value.length>256)throw new Error('invalid_identifier_value');
+  const fingerprint=Buffer.from(fingerprintIdentifier(input.masterKey,input.tenantId,input.value),'hex');
+  return withTenant(pool,input.tenantId,async(client)=>{
+    const result=await client.query<{asset_id:string;field_name:string;entity_hint:string|null;format_pattern:string}>(
+      `SELECT f.asset_id,f.field_name,d.entity_hint,d.format_pattern FROM graph.id_fingerprints f
+       JOIN graph.id_fields d ON d.tenant_id=f.tenant_id AND d.asset_id=f.asset_id AND d.field_name=f.field_name
+       WHERE f.tenant_id=$1 AND f.fingerprint=$2 AND f.asset_id=$3 AND d.active`,[input.tenantId,fingerprint,input.assetId]);
+    return result.rows;
+  });
+}
+
+export async function getIdentifierPath(pool:Pool,input:{tenantId:string;assetId:string}):Promise<IdPath & {fields:Array<{assetId:string;fieldName:string}>}>{
+  const lineage=await queryLineage(pool,{tenantId:input.tenantId,assetId:input.assetId,direction:'both'});
+  return withTenant(pool,input.tenantId,async(client)=>{
+    const fields=await client.query<{asset_id:string;field_name:string}>(
+      'SELECT asset_id,field_name FROM graph.id_fields WHERE tenant_id=$1 AND active AND asset_id=ANY($2::uuid[]) ORDER BY array_position($2::uuid[],asset_id)',[input.tenantId,lineage.asset_ids]);
+    const confidence=lineage.assertions.map((assertion)=>assertion.confidence_score??0);
+    const changeByAsset=new Map<string,IdPathStep['change']>();
+    for(let index=1;index<fields.rows.length;index++)changeByAsset.set(fields.rows[index]!.asset_id,fields.rows[index]!.field_name===fields.rows[index-1]!.field_name?'none':'renamed');
+    const steps:IdPathStep[]=fields.rows.map((field,index)=>({assetId:field.asset_id,change:index===0?'none':changeByAsset.get(field.asset_id)??'renamed',confidence:confidence.length?Math.min(...confidence):0,assertionId:lineage.assertions[index]?.assertion_id??null}));
+    return {...buildIdPath(steps,lineage.gaps.map((gap)=>gap.gap_id)),fields:fields.rows.map((field)=>({assetId:field.asset_id,fieldName:field.field_name}))};
   });
 }
