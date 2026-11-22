@@ -23,7 +23,7 @@ The product is **industry-agnostic and cloud-agnostic**. The prototype's hospita
 |---|---|---|
 | `docs/system-design-v3.2.md` | The approved system design: product architecture, Release 1 scope, the 8 frozen contracts with acceptance tests, and 20 decisions | Before starting any phase, and whenever you touch a contract |
 | `docs/prototype/index.html` | The clickable prototype, one file. Open it in a browser. It is the reference for screens, layout, wording and behaviour | Before building any screen |
-| `docs/decisions.md` | Decision log, seeded with decisions 1–25 and their status. Add new ones from 26 | Before assuming a default |
+| `docs/decisions.md` | Decision log, seeded with decisions 1–25 and their status. Add new ones from 27 | Before assuming a default |
 | `docs/phases/phase-N.md` | Per-phase spec: routes, tables, events, tests. Write it at the start of each phase, citing the contracts it implements | At the start of each phase |
 
 **When documents disagree:**
@@ -85,7 +85,7 @@ These are never broken, in any phase, for any reason. If a task seems to need br
 - **Find the root cause.** When something fails, explain the cause before changing code. Do not paper over a failure with retries, sleeps or broad try/catch.
 - **Tests come with the code.**
   - Unit tests: Vitest.
-  - Integration tests run against real PostgreSQL in Docker, never mocks for RLS or runner behaviour.
+  - Integration tests run against a real PostgreSQL 16 server, never mocks, PGlite or SQLite for RLS or runner behaviour. Locally that is a native install (section 5.1); in CI it is the GitHub Actions PostgreSQL service. Docker is not available on the development machine and must not be required.
   - Contract tests live in `tests/contracts/` and are named after the contract and test they prove, e.g. `c1_tenant_isolation_no_cross_rows.test.ts`.
   - E2E: Playwright against the web app.
 - **Label status honestly.** In docs, PRs and UI copy, every capability is existing, reusable, planned for Release 1 or later. Never claim a feature works until its test passes.
@@ -114,8 +114,24 @@ These are never broken, in any phase, for any reason. If a task seems to need br
 | File storage | Artifact store interface. Phase 1: encrypted volume with per-tenant keys | Uploaded Excel only |
 | Connectors | SQL Server (`mssql`), PostgreSQL (`pg`), Snowflake (`snowflake-sdk`), Excel (`exceljs`), dbt (`manifest.json` / `catalog.json` artifacts), Power BI (REST / scanner API), Tableau (Metadata API) | All read-only through the SQL guard |
 | Auth | Email and password with secure sessions in phase 0; SSO in phase 6 | |
-| Packaging | Docker images; `docker-compose.yml` reference deployment | Kubernetes only when a client requires it |
+| Packaging | Native processes for development (no Docker). Dockerfiles and a Compose file are added in phase 6 for deployment, never needed to develop or test | Kubernetes only when a client requires it |
 | CI | GitHub Actions: lint, typecheck, unit, integration (PostgreSQL service), contract suite, RLS catalogue check, Playwright | |
+
+### 5.1 Local environment (no Docker)
+
+The development machine has **no Docker**. Everything runs as native processes:
+
+- **Node 22 and pnpm.** Enable pnpm with Corepack and pin the version in `package.json` (`"packageManager": "pnpm@<version>"`):
+  `corepack enable && corepack prepare pnpm@latest --activate`
+- **PostgreSQL 16, installed natively** and run as a local service:
+  - macOS: `brew install postgresql@16 && brew services start postgresql@16`, or Postgres.app;
+  - Ubuntu: `sudo apt install postgresql-16`;
+  - Windows: the EDB installer.
+- **Connection settings from `.env`.** The app reads `DATABASE_URL` (app role), `DATABASE_URL_WORKER` (worker role) and `DATABASE_URL_MIGRATE` (migration role), with no hard-coded host. `.env.example` lists them; `.env` is never committed.
+- **`pnpm db:setup` prepares the local server.** It is a script that, as a local superuser, creates the database, the three roles (`si_migrate` owns the tables; `si_app` and `si_worker` own nothing and have no BYPASSRLS) and a separate `si_test` database. Tests reset `si_test` between suites; they never touch the dev database.
+- **Python 3.11+ for `services/sqlparse`**, in a virtual environment (`python -m venv .venv`), started by `pnpm dev`.
+- **DuckDB** comes from its npm package; no service is needed.
+- **If PostgreSQL is not reachable**, a test must fail with a clear message naming `DATABASE_URL`. It is never silently skipped. Never fall back to mocks, PGlite, SQLite or an in-memory database for contract tests.
 
 ---
 
@@ -153,7 +169,8 @@ scale-insyght/
 │  ├─ contracts/                    # one file per contract test
 │  ├─ golden/                       # synthetic golden dataset and expected lineage
 │  └─ e2e/
-└─ docker-compose.yml
+├─ scripts/db-setup.ts             # creates database, roles and test database on a local PostgreSQL
+└─ .env.example
 ```
 
 Keep this layout unless a decision changes it. Never import across packages through relative paths; use package names.
@@ -535,15 +552,16 @@ Until a decision is approved, build to the design's recommendation and mark it "
 Fill these in during phase 0 and keep them current.
 
 ```
+corepack enable          # once, provides pnpm
 pnpm install
-pnpm dev                 # web + api + worker against local docker-compose PostgreSQL
+pnpm db:setup            # once: database, roles and test database on local PostgreSQL
+pnpm dev                 # web + api + worker + sqlparse against local PostgreSQL
 pnpm db:migrate          # runs as the migration role
 pnpm test                # unit
-pnpm test:integration    # requires Docker
+pnpm test:integration    # requires local PostgreSQL (section 5.1)
 pnpm test:contracts      # contract suite (CI gate)
 pnpm test:e2e            # Playwright
 pnpm lint && pnpm typecheck
-docker compose up        # full reference deployment
 ```
 
 ---

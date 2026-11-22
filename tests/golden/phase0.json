@@ -1,0 +1,14 @@
+{
+  "tenants": [
+    { "id": "golden-tenant-north", "name": "Meridian North Synthetic" },
+    { "id": "golden-tenant-south", "name": "Meridian South Synthetic" }
+  ],
+  "users": [
+    { "id": "golden-user-north", "tenantId": "golden-tenant-north", "email": "analyst@north.example" },
+    { "id": "golden-user-south", "tenantId": "golden-tenant-south", "email": "analyst@south.example" }
+  ],
+  "scriptedRun": {
+    "steps": ["read_metadata_summary", "read_metadata_count"],
+    "resultRefs": ["golden://phase0/summary", "golden://phase0/count"]
+  }
+}

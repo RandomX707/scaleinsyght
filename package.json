@@ -1,0 +1,49 @@
+{
+  "name": "scale-insyght",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.21.0",
+  "engines": {
+    "node": ">=22 <23"
+  },
+  "scripts": {
+    "db:setup": "tsx scripts/db-setup.ts",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "db:migrate:test": "tsx scripts/migrate.ts --test",
+    "db:seed:golden": "tsx scripts/seed-golden.ts",
+    "demo:phase0": "tsx scripts/demo-phase0.ts",
+    "db:test:reset": "tsx scripts/prepare-test-db.ts",
+    "dev": "concurrently -k -n api,worker,web \"pnpm --filter @scaleinsyght/api dev\" \"pnpm --filter @scaleinsyght/worker dev\" \"pnpm --filter @scaleinsyght/web dev --host 127.0.0.1\"",
+    "test": "vitest run tests/unit",
+    "test:integration": "pnpm db:test:reset && pnpm db:migrate:test && vitest run tests/integration",
+    "test:contracts": "pnpm db:test:reset && pnpm db:migrate:test && vitest run tests/contracts",
+    "test:e2e": "pnpm db:test:reset && pnpm db:migrate:test && pnpm db:seed:golden -- --test && playwright test",
+    "lint": "eslint .",
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "@scaleinsyght/contracts": "workspace:*",
+    "@scaleinsyght/db": "workspace:*",
+    "@scaleinsyght/policy": "workspace:*",
+    "@scaleinsyght/registry": "workspace:*",
+    "@scaleinsyght/runner": "workspace:*",
+    "@scaleinsyght/api": "workspace:*",
+    "fastify": "^5.6.2",
+    "dotenv": "^16.6.1",
+    "pg": "^8.16.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.0",
+    "@playwright/test": "^1.56.1",
+    "@types/node": "^22.19.0",
+    "@types/pg": "^8.15.5",
+    "concurrently": "^9.2.1",
+    "eslint": "^9.39.0",
+    "globals": "^16.5.0",
+    "node-pg-migrate": "^9.0.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.46.4",
+    "vitest": "^3.2.4"
+  }
+}
