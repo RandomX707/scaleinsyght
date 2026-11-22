@@ -7,6 +7,11 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
     ALTER TABLE graph.assertions ADD CONSTRAINT assertions_valid_window CHECK(valid_to IS NULL OR valid_from IS NULL OR valid_to >= valid_from);
     ALTER TABLE core.notifications DROP CONSTRAINT notifications_notification_type_check;
     ALTER TABLE core.notifications ADD CONSTRAINT notifications_notification_type_check CHECK(notification_type IN ('discovery','nightly','report_impact'));
+    ALTER TABLE core.notifications ALTER COLUMN connection_id DROP NOT NULL;
+    ALTER TABLE core.notifications ALTER COLUMN job_id DROP NOT NULL;
+    ALTER TABLE core.notifications ADD COLUMN report_asset_id uuid;
+    ALTER TABLE core.notifications ADD CONSTRAINT notifications_report_asset_fk FOREIGN KEY(tenant_id,report_asset_id) REFERENCES graph.assets(tenant_id,asset_id);
+    CREATE UNIQUE INDEX notifications_report_impact_unique ON core.notifications(tenant_id,user_id,report_asset_id,notification_type) WHERE notification_type='report_impact';
     ALTER TABLE graph.assets DROP CONSTRAINT assets_asset_type_check;
     ALTER TABLE graph.assets ADD CONSTRAINT assets_asset_type_check CHECK(asset_type IN ('system','container','dataset','field','report','metric'));
 

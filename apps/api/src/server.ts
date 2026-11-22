@@ -9,7 +9,7 @@ import { getNotifications, markNotificationRead, readConnectionScope, readWorkbo
 import { applyPersonalContext, createAnalyticPlan, startAnalyticRun, submitFeedback, type StructuredAnswer } from '@scaleinsyght/analytic';
 import { eventsAfter } from '@scaleinsyght/runner';
 import { AnalyticPlanSchema, hashPlan } from '@scaleinsyght/contracts';
-import { getIdentifierPath, importGoldenMetadata, listIdentifierFields, queryLineage, reconcileAssertion, reviewGraphAssertion, traceIdentifier, verifyAssertionFromRun } from '@scaleinsyght/graph';
+import { compareGraphSnapshots, getIdentifierPath, getImpactRadius, importGoldenMetadata, listGraphSnapshots, listIdentifierFields, listReports, queryLineage, reconcileAssertion, reviewGraphAssertion, traceIdentifier, verifyAssertionFromRun } from '@scaleinsyght/graph';
 
 export interface GoldenAccount { tenantId: string; email: string; }
 export interface ServerOptions { pool: Pool; sessionSecret: string; goldenAccounts: GoldenAccount[]; artifactStore?: EncryptedArtifactStore; }
@@ -70,6 +70,25 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
   app.get('/api/ids',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     return reply.send({fields:await listIdentifierFields(options.pool,current.tenantId)});
+  });
+  app.get('/api/reports',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    return reply.send({reports:await listReports(options.pool,current.tenantId)});
+  });
+  app.get<{Params:{assetId:string}}>('/api/lineage/:assetId/impact',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    if(!/^[0-9a-f-]{36}$/i.test(request.params.assetId))return reply.code(400).send({error:'invalid_asset_id'});
+    return reply.send(await getImpactRadius(options.pool,{tenantId:current.tenantId,assetId:request.params.assetId}));
+  });
+  app.get('/api/lineage/snapshots',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    return reply.send({snapshots:await listGraphSnapshots(options.pool,current.tenantId)});
+  });
+  app.get<{Params:{from:string;to:string}}>('/api/lineage/snapshots/:from/compare/:to',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    if(!/^[0-9a-f-]{36}$/i.test(request.params.from)||!/^[0-9a-f-]{36}$/i.test(request.params.to))return reply.code(400).send({error:'invalid_snapshot_id'});
+    try{return reply.send(await compareGraphSnapshots(options.pool,{tenantId:current.tenantId,fromSnapshotId:request.params.from,toSnapshotId:request.params.to}));}
+    catch(error){if(error instanceof Error&&error.message==='snapshot_not_found')return reply.code(404).send({error:error.message});throw error;}
   });
   app.get<{Params:{assetId:string}}>('/api/ids/:assetId/path',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});

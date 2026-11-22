@@ -134,6 +134,11 @@ export async function importGoldenMetadata(pool: Pool, input: ImportGoldenMetada
          RETURNING asset_id`,[input.tenantId,input.connectionId,kind,asset.name,fingerprint]);
       assetIds.set(asset.name,inserted.rows[0]!.asset_id);
     }
+    for(const report of fixture.reports){
+      const reportId=assetIds.get(report.name);
+      if(reportId)await client.query('INSERT INTO graph.evidence(tenant_id,evidence_type,safe_metadata) VALUES($1,\'report_link\',$2::jsonb)',
+        [input.tenantId,JSON.stringify({asset_id:reportId,tool:report.tool,safe_path:report.safe_path,fixture_key:input.fixtureKey})]);
+    }
     let flowCount=0;
     const evidenceFor=new Map<string,string>();
     for(const flow of corpus.flows){
@@ -178,8 +183,20 @@ export async function importGoldenMetadata(pool: Pool, input: ImportGoldenMetada
       if(assetId)await client.query(`INSERT INTO graph.id_fields(tenant_id,asset_id,field_name,entity_hint,format_pattern,detection,confidence)
         VALUES($1,$2,$3,'customer','opaque_customer_key','inferred',0.900) ON CONFLICT(tenant_id,asset_id,field_name) DO UPDATE SET active=true`,[input.tenantId,assetId,fieldName]);
     }
+    const impactedAssetId=assetIds.get(corpus.reportImpact.changedAsset);
+    const reportAssetId=assetIds.get(corpus.reportImpact.report);
+    if(impactedAssetId&&reportAssetId){
+      await client.query("SELECT set_config('app.principal_id',$1,true)",[input.principalId]);
+      await client.query(`INSERT INTO core.notifications(tenant_id,user_id,notification_type,safe_summary,report_asset_id)
+        VALUES($1,$2,'report_impact',$3::jsonb,$4) ON CONFLICT(tenant_id,user_id,report_asset_id,notification_type) WHERE notification_type='report_impact' DO NOTHING`,
+        [input.tenantId,input.principalId,JSON.stringify({report_name:corpus.reportImpact.report,changed_asset:corpus.reportImpact.changedAsset,reason_code:'synthetic_lineage_change'}),reportAssetId]);
+      await writeGraphEvent(client,{event_type:'report_impacted',asset_id:impactedAssetId,report_asset_id:reportAssetId,safe_payload:{report_count:1,reason_code:'synthetic_lineage_change'}});
+    }
     const event:GraphEvent={event_type:'metadata_imported',safe_payload:{fixture_key:input.fixtureKey,asset_count:assetIds.size,tool:fixture.tool}};
     await writeGraphEvent(client,event);
+    const cursor=await client.query<{event_cursor:string}>("SELECT coalesce(max(event_id),0)::text event_cursor FROM graph.events WHERE tenant_id=$1",[input.tenantId]);
+    const count=await client.query<{asset_count:number}>("SELECT count(*)::int asset_count FROM graph.assets WHERE tenant_id=$1",[input.tenantId]);
+    await client.query('INSERT INTO graph.snapshots(tenant_id,event_cursor,asset_count) VALUES($1,$2,$3)',[input.tenantId,cursor.rows[0]!.event_cursor,count.rows[0]!.asset_count]);
     return {assets:assetIds.size,flows:flowCount,reports:fixture.reports.length,gaps:gapCount};
   });
 }
@@ -269,5 +286,50 @@ export async function getIdentifierPath(pool:Pool,input:{tenantId:string;assetId
     for(let index=1;index<fields.rows.length;index++)changeByAsset.set(fields.rows[index]!.asset_id,fields.rows[index]!.field_name===fields.rows[index-1]!.field_name?'none':'renamed');
     const steps:IdPathStep[]=fields.rows.map((field,index)=>({assetId:field.asset_id,change:index===0?'none':changeByAsset.get(field.asset_id)??'renamed',confidence:confidence.length?Math.min(...confidence):0,assertionId:lineage.assertions[index]?.assertion_id??null}));
     return {...buildIdPath(steps,lineage.gaps.map((gap)=>gap.gap_id)),fields:fields.rows.map((field)=>({assetId:field.asset_id,fieldName:field.field_name}))};
+  });
+}
+
+export async function listGraphSnapshots(pool:Pool,tenantId:string):Promise<Array<{snapshot_id:string;captured_at:string;event_cursor:number;asset_count:number}>>{
+  return withTenant(pool,tenantId,async(client)=>{
+    const result=await client.query<{snapshot_id:string;captured_at:Date;event_cursor:string;asset_count:number}>(
+      'SELECT snapshot_id,captured_at,event_cursor,asset_count FROM graph.snapshots WHERE tenant_id=$1 ORDER BY captured_at,snapshot_id',[tenantId]);
+    return result.rows.map((row)=>({...row,captured_at:row.captured_at.toISOString(),event_cursor:Number(row.event_cursor)}));
+  });
+}
+
+export async function compareGraphSnapshots(pool:Pool,input:{tenantId:string;fromSnapshotId:string;toSnapshotId:string}):Promise<{from:string;to:string;changes:Array<{event_type:string;asset_id:string|null;report_asset_id:string|null;safe_payload:Record<string,unknown>}>}>{
+  return withTenant(pool,input.tenantId,async(client)=>{
+    const snapshots=await client.query<{snapshot_id:string;event_cursor:string}>(
+      'SELECT snapshot_id,event_cursor FROM graph.snapshots WHERE tenant_id=$1 AND snapshot_id=ANY($2::uuid[])',[input.tenantId,[input.fromSnapshotId,input.toSnapshotId]]);
+    const from=snapshots.rows.find((row)=>row.snapshot_id===input.fromSnapshotId),to=snapshots.rows.find((row)=>row.snapshot_id===input.toSnapshotId);
+    if(!from||!to)throw new Error('snapshot_not_found');
+    const changes=await client.query<{event_type:string;asset_id:string|null;report_asset_id:string|null;safe_payload:Record<string,unknown>}>(
+      `SELECT event_type,asset_id,report_asset_id,safe_payload FROM graph.events WHERE tenant_id=$1 AND event_id>$2 AND event_id<=$3 ORDER BY event_id`,
+      [input.tenantId,from.event_cursor,to.event_cursor]);
+    return {from:from.snapshot_id,to:to.snapshot_id,changes:changes.rows};
+  });
+}
+
+export async function getImpactRadius(pool:Pool,input:{tenantId:string;assetId:string}):Promise<{path:LineagePath;reports:Array<{asset_id:string;name:string;tool:string|null;safe_path:string|null}>}>{
+  const path=await queryLineage(pool,{tenantId:input.tenantId,assetId:input.assetId,direction:'downstream'});
+  const reports=await withTenant(pool,input.tenantId,async(client)=>client.query<{asset_id:string;name:string;tool:string|null;safe_path:string|null}>(
+    `SELECT a.asset_id,a.qualified_name AS name,e.safe_metadata->>'tool' AS tool,e.safe_metadata->>'safe_path' AS safe_path
+     FROM graph.assets a LEFT JOIN LATERAL (SELECT safe_metadata FROM graph.evidence WHERE tenant_id=a.tenant_id AND evidence_type='report_link'
+       AND safe_metadata->>'asset_id'=a.asset_id::text ORDER BY captured_at DESC LIMIT 1) e ON true
+     WHERE a.tenant_id=$1 AND a.asset_type='report' AND (a.asset_id=ANY($2::uuid[]) OR EXISTS(
+       SELECT 1 FROM graph.events impact WHERE impact.tenant_id=$1 AND impact.event_type='report_impacted' AND impact.asset_id=$3 AND impact.report_asset_id=a.asset_id))
+     ORDER BY a.qualified_name`,[input.tenantId,path.asset_ids,input.assetId]));
+  return {path,reports:reports.rows};
+}
+
+export async function listReports(pool:Pool,tenantId:string):Promise<Array<{asset_id:string;name:string;tool:string|null;safe_path:string|null;lineage_assertions:number}>>{
+  return withTenant(pool,tenantId,async(client)=>{
+    const result=await client.query<{asset_id:string;name:string;tool:string|null;safe_path:string|null;lineage_assertions:number}>(
+      `SELECT a.asset_id,a.qualified_name AS name,e.safe_metadata->>'tool' AS tool,e.safe_metadata->>'safe_path' AS safe_path,
+       (SELECT count(*)::int FROM graph.relationships r WHERE r.tenant_id=a.tenant_id AND r.to_asset_id=a.asset_id AND r.family='data_flow') AS lineage_assertions
+       FROM graph.assets a LEFT JOIN LATERAL (SELECT safe_metadata FROM graph.evidence WHERE tenant_id=a.tenant_id AND evidence_type='report_link'
+        AND safe_metadata->>'asset_id'=a.asset_id::text ORDER BY captured_at DESC LIMIT 1) e ON true
+       WHERE a.tenant_id=$1 AND a.asset_type='report' AND a.active ORDER BY a.qualified_name`,[tenantId]);
+    return result.rows;
   });
 }

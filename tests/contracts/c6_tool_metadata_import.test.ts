@@ -32,6 +32,23 @@ describe('c6 synthetic metadata import',()=>{
       const imported=await server.inject({method:'POST',url:`/api/metadata/import/${connectionId}`,headers:{cookie},payload:{fixtureKey:'dbt-manifest'}});
       expect(imported.statusCode).toBe(200);
       expect((imported.json() as {assets:number}).assets).toBeGreaterThan(0);
+      expect((await server.inject({method:'POST',url:`/api/metadata/import/${connectionId}`,headers:{cookie},payload:{fixtureKey:'dbt-manifest'}})).statusCode).toBe(200);
+      const notices=await server.inject({method:'GET',url:'/api/notifications',headers:{cookie}});
+      expect((notices.json() as {notifications:Array<{type:string}>}).notifications.map((item)=>item.type)).toContain('report_impact');
+      const reports=await server.inject({method:'GET',url:'/api/reports',headers:{cookie}});
+      expect(reports.statusCode).toBe(200);
+      expect(JSON.stringify(reports.json())).toContain('Power BI.Customer Health');
+      const changedAsset=await withTenant(migrate,tenantId,async(client)=>(await client.query<{asset_id:string}>("SELECT asset_id FROM graph.assets WHERE tenant_id=$1 AND qualified_name='dbt.customer_mart.customer_key' LIMIT 1",[tenantId])).rows[0]!.asset_id);
+      const impact=await server.inject({method:'GET',url:`/api/lineage/${changedAsset}/impact`,headers:{cookie}});
+      expect(impact.statusCode).toBe(200);
+      expect(JSON.stringify(impact.json())).toContain('Power BI.Customer Health');
+      const snapshots=await server.inject({method:'GET',url:'/api/lineage/snapshots',headers:{cookie}});
+      expect(snapshots.statusCode).toBe(200);
+      const snapshotRows=(snapshots.json() as {snapshots:Array<{snapshot_id:string}>}).snapshots;
+      expect(snapshotRows.length).toBeGreaterThanOrEqual(2);
+      const comparison=await server.inject({method:'GET',url:`/api/lineage/snapshots/${snapshotRows[0]!.snapshot_id}/compare/${snapshotRows.at(-1)!.snapshot_id}`,headers:{cookie}});
+      expect(comparison.statusCode).toBe(200);
+      expect((comparison.json() as {changes:Array<{event_type:string}>}).changes.map((item)=>item.event_type)).toContain('metadata_imported');
       expect((await server.inject({method:'POST',url:`/api/metadata/import/${connectionId}`,headers:{cookie},payload:{fixtureKey:'../../other'}})).statusCode).toBe(400);
       const idField=await withTenant(migrate,tenantId,async(client)=>{
         const row=await client.query<{asset_id:string;field_name:string}>('SELECT asset_id,field_name FROM graph.id_fields WHERE tenant_id=$1 LIMIT 1',[tenantId]);
@@ -87,16 +104,22 @@ describe('c6 synthetic metadata import',()=>{
       expect(reconciled.statusCode).toBe(200);
       expect((reconciled.json() as {verification:string}).verification).toBe('reconciled');
     }finally{await server.close();}
-      const persisted=await withTenant(migrate,tenantId,async(client)=>client.query<{datasets:number;reports:number;flows:number;assertions:number;events:number;id_fields:number}>(
+      const persisted=await withTenant(migrate,tenantId,async(client)=>{
+      const principal=await client.query<{user_id:string}>('SELECT user_id FROM core.users WHERE tenant_id=$1',[tenantId]);
+      await client.query("SELECT set_config('app.principal_id',$1,true)",[principal.rows[0]!.user_id]);
+      return client.query<{datasets:number;reports:number;flows:number;assertions:number;events:number;id_fields:number;impacts:number}>(
       `SELECT (SELECT count(*)::int FROM graph.assets WHERE tenant_id=$1 AND asset_type='dataset') datasets,
        (SELECT count(*)::int FROM graph.assets WHERE tenant_id=$1 AND asset_type='report') reports,
        (SELECT count(*)::int FROM graph.relationships WHERE tenant_id=$1 AND family='data_flow') flows,
        (SELECT count(*)::int FROM graph.assertions WHERE tenant_id=$1) assertions,
        (SELECT count(*)::int FROM graph.events WHERE tenant_id=$1 AND event_type='metadata_imported') events,
-       (SELECT count(*)::int FROM graph.id_fields WHERE tenant_id=$1) id_fields`,[tenantId]));
-    expect(persisted.rows[0]).toMatchObject({datasets:expect.any(Number),reports:expect.any(Number),flows:expect.any(Number),assertions:expect.any(Number),events:1});
+       (SELECT count(*)::int FROM graph.id_fields WHERE tenant_id=$1) id_fields,
+       (SELECT count(*)::int FROM core.notifications WHERE tenant_id=$1 AND notification_type='report_impact') impacts`,[tenantId]);
+    });
+    expect(persisted.rows[0]).toMatchObject({datasets:expect.any(Number),reports:expect.any(Number),flows:expect.any(Number),assertions:expect.any(Number),events:2});
     expect(persisted.rows[0]!.datasets).toBeGreaterThan(0);
     expect(persisted.rows[0]!.reports).toBeGreaterThan(0);
     expect(persisted.rows[0]!.id_fields).toBe(3);
+    expect(persisted.rows[0]!.impacts).toBe(1);
   });
 });
