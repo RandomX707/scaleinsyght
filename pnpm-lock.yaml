@@ -367,6 +367,9 @@ importers:
 
   packages/graph:
     dependencies:
+      '@scaleinsyght/connectors':
+        specifier: workspace:*
+        version: link:../connectors
       '@scaleinsyght/contracts':
         specifier: workspace:*
         version: link:../contracts

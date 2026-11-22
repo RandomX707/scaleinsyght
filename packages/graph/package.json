@@ -6,6 +6,7 @@
   "exports": { ".": "./src/index.ts" },
   "dependencies": {
     "@scaleinsyght/contracts": "workspace:*",
-    "@scaleinsyght/db": "workspace:*"
+    "@scaleinsyght/db": "workspace:*",
+    "@scaleinsyght/connectors": "workspace:*"
   }
 }
