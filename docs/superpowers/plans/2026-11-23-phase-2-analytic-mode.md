@@ -40,13 +40,13 @@
 
 ## Task 2: Memory and governed-definition persistence
 
-**Files:** migration `008_analytic_mode.ts`, `packages/registry/src/index.ts`, `packages/db/src/`, RLS catalogue contract tests.
+**Files:** migration `008_analytic_mode.ts`, `packages/registry/src/index.ts`, `apps/api/src/server.ts`, RLS catalogue contract tests.
 
 **Interfaces:** Add `getPersonalMemory(pool,tenantId,principalId)`, `putPersonalMemory(...)`, `deletePersonalMemory(...)`; `moveConnectionToGroup(...)`; `createGovernedDraft(...)`, `approveGovernedVersion(...)`, and `getApprovedGovernedVersion(...)`. Drop the old `role_template` column to follow CLAUDE.md §3.13. Add feedback and evaluation tables that store references/question/correction only, no result rows.
 
-- [ ] Write C1/C2/C7 PostgreSQL contract cases for owner-only read/write/delete, entitlement non-expansion, immutable versions, approval binding, source-group version moves and prohibited memory data.
-- [ ] Run targeted contract tests and verify failing behavior.
-- [ ] Add forced RLS, grants and immutable-version triggers; add `POST /api/groups/:groupId/members/:connectionId`; run `pnpm test:contracts` and catalogue checks; commit `feat: persist personal memory and governed definitions`.
+- [x] Write C1/C2/C7 PostgreSQL contract cases for owner-only read/write/delete, entitlement non-expansion, immutable versions, approval binding, source-group version moves and prohibited memory data.
+- [x] Run targeted contract tests and verify failing behavior.
+- [x] Add forced RLS, grants and immutable-version triggers; add `POST /api/groups/:groupId/members/:connectionId`; run `pnpm test:contracts` and catalogue checks; commit `feat: persist personal memory and governed definitions`.
 
 ## Task 3: Authorization, deterministic planning and run creation
 

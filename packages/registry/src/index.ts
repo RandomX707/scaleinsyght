@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
 import { withTenant } from '@scaleinsyght/db';
-import type { EffectClass, EffectSafety } from '@scaleinsyght/contracts';
+import { hashPlan, type EffectClass, type EffectSafety } from '@scaleinsyght/contracts';
 
 export type ConnectorType = 'sql_server' | 'postgres' | 'snowflake' | 'excel' | 'dbt' | 'tableau' | 'power_bi';
 
@@ -180,31 +180,46 @@ export async function moveConnectionToGroup(
 }
 
 export interface PersonalMemoryData {
- roleTemplate:'analyst'|'engineer'|'researcher'|'executive'|null;
- vocabulary:Record<string,string>;
- defaultSources:string[];
- savedPlanIds:string[];
+ vocabulary:Record<string,string>; defaultSources:string[]; savedPlanIds:string[];
  answerStyle:'concise'|'detailed'|'sql_first'|'lineage_first'|null;
+ corrections?:Array<{term:string;meaning:string}>;
 }
-export async function savePersonalMemory(pool:Pool,input:{tenantId:string;personId:string;memory:PersonalMemoryData}):Promise<void>{
- const memory=input.memory;
- if(Object.keys(memory.vocabulary).length>100||Object.entries(memory.vocabulary).some(([key,value])=>!key.trim()||key.length>120||value.length>500))throw new Error('invalid_personal_memory');
- if([...memory.defaultSources,...memory.savedPlanIds].some(id=>!/^\w[\w-]{0,127}$/.test(id)))throw new Error('invalid_personal_memory');
+function validateMemory(memory:PersonalMemoryData):void{
+ if(Object.keys(memory.vocabulary).length>100||Object.entries(memory.vocabulary).some(([key,value])=>!key.trim()||key.length>120||value.length>500)||[...memory.defaultSources,...memory.savedPlanIds].some(id=>!/^\w[\w-]{0,127}$/.test(id))||(memory.corrections??[]).length>100||(memory.corrections??[]).some(item=>!item.term.trim()||item.term.length>120||!item.meaning.trim()||item.meaning.length>500))throw new Error('invalid_personal_memory');
+}
+export async function putPersonalMemory(pool:Pool,input:{tenantId:string;principalId:string;memory:PersonalMemoryData}):Promise<void>{
+ const memory=input.memory;validateMemory(memory);
  await withTenant(pool,input.tenantId,async(client)=>{
-  await client.query("SELECT set_config('app.principal_id',$1,true)",[input.personId]);
-  await client.query(`INSERT INTO registry.personal_memories(tenant_id,person_id,role_template,vocabulary,default_sources,saved_plan_ids,answer_style)
-   VALUES($1,$2,$3,$4::jsonb,$5::jsonb,$6::jsonb,$7)
-   ON CONFLICT(tenant_id,person_id) DO UPDATE SET role_template=EXCLUDED.role_template,vocabulary=EXCLUDED.vocabulary,
-   default_sources=EXCLUDED.default_sources,saved_plan_ids=EXCLUDED.saved_plan_ids,answer_style=EXCLUDED.answer_style,updated_at=clock_timestamp()`,
-   [input.tenantId,input.personId,memory.roleTemplate,JSON.stringify(memory.vocabulary),JSON.stringify(memory.defaultSources),JSON.stringify(memory.savedPlanIds),memory.answerStyle]);
+  await client.query("SELECT set_config('app.principal_id',$1,true)",[input.principalId]);
+  await client.query(`INSERT INTO registry.personal_memories(tenant_id,person_id,vocabulary,default_sources,saved_plan_ids,answer_style,corrections)
+   VALUES($1,$2,$3::jsonb,$4::jsonb,$5::jsonb,$6,$7::jsonb)
+   ON CONFLICT(tenant_id,person_id) DO UPDATE SET vocabulary=EXCLUDED.vocabulary,default_sources=EXCLUDED.default_sources,saved_plan_ids=EXCLUDED.saved_plan_ids,answer_style=EXCLUDED.answer_style,corrections=EXCLUDED.corrections,updated_at=clock_timestamp()`,
+   [input.tenantId,input.principalId,JSON.stringify(memory.vocabulary),JSON.stringify(memory.defaultSources),JSON.stringify(memory.savedPlanIds),memory.answerStyle,JSON.stringify(memory.corrections??[])]);
  });
 }
-export async function readPersonalMemory(pool:Pool,input:{tenantId:string;personId:string}):Promise<PersonalMemoryData>{
+export async function getPersonalMemory(pool:Pool,input:{tenantId:string;principalId:string}):Promise<PersonalMemoryData>{
  return withTenant(pool,input.tenantId,async(client)=>{
-  await client.query("SELECT set_config('app.principal_id',$1,true)",[input.personId]);
-  const result=await client.query<{role_template:PersonalMemoryData['roleTemplate'];vocabulary:Record<string,string>;default_sources:string[];saved_plan_ids:string[];answer_style:PersonalMemoryData['answerStyle']}>('SELECT role_template,vocabulary,default_sources,saved_plan_ids,answer_style FROM registry.personal_memories WHERE tenant_id=$1 AND person_id=$2',[input.tenantId,input.personId]);
-  const row=result.rows[0];return row?{roleTemplate:row.role_template,vocabulary:row.vocabulary,defaultSources:row.default_sources,savedPlanIds:row.saved_plan_ids,answerStyle:row.answer_style}:{roleTemplate:null,vocabulary:{},defaultSources:[],savedPlanIds:[],answerStyle:null};
+  await client.query("SELECT set_config('app.principal_id',$1,true)",[input.principalId]);
+  const result=await client.query<{vocabulary:Record<string,string>;default_sources:string[];saved_plan_ids:string[];answer_style:PersonalMemoryData['answerStyle'];corrections:Array<{term:string;meaning:string}>}>('SELECT vocabulary,default_sources,saved_plan_ids,answer_style,corrections FROM registry.personal_memories WHERE tenant_id=$1 AND person_id=$2',[input.tenantId,input.principalId]);
+  const row=result.rows[0];return row?{vocabulary:row.vocabulary,defaultSources:row.default_sources,savedPlanIds:row.saved_plan_ids,answerStyle:row.answer_style,corrections:row.corrections}:{vocabulary:{},defaultSources:[],savedPlanIds:[],answerStyle:null,corrections:[]};
  });
+}
+export async function deletePersonalMemory(pool:Pool,input:{tenantId:string;principalId:string}):Promise<boolean>{
+ return withTenant(pool,input.tenantId,async(client)=>{await client.query("SELECT set_config('app.principal_id',$1,true)",[input.principalId]);const result=await client.query('DELETE FROM registry.personal_memories WHERE tenant_id=$1 AND person_id=$2',[input.tenantId,input.principalId]);return result.rowCount===1;});
+}
+export async function createGovernedDraft(pool:Pool,input:{tenantId:string;principalId:string;name:string;plan:Record<string,unknown>;governedId?:string}):Promise<{governedId:string;version:number;planHash:string}>{
+ if(!input.name.trim()||input.name.length>160)throw new Error('invalid_governed_name');const planHash=await hashPlan(input.plan);
+ return withTenant(pool,input.tenantId,async(client)=>{let governedId=input.governedId;let version=1;
+  if(governedId){const row=await client.query<{latest_version:number;owner_id:string}>('SELECT latest_version,owner_id FROM registry.governed_definitions WHERE tenant_id=$1 AND governed_id=$2 FOR UPDATE',[input.tenantId,governedId]);if(!row.rowCount)throw new Error('governed_definition_not_found');if(row.rows[0]!.owner_id!==input.principalId)throw new Error('governed_definition_forbidden');version=row.rows[0]!.latest_version+1;await client.query('UPDATE registry.governed_definitions SET latest_version=$3,name=$4 WHERE tenant_id=$1 AND governed_id=$2',[input.tenantId,governedId,version,input.name]);}
+  else{const result=await client.query<{governed_id:string}>('INSERT INTO registry.governed_definitions(tenant_id,owner_id,name,latest_version) VALUES($1,$2,$3,1) RETURNING governed_id',[input.tenantId,input.principalId,input.name]);governedId=result.rows[0]!.governed_id;}
+  await client.query('INSERT INTO registry.governed_versions(tenant_id,governed_id,version,plan,plan_hash,created_by) VALUES($1,$2,$3,$4::jsonb,$5,$6)',[input.tenantId,governedId,version,JSON.stringify(input.plan),planHash,input.principalId]);
+  await client.query("INSERT INTO registry.governed_events(tenant_id,governed_id,version,event_type,principal_id) VALUES($1,$2,$3,'draft_created',$4)",[input.tenantId,governedId,version,input.principalId]);return{governedId,version,planHash};});
+}
+export async function approveGovernedVersion(pool:Pool,input:{tenantId:string;principalId:string;governedId:string;version:number}):Promise<{version:number}>{
+ return withTenant(pool,input.tenantId,async(client)=>{const exists=await client.query('SELECT 1 FROM registry.governed_versions WHERE tenant_id=$1 AND governed_id=$2 AND version=$3',[input.tenantId,input.governedId,input.version]);if(!exists.rowCount)throw new Error('governed_version_not_found');await client.query('INSERT INTO registry.governed_approvals(tenant_id,governed_id,version,approved_by) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING',[input.tenantId,input.governedId,input.version,input.principalId]);await client.query("INSERT INTO registry.governed_events(tenant_id,governed_id,version,event_type,principal_id) VALUES($1,$2,$3,'version_approved',$4)",[input.tenantId,input.governedId,input.version,input.principalId]);return{version:input.version};});
+}
+export async function getApprovedGovernedVersion(pool:Pool,input:{tenantId:string;governedId:string;version:number}):Promise<{version:number;status:'approved';plan:Record<string,unknown>;planHash:string}>{
+ return withTenant(pool,input.tenantId,async(client)=>{const result=await client.query<{plan:Record<string,unknown>;plan_hash:string}>('SELECT v.plan,v.plan_hash FROM registry.governed_versions v JOIN registry.governed_approvals a USING(tenant_id,governed_id,version) WHERE v.tenant_id=$1 AND v.governed_id=$2 AND v.version=$3',[input.tenantId,input.governedId,input.version]);const row=result.rows[0];if(!row){const exists=await client.query('SELECT 1 FROM registry.governed_versions WHERE tenant_id=$1 AND governed_id=$2 AND version=$3',[input.tenantId,input.governedId,input.version]);throw new Error(exists.rowCount?'governed_version_not_approved':'governed_version_not_found');}return{version:input.version,status:'approved',plan:row.plan,planHash:row.plan_hash};});
 }
 
 export async function createDraftAgentVersion(
