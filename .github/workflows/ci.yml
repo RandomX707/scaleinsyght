@@ -23,6 +23,8 @@ jobs:
       DATABASE_URL_WORKER: postgresql://si_worker:ci-worker@127.0.0.1:5432/scale_insyght
       DATABASE_URL_MIGRATE: postgresql://si_migrate:ci-migrate@127.0.0.1:5432/scale_insyght
       DATABASE_URL_ADMIN: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+      ARTIFACT_MASTER_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      ARTIFACT_VOLUME_PATH: .local/artifacts
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

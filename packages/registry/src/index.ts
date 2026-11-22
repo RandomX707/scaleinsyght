@@ -9,6 +9,9 @@ export interface ActivateConnectionInput {
   tenantId: string;
   principalId: string;
   connectorType: ConnectorType;
+  connectionId?: string;
+  sourceRef?: string;
+  scope?: Array<{ qualifiedName: string; objectType: string; scopeMode: 'profile' | 'list_only' | 'exclude' }>;
 }
 
 export interface ActivatedConnection {
@@ -36,7 +39,17 @@ export async function activateConnection(
       throw new Error('connector_allowance_exceeded');
     }
 
-    const connectionId = randomUUID();
+    const connectionId = input.connectionId ?? randomUUID();
+    if (input.connectionId) {
+      const draft = await client.query<{ connector_type: string; status: string; source_ref: string | null }>(
+        'SELECT connector_type,status,source_ref FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2 FOR UPDATE',
+        [input.tenantId, connectionId],
+      );
+      if (draft.rows[0]?.status !== 'draft' || draft.rows[0]?.connector_type !== input.connectorType) {
+        throw new Error('connection_draft_invalid');
+      }
+      if (input.sourceRef && draft.rows[0]?.source_ref !== input.sourceRef) throw new Error('connection_source_mismatch');
+    }
     const agentId = randomUUID();
     const sourceGroupId = randomUUID();
     await client.query(
@@ -54,12 +67,21 @@ export async function activateConnection(
        VALUES ($1, $2, 1, '[]'::jsonb, $3::jsonb)`,
       [input.tenantId, agentId, JSON.stringify({ connection_id: connectionId, source_group_id: sourceGroupId, source_group_version: 1 })],
     );
-    await client.query(
-      `INSERT INTO registry.connections
-       (tenant_id, connection_id, connector_type, status, connector_agent_id, source_group_id, source_group_version)
-       VALUES ($1, $2, $3, 'active', $4, $5, 1)`,
-      [input.tenantId, connectionId, input.connectorType, agentId, sourceGroupId],
-    );
+    if (input.connectionId) {
+      const activated = await client.query(
+        `UPDATE registry.connections SET status='active',connector_agent_id=$3,source_group_id=$4,source_group_version=1
+         WHERE tenant_id=$1 AND connection_id=$2 AND status='draft'`,
+        [input.tenantId, connectionId, agentId, sourceGroupId],
+      );
+      if (!activated.rowCount) throw new Error('connection_draft_invalid');
+    } else {
+      await client.query(
+        `INSERT INTO registry.connections
+         (tenant_id, connection_id, connector_type, status, connector_agent_id, source_group_id, source_group_version, source_ref)
+         VALUES ($1, $2, $3, 'active', $4, $5, 1, $6)`,
+        [input.tenantId, connectionId, input.connectorType, agentId, sourceGroupId, input.sourceRef ?? null],
+      );
+    }
     await client.query(
       `UPDATE registry.agents SET connection_id = $3 WHERE tenant_id = $1 AND agent_id = $2`,
       [input.tenantId, agentId, connectionId],
@@ -69,6 +91,13 @@ export async function activateConnection(
        VALUES ($1, $2, 1, $3)`,
       [input.tenantId, sourceGroupId, connectionId],
     );
+    for (const rule of input.scope ?? []) {
+      await client.query(
+        `INSERT INTO registry.connection_scopes(tenant_id,connection_id,qualified_name,object_type,scope_mode)
+         VALUES($1,$2,$3,$4,$5)`,
+        [input.tenantId, connectionId, rule.qualifiedName, rule.objectType, rule.scopeMode],
+      );
+    }
     await client.query(
       `INSERT INTO registry.events (tenant_id, event_type, agent_id, connection_id, safe_payload)
        VALUES ($1, 'agent_created', $2, $3, $4::jsonb)`,
@@ -80,6 +109,21 @@ export async function activateConnection(
       [input.tenantId, input.principalId, connectionId, input.connectorType],
     );
     return { connectionId, agentId, sourceGroupId, sourceGroupVersion: 1 };
+  });
+}
+
+export async function createConnectionDraft(
+  pool: Pool,
+  input: { tenantId: string; connectorType: ConnectorType; sourceRef: string },
+): Promise<{ connectionId: string }> {
+  if (!input.sourceRef.trim()) throw new Error('connection_source_required');
+  return withTenant(pool, input.tenantId, async (client) => {
+    const result = await client.query<{ connection_id: string }>(
+      `INSERT INTO registry.connections(tenant_id,connector_type,status,source_ref)
+       VALUES($1,$2,'draft',$3) RETURNING connection_id`,
+      [input.tenantId, input.connectorType, input.sourceRef],
+    );
+    return { connectionId: result.rows[0]!.connection_id };
   });
 }
 

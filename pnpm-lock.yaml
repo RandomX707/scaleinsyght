@@ -178,6 +178,9 @@ importers:
       '@scaleinsyght/api':
         specifier: workspace:*
         version: link:apps/api
+      '@scaleinsyght/artifacts':
+        specifier: workspace:*
+        version: link:packages/artifacts
       '@scaleinsyght/classification':
         specifier: workspace:*
         version: link:packages/classification
@@ -193,6 +196,9 @@ importers:
       '@scaleinsyght/policy':
         specifier: workspace:*
         version: link:packages/policy
+      '@scaleinsyght/profiler':
+        specifier: workspace:*
+        version: link:packages/profiler
       '@scaleinsyght/registry':
         specifier: workspace:*
         version: link:packages/registry
@@ -248,12 +254,24 @@ importers:
 
   apps/api:
     dependencies:
+      '@scaleinsyght/artifacts':
+        specifier: workspace:*
+        version: link:../../packages/artifacts
+      '@scaleinsyght/connectors':
+        specifier: workspace:*
+        version: link:../../packages/connectors
       '@scaleinsyght/db':
         specifier: workspace:*
         version: link:../../packages/db
       '@scaleinsyght/policy':
         specifier: workspace:*
         version: link:../../packages/policy
+      '@scaleinsyght/profiler':
+        specifier: workspace:*
+        version: link:../../packages/profiler
+      '@scaleinsyght/registry':
+        specifier: workspace:*
+        version: link:../../packages/registry
       '@scaleinsyght/runner':
         specifier: workspace:*
         version: link:../../packages/runner
@@ -295,6 +313,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/runner
 
+  packages/artifacts: {}
+
   packages/classification: {}
 
   packages/connectors: {}
@@ -323,6 +343,21 @@ importers:
       '@scaleinsyght/contracts':
         specifier: workspace:*
         version: link:../contracts
+
+  packages/profiler:
+    dependencies:
+      '@scaleinsyght/artifacts':
+        specifier: workspace:*
+        version: link:../artifacts
+      '@scaleinsyght/connectors':
+        specifier: workspace:*
+        version: link:../connectors
+      '@scaleinsyght/db':
+        specifier: workspace:*
+        version: link:../db
+      pg:
+        specifier: ^8.16.3
+        version: 8.23.1
 
   packages/registry:
     dependencies:

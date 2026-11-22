@@ -8,6 +8,8 @@
     { "path": "./packages/runner" },
     { "path": "./packages/connectors" },
     { "path": "./packages/classification" },
+    { "path": "./packages/artifacts" },
+    { "path": "./packages/profiler" },
     { "path": "./apps/api" },
     { "path": "./apps/worker" },
     { "path": "./apps/web" },
