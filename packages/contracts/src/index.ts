@@ -165,9 +165,33 @@ export const GraphEventSchema = z.object({
   asset_id: Uuid.optional(),
   assertion_id: Uuid.optional(),
   report_asset_id: Uuid.optional(),
-  safe_payload: z.record(z.string(),z.unknown()).default({}),
+  safe_payload: z.object({
+    fixture_key: z.string().max(100).optional(), asset_count: z.number().int().nonnegative().optional(),
+    report_count: z.number().int().nonnegative().optional(), review_status: z.enum(['unreviewed','accepted','disputed','rejected','stale']).optional(),
+    verification: z.enum(['unverified','run_verified','reconciled']).optional(), reason_code: z.string().max(100).optional(),
+    coverage: z.number().min(0).max(1).optional(), tool: z.enum(['dbt','tableau','power_bi']).optional(),
+  }).strict().default({}),
 }).strict();
 export type GraphEvent = z.infer<typeof GraphEventSchema>;
+
+export const LineageGapSchema = z.object({
+  gap_id: Uuid,
+  between_asset_ids: z.array(Uuid).min(1),
+  reason: z.string().min(1).max(1000),
+  detected_at: z.string().datetime({ offset: true }),
+  closed_by_assertion_id: Uuid.nullable(),
+}).strict();
+export type LineageGap = z.infer<typeof LineageGapSchema>;
+
+export const LineagePathSchema = z.object({
+  asset_ids: z.array(Uuid),
+  assertions: z.array(GraphAssertionSchema),
+  evidence: z.array(z.object({ evidence_id: Uuid, evidence_type: z.string(), safe_metadata: z.record(z.string(), z.unknown()), captured_at: z.string().datetime({ offset: true }) }).strict()),
+  gaps: z.array(LineageGapSchema),
+  coverage: z.number().min(0).max(1),
+  observable: z.boolean(),
+}).strict();
+export type LineagePath = z.infer<typeof LineagePathSchema>;
 
 function canonicalJson(value: unknown, seen = new Set<object>()): string {
   if (value === null || typeof value === 'boolean' || typeof value === 'string') return JSON.stringify(value);

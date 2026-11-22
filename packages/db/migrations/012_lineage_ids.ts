@@ -5,6 +5,8 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
     ALTER TABLE graph.assertions ADD COLUMN valid_from timestamptz;
     ALTER TABLE graph.assertions ADD COLUMN valid_to timestamptz;
     ALTER TABLE graph.assertions ADD CONSTRAINT assertions_valid_window CHECK(valid_to IS NULL OR valid_from IS NULL OR valid_to >= valid_from);
+    ALTER TABLE core.notifications DROP CONSTRAINT notifications_notification_type_check;
+    ALTER TABLE core.notifications ADD CONSTRAINT notifications_notification_type_check CHECK(notification_type IN ('discovery','nightly','report_impact'));
 
     CREATE TABLE graph.id_fields (
       tenant_id text NOT NULL, asset_id uuid NOT NULL, field_name text NOT NULL,
@@ -63,5 +65,5 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
 }
 
 export async function down(pgm: MigrationBuilder): Promise<void> {
-  pgm.sql(`DROP TABLE graph.events; DROP FUNCTION graph.reject_event_mutation(); DROP TABLE graph.snapshots; DROP TABLE graph.id_path_steps; DROP TABLE graph.id_fingerprints; DROP TABLE graph.id_fields; ALTER TABLE graph.assertions DROP CONSTRAINT assertions_valid_window; ALTER TABLE graph.assertions DROP COLUMN valid_to; ALTER TABLE graph.assertions DROP COLUMN valid_from;`);
+  pgm.sql(`DROP TABLE graph.events; DROP FUNCTION graph.reject_event_mutation(); DROP TABLE graph.snapshots; DROP TABLE graph.id_path_steps; DROP TABLE graph.id_fingerprints; DROP TABLE graph.id_fields; ALTER TABLE core.notifications DROP CONSTRAINT notifications_notification_type_check; ALTER TABLE core.notifications ADD CONSTRAINT notifications_notification_type_check CHECK(notification_type IN ('discovery','nightly')); ALTER TABLE graph.assertions DROP CONSTRAINT assertions_valid_window; ALTER TABLE graph.assertions DROP COLUMN valid_to; ALTER TABLE graph.assertions DROP COLUMN valid_from;`);
 }
