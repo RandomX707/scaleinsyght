@@ -178,6 +178,9 @@ importers:
       '@scaleinsyght/api':
         specifier: workspace:*
         version: link:apps/api
+      '@scaleinsyght/connectors':
+        specifier: workspace:*
+        version: link:packages/connectors
       '@scaleinsyght/contracts':
         specifier: workspace:*
         version: link:packages/contracts
@@ -288,6 +291,8 @@ importers:
       '@scaleinsyght/runner':
         specifier: workspace:*
         version: link:../../packages/runner
+
+  packages/connectors: {}
 
   packages/contracts:
     dependencies:

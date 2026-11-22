@@ -1,0 +1,15 @@
+{
+  "sources": [
+    {"id":"golden-sqlserver","type":"sql_server","name":"Meridian Keystone","tableCount":500,"inaccessible":["X_Restricted.Internal_Audit"]},
+    {"id":"golden-postgres","type":"postgres","name":"Meridian Lumen","tableCount":12,"inaccessible":[]},
+    {"id":"golden-snowflake","type":"snowflake","name":"Meridian Harbor","tableCount":8,"inaccessible":[]},
+    {"id":"golden-excel","type":"excel","name":"Riverside workbook","sheets":["Departments","Providers","Orders"],"tableCount":3,"inaccessible":[]}
+  ],
+  "objectNameTemplate":"X_Golden.Table_{index}",
+  "changedOnNightly":["X_Golden.Table_042"],
+  "unchangedOnNightly":["X_Golden.Table_001","X_Golden.Table_002"],
+  "viewDefinition":"SELECT * FROM patient WHERE person_id = 'C-1042'",
+  "sensitiveComment":"Account contact is Sample Person, sample.person@example.invalid",
+  "taggedField":"patient_identifier",
+  "smallGroupSize":2
+}
