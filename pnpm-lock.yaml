@@ -175,6 +175,9 @@ importers:
 
   .:
     dependencies:
+      '@scaleinsyght/analytic':
+        specifier: workspace:*
+        version: link:packages/analytic
       '@scaleinsyght/api':
         specifier: workspace:*
         version: link:apps/api
@@ -254,6 +257,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@scaleinsyght/analytic':
+        specifier: workspace:*
+        version: link:../../packages/analytic
       '@scaleinsyght/artifacts':
         specifier: workspace:*
         version: link:../../packages/artifacts
@@ -312,6 +318,15 @@ importers:
       '@scaleinsyght/runner':
         specifier: workspace:*
         version: link:../../packages/runner
+
+  packages/analytic:
+    dependencies:
+      '@scaleinsyght/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@scaleinsyght/db':
+        specifier: workspace:*
+        version: link:../db
 
   packages/artifacts: {}
 

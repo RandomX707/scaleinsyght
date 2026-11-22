@@ -1,0 +1,11 @@
+{
+  "name": "@scaleinsyght/analytic",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": {
+    "@scaleinsyght/contracts": "workspace:*",
+    "@scaleinsyght/db": "workspace:*"
+  }
+}

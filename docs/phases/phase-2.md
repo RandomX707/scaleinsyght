@@ -49,11 +49,13 @@ Tenant-owned tables use `tenant_id`, `ENABLE/FORCE ROW LEVEL SECURITY`, transact
 | Table | Purpose | Contract |
 |---|---|---|
 | Existing `runs.runs`, `runs.steps`, `runs.events`, `runs.authz_decisions` | Durable analytic state, plan-step lease/fencing and ordered events. Add a safe plan reference and output reference; never persist result rows. | C1; C3; C4; C5 |
+| `runs.analytic_plans` | Tenant-scoped, validated typed plan snapshot and canonical hash keyed to a run; contains no execution result rows. | C1; C3; C5 |
 | Existing `registry.personal_memories` | Owner-only preferences; retain vocabulary, authorized source references and answer style. Remove role semantics to conform with CLAUDE.md §3.13. | C1; C2 rule 7; C7 rule 15 |
 | `memory.feedback` | Per-person verdict/correction linked to run and plan; no result data or raw identifiers. | C1; C2; C7 rules 10, 15 |
 | `memory.evaluation_cases` | Tenant-owned, safe question/plan reference and verdict for synthetic evaluation; no result rows. | C1; C2 acceptance 7; C7 |
 | `registry.governed_definitions`, `registry.governed_versions` | Definition identity and immutable typed plan snapshots with status and owner. | C1; C2 rules 1–4 |
 | `registry.governed_approvals` | Approver, decision, definition version and timestamp. | C1; C2; C5 |
+| `registry.governed_events` | Append-only governed draft and version approval audit events with actor and version reference. | C1; C2; C5 |
 | Existing `registry.source_groups`, `registry.source_group_members`, `registry.agents`, `registry.agent_versions` | Versioned groups and logical orchestrator/collating/governed agents. Each active connection has exactly one group version. | C1; C2 rules 4–8 |
 | Existing `runs.events` | `plan_proposed`, `plan_validated`, `plan_rejected`, step lifecycle, evidence, feedback and governed approval/run events; append-only and sequence contiguous. | C4; C5 |
 

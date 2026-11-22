@@ -54,9 +54,9 @@
 
 **Interfaces:** `createAnalyticPlan(input): AnalyticPlan`; `validateAnalyticPlan(pool,input): Promise<ValidatedPlan>`; `startAnalyticRun(pool,input): Promise<{runId:string}>`. Retrieve source groups, authorization and memory from tenant-scoped database state; never accept tenant/principal/entitlement claims from the body.
 
-- [ ] Add tests that invalid cycles/types/budgets/scope/auth never create a run or runner step; add separate cases for wrong source-group version and malformed model-proposed step inputs.
-- [ ] Implement deterministic golden planner, canonical plan hash and policy recheck before step dispatch.
-- [ ] Add `POST /api/runs`, `GET /api/runs/:id`, and resumable `GET /api/runs/:id/events`; test cross-tenant and forged-principal cases; commit `feat: validate and start analytic runs`.
+- [x] Add tests that invalid cycles/types/budgets/scope/auth never create a run or runner step; add separate cases for wrong source-group version and malformed model-proposed step inputs.
+- [x] Implement deterministic golden planner, canonical plan hash and policy recheck before step dispatch.
+- [x] Add `POST /api/runs`, `GET /api/runs/:id`, and resumable `GET /api/runs/:id/events`; test cross-tenant and forged-principal cases; commit `feat: validate and start analytic runs`.
 
 ## Task 4: Two-group collating, evidence and critic
 

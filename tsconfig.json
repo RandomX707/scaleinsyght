@@ -10,6 +10,7 @@
     { "path": "./packages/classification" },
     { "path": "./packages/artifacts" },
     { "path": "./packages/profiler" },
+    { "path": "./packages/analytic" },
     { "path": "./apps/api" },
     { "path": "./apps/worker" },
     { "path": "./apps/web" },
