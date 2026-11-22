@@ -15,7 +15,7 @@ Status values: **decided**, **open** (with the phase it is needed by).
 | 7 | Run engine | decided | PostgreSQL runner; revisit past 30-day waits or 50 concurrent runs with lease contention | Yashaswi, 23 Nov 2026 |
 | 8 | Disclosure defaults | decided | No platform default; tagged data blocked until a tenant sets a policy | Yashaswi, 23 Nov 2026 |
 | 9 | Graph store | open (phase 3) | Stay on PostgreSQL unless depth-4 traversal on 100k assets > 5 s p95 | |
-| 10 | Retention and file storage | open (phase 1) | Tenant-configurable; encrypted volume behind the artifact store | |
+| 10 | Retention and file storage | decided | Each tenant's uploaded workbooks are stored on a dedicated encrypted local volume and deleted when their connector is removed. Retention periods for other records will be set later. | Yashaswi, 23 Nov 2026 |
 | 11 | What counts as lineage verification | open (phase 3) | Run event naming the flow = run_verified; reconciliation recorded separately | |
 | 12 | Hub product interface order | open (phase 4) | Data Studio and Semantics first | |
 | 13 | Audit before copying INSYGHT code | decided | Security and licence review per module at the recorded commits | Yashaswi, 23 Nov 2026 |
