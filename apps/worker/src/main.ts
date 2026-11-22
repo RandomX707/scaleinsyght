@@ -1,4 +1,5 @@
 import { config } from 'dotenv';
+import { createServer } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { Pool } from 'pg';
@@ -12,6 +13,8 @@ config({path:fileURLToPath(new URL('../../../.env',import.meta.url))});
 const golden=JSON.parse(readFileSync(new URL('../../../tests/golden/phase0.json',import.meta.url),'utf8')) as {scriptedRun:{resultRefs:string[]}};
 const pool=new Pool({connectionString:process.env.DATABASE_URL_WORKER});
 const workerId=`worker-${process.pid}`;
+const healthServer=createServer((request,response)=>{if(request.url==='/health'){response.writeHead(200,{'content-type':'application/json'});response.end('{"status":"ok"}');return;}response.writeHead(404);response.end();});
+await new Promise<void>((resolve,reject)=>{healthServer.once('error',reject);healthServer.listen(Number(process.env.WORKER_HEALTH_PORT??3001),'127.0.0.1',resolve);});
 let stopping=false;
 for(const signal of ['SIGINT','SIGTERM'] as const)process.on(signal,()=>{stopping=true;});
 while(!stopping){
@@ -51,4 +54,4 @@ while(!stopping){
   }
  }catch(error){console.error('Worker iteration failed:',error);process.exitCode=1;stopping=true;}
 }
-await pool.end();
+healthServer.close();await pool.end();

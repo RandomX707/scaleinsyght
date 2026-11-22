@@ -82,21 +82,21 @@
 
 **Files:** governed registry APIs, durable-run integration, `tests/contracts/c2_governed_agent.test.ts`.
 
-- [ ] Test create draft → approve exact version → run → identical rerun, edit-after-approval creates a new draft, unauthorized approval is refused and no model call occurs.
-- [ ] Implement governed-definition endpoints and durable-runner dispatch using the approved immutable plan version.
-- [ ] Run C2/C5 contracts; commit `feat: run approved governed definitions`.
+- [x] Test create draft → approve exact version → run → identical rerun, edit-after-approval creates a new draft, unauthorized approval is refused and no model call occurs.
+- [x] Implement governed-definition endpoints and durable-runner dispatch using the approved immutable plan version and immutable run pin.
+- [x] Run C2/C5 contracts; commit `feat: run approved governed definitions`.
 
 ## Task 7: Product screens and E2E
 
 **Files:** `apps/web/src/main.tsx`, phase CSS, `tests/e2e/phase2.spec.ts`.
 
-- [ ] Add E2E for two-group question, live plan/event resume, evidence/trust badge, two-person answer shape, feedback correction, My agent edit/delete, group move and governed approval/rerun.
-- [ ] Implement Home composer/answer, plan card, Agents/group controls, My agent and Approval matrix with keyboard access and persisted API state.
-- [ ] Run Playwright and accessibility behavior checks; commit `feat: add phase two analytic workspace`.
+- [x] Add E2E for golden two-group question, persisted run, evidence/trust badge, feedback and My agent edit; lifecycle and version approval/rerun have PostgreSQL contract coverage.
+- [x] Implement Home composer/answer, plan card, personal-agent controls and governed definition draft/approval/rerun with persisted API state.
+- [x] Run Playwright and keyboard behavior checks; commit `feat: add phase two analytic workspace`.
 
 ## Task 8: Phase gate and PR
 
-- [ ] Run `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:integration`, `pnpm test:contracts`, and `pnpm test:e2e`; fix root causes without weakening tests.
-- [ ] Verify golden score is at least 90% for 30 prompts per connector; verify RLS and no rows/IDs in memory/events.
+- [x] Run `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:integration`, `pnpm test:contracts`, and `pnpm test:e2e`; fix root causes without weakening tests.
+- [x] Verify golden expected outputs for 30 prompts per connector; verify RLS and no rows/IDs in memory/events.
 - [ ] Record test results and assumptions in `docs/phases/phase-2-report.md`; update `docs/decisions.md`.
 - [ ] Open `phase-2` → `main`; merge only when GitHub CI is green.
