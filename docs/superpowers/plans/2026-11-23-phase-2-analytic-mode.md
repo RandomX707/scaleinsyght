@@ -64,9 +64,9 @@
 
 **Interfaces:** `executeGoldenStep(task): Promise<StructuredResult>`; `collateGroupResults(results): StructuredAnswer`; `criticCheck(answer,plan): CriticResult`. A task reads its source/group version from stored plan/run records. The golden scenario routes through two collating agents and emits two group joins plus one cross-group join.
 
-- [ ] Test both collating-agent routes, evidence on every material claim, interpretation labeling, no rows in requests/events, timeout to `PARTIAL`, and stale fencing.
-- [ ] Implement runner worker step dispatch against synthetic golden outputs; use no external model/source call.
-- [ ] Run C3–C5 contracts; commit `feat: execute and collate two-group golden runs`.
+- [x] Test both collating-agent routes, evidence on every material claim, interpretation labeling, no rows in requests/events, timeout to `PARTIAL`, and stale fencing.
+- [x] Implement runner worker step dispatch against synthetic golden outputs; use no external model/source call.
+- [x] Run C3–C5 contracts; commit `feat: execute and collate two-group golden runs`.
 
 ## Task 5: Personal answer shaping and feedback
 

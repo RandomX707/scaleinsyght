@@ -30,13 +30,18 @@ export async function createAnalyticPlan(input: { question: string; runId: strin
     plan_id: randomUUID(), run_id: input.runId, version: 1, plan_hash: '0'.repeat(64), question: input.question.trim(),
     scope: { source_ids: [...new Set(input.sources.map((source) => source.sourceId))], as_of: new Date().toISOString() },
     steps,
-    combine: [...byGroup.entries()].map(([groupId, ids]) => ({ level: 'group' as const, collating_agent_id: groups.get(groupId)!, inputs: ids, join_keys: [], output_schema: { type: 'object' } })),
+    combine: [
+      ...[...byGroup.entries()].map(([groupId, ids]) => ({ level: 'group' as const, collating_agent_id: groups.get(groupId)!, inputs: ids, join_keys: [], output_schema: { type: 'object' } })),
+      ...(groups.size > 1 ? [{ level: 'cross_group' as const, collating_agent_id: null, inputs: [...groups.values()], join_keys: [], output_schema: { type: 'object' } }] : []),
+    ],
     budgets: { max_parallel: Math.min(32, Math.max(1, input.sources.length)), max_runtime_s: 600, max_tokens: 0, max_source_queries: input.sources.length },
   };
   const parsed = AnalyticPlanSchema.parse(base);
   parsed.plan_hash = await planDigest(parsed);
   return AnalyticPlanSchema.parse(parsed);
 }
+
+export { collateGroupResults, criticCheck, executeGoldenStep, finalizeAnalyticRun } from './executor.js';
 
 function validatePlanGraph(plan: AnalyticPlan): void {
   if (new Set(plan.scope.source_ids).size !== plan.scope.source_ids.length || plan.budgets.max_source_queries < plan.steps.length) throw new Error('analytic_plan_invalid');
@@ -135,8 +140,8 @@ export async function startAnalyticRun(pool: Pool, input: { tenantId: string; pr
       await event('plan_validated', { state: 'PLAN_VALIDATED', state_version: validatedState.rows[0]!.state_version, count: plan.steps.length });
       for (const [index, step] of plan.steps.entries()) {
         const group = await client.query<{ source_group_id: string }>('SELECT source_group_id FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2', [input.tenantId, step.source_id]);
-        await client.query(`INSERT INTO runs.steps(tenant_id,run_id,step_order,capability_id,capability_version,agent_id,state,idempotency_key,source_group_id,source_group_version)
-          VALUES($1,$2,$3,$4,$5,$6,'PENDING',$7,$8,$9)`, [input.tenantId, runId, index+1, step.capability_id, step.capability_version, step.agent_id, step.idempotency_key, group.rows[0]!.source_group_id, step.group_version]);
+        await client.query(`INSERT INTO runs.steps(tenant_id,run_id,step_id,step_order,capability_id,capability_version,agent_id,state,idempotency_key,source_group_id,source_group_version)
+          VALUES($1,$2,$3,$4,$5,$6,$7,'PENDING',$8,$9,$10)`, [input.tenantId, runId, step.step_id, index+1, step.capability_id, step.capability_version, step.agent_id, step.idempotency_key, group.rows[0]!.source_group_id, step.group_version]);
       }
       const running = await setState('RUNNING');
       await event('run_state_changed', { state: 'RUNNING', state_version: running.rows[0]!.state_version });

@@ -1080,5 +1080,8 @@
       "expectedValue": 0,
       "evidenceAsset": "Riverside workbook.Departments"
     }
-  ]
+  ],
+  "scenarios": {
+    "timeoutMarker": "[synthetic timeout]"
+  }
 }

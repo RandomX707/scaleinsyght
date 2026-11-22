@@ -312,9 +312,18 @@ importers:
 
   apps/worker:
     dependencies:
+      '@scaleinsyght/analytic':
+        specifier: workspace:*
+        version: link:../../packages/analytic
+      '@scaleinsyght/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@scaleinsyght/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@scaleinsyght/policy':
+        specifier: workspace:*
+        version: link:../../packages/policy
       '@scaleinsyght/runner':
         specifier: workspace:*
         version: link:../../packages/runner

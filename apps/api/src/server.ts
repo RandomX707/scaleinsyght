@@ -90,11 +90,12 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
   });
   app.get<{Params:{runId:string}}>('/api/runs/:runId',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
-    const result=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{run_id:string;state:string;state_version:number;plan:Record<string,unknown>;plan_hash:string}>(
-      `SELECT r.run_id,r.state,r.state_version,p.plan,p.plan_hash FROM runs.runs r JOIN runs.analytic_plans p USING(tenant_id,run_id)
+    const result=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{run_id:string;state:string;state_version:number;plan:Record<string,unknown>;plan_hash:string;answer:Record<string,unknown>|null}>(
+      `SELECT r.run_id,r.state,r.state_version,p.plan,p.plan_hash,a.answer FROM runs.runs r JOIN runs.analytic_plans p USING(tenant_id,run_id)
+       LEFT JOIN runs.analytic_answers a USING(tenant_id,run_id)
        WHERE r.tenant_id=$1 AND r.principal_id=$2 AND r.run_id=$3`,[current.tenantId,current.userId,request.params.runId]));
     if(!result.rowCount)return reply.code(404).send({error:'run_not_found'});
-    const row=result.rows[0]!;return reply.send({runId:row.run_id,state:row.state,stateVersion:row.state_version,plan:row.plan,planHash:row.plan_hash});
+    const row=result.rows[0]!;return reply.send({runId:row.run_id,state:row.state,stateVersion:row.state_version,plan:row.plan,planHash:row.plan_hash,answer:row.answer});
   });
   app.get<{Params:{runId:string};Querystring:{after?:string}}>('/api/runs/:runId/events',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});

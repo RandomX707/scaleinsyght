@@ -50,6 +50,7 @@ Tenant-owned tables use `tenant_id`, `ENABLE/FORCE ROW LEVEL SECURITY`, transact
 |---|---|---|
 | Existing `runs.runs`, `runs.steps`, `runs.events`, `runs.authz_decisions` | Durable analytic state, plan-step lease/fencing and ordered events. Add a safe plan reference and output reference; never persist result rows. | C1; C3; C4; C5 |
 | `runs.analytic_plans` | Tenant-scoped, validated typed plan snapshot and canonical hash keyed to a run; contains no execution result rows. | C1; C3; C5 |
+| `runs.analytic_results`, `runs.analytic_answers` | Per-step aggregate claims/evidence and final structured answer; RLS scoped to the stored run tenant and never contains result rows. | C1; C4; C5; C7 |
 | Existing `registry.personal_memories` | Owner-only preferences; retain vocabulary, authorized source references and answer style. Remove role semantics to conform with CLAUDE.md §3.13. | C1; C2 rule 7; C7 rule 15 |
 | `memory.feedback` | Per-person verdict/correction linked to run and plan; no result data or raw identifiers. | C1; C2; C7 rules 10, 15 |
 | `memory.evaluation_cases` | Tenant-owned, safe question/plan reference and verdict for synthetic evaluation; no result rows. | C1; C2 acceptance 7; C7 |
