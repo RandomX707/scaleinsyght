@@ -1,0 +1,1 @@
+{"name":"@scaleinsyght/worker","private":true,"type":"module","scripts":{"dev":"tsx watch src/main.ts"},"dependencies":{"@scaleinsyght/db":"workspace:*","@scaleinsyght/runner":"workspace:*"}}
