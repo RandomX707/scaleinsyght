@@ -11,6 +11,7 @@
     { "path": "./packages/artifacts" },
     { "path": "./packages/profiler" },
     { "path": "./packages/analytic" },
+    { "path": "./packages/graph" },
     { "path": "./apps/api" },
     { "path": "./apps/worker" },
     { "path": "./apps/web" },

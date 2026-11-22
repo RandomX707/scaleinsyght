@@ -133,6 +133,42 @@ export const EvidenceRefSchema = z.object({
 }).strict();
 export type EvidenceRef = z.infer<typeof EvidenceRefSchema>;
 
+export const GraphAssertionSchema = z.object({
+  assertion_id: Uuid,
+  relationship_id: Uuid,
+  evidence_method: z.enum(['observed','declared','parsed','inferred']),
+  review_status: z.enum(['unreviewed','accepted','disputed','rejected','stale']),
+  verification: z.enum(['unverified','run_verified','reconciled']),
+  evidence_ids: z.array(Uuid).min(1),
+  confidence_score: z.number().min(0).max(1).nullable(),
+  explanation: z.string().nullable(),
+  transformation: z.record(z.string(),z.unknown()).nullable(),
+  collector_version: z.string().min(1).max(100),
+  captured_at: z.string().datetime({offset:true}),
+  valid_from: z.string().datetime({offset:true}).nullable().optional(),
+  valid_to: z.string().datetime({offset:true}).nullable().optional(),
+}).strict();
+export type GraphAssertion = z.infer<typeof GraphAssertionSchema>;
+
+export const IdentifierFieldSchema = z.object({
+  asset_id: Uuid,
+  entity_hint: z.string().min(1).max(200).nullable(),
+  format_pattern: z.string().min(1).max(200),
+  detection: z.enum(['declared','inferred']),
+  confidence: z.number().min(0).max(1),
+  assertion_id: Uuid.nullable(),
+}).strict();
+export type IdentifierField = z.infer<typeof IdentifierFieldSchema>;
+
+export const GraphEventSchema = z.object({
+  event_type: z.enum(['metadata_imported','asset_version_captured','assertion_proposed','assertion_reviewed','assertion_verification_changed','gap_detected','id_field_detected','id_match_proposed','id_path_updated','report_impacted']),
+  asset_id: Uuid.optional(),
+  assertion_id: Uuid.optional(),
+  report_asset_id: Uuid.optional(),
+  safe_payload: z.record(z.string(),z.unknown()).default({}),
+}).strict();
+export type GraphEvent = z.infer<typeof GraphEventSchema>;
+
 function canonicalJson(value: unknown, seen = new Set<object>()): string {
   if (value === null || typeof value === 'boolean' || typeof value === 'string') return JSON.stringify(value);
   if (typeof value === 'number' && Number.isFinite(value)) return JSON.stringify(value);

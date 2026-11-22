@@ -196,6 +196,9 @@ importers:
       '@scaleinsyght/db':
         specifier: workspace:*
         version: link:packages/db
+      '@scaleinsyght/graph':
+        specifier: workspace:*
+        version: link:packages/graph
       '@scaleinsyght/policy':
         specifier: workspace:*
         version: link:packages/policy
@@ -361,6 +364,15 @@ importers:
       '@types/pg':
         specifier: ^8.15.5
         version: 8.23.1
+
+  packages/graph:
+    dependencies:
+      '@scaleinsyght/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@scaleinsyght/db':
+        specifier: workspace:*
+        version: link:../db
 
   packages/policy:
     dependencies:

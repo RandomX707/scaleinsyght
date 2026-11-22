@@ -33,6 +33,7 @@
     "@scaleinsyght/profiler": "workspace:*",
     "@scaleinsyght/api": "workspace:*",
     "@scaleinsyght/analytic": "workspace:*",
+    "@scaleinsyght/graph": "workspace:*",
     "fastify": "^5.6.2",
     "dotenv": "^16.6.1",
     "pg": "^8.16.3"
