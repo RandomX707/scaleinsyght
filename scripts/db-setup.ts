@@ -99,7 +99,7 @@ async function ensureDatabase(client: Client, database: string): Promise<void> {
 export async function setupDatabase(): Promise<void> {
   const envPath = resolve(root, '.env');
   createEnvFile(envPath, resolve(root, '.env.example'));
-  loadDotEnv({ path: envPath, override: true });
+  loadDotEnv({ path: envPath, override: false });
 
   const admin = new Client(process.env.DATABASE_URL_ADMIN
     ? { connectionString: process.env.DATABASE_URL_ADMIN }
