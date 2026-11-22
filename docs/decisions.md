@@ -14,16 +14,16 @@ Status values: **decided**, **open** (with the phase it is needed by), or **assu
 | 6 | Release 1 connector set | decided | SQL Server, PostgreSQL, Excel upload, Snowflake, dbt, Tableau, Power BI | 18 Nov 2026 |
 | 7 | Run engine | decided | PostgreSQL runner; revisit past 30-day waits or 50 concurrent runs with lease contention | Yashaswi, 23 Nov 2026 |
 | 8 | Disclosure defaults | decided | No platform default; tagged data blocked until a tenant sets a policy | Yashaswi, 23 Nov 2026 |
-| 9 | Graph store | open (phase 3) | Stay on PostgreSQL unless depth-4 traversal on 100k assets > 5 s p95 | |
+| 9 | Graph store | assumed, pending Yashaswi | Stay on PostgreSQL unless depth-4 traversal on 100k assets > 5 s p95 | Agent assumption, 23 Nov 2026 |
 | 10 | Retention and file storage | decided | Each tenant's uploaded workbooks are stored on a dedicated encrypted local volume and deleted when their connector is removed. Retention periods for other records will be set later. | Yashaswi, 23 Nov 2026 |
-| 11 | What counts as lineage verification | open (phase 3) | Run event naming the flow = run_verified; reconciliation recorded separately | |
+| 11 | What counts as lineage verification | assumed, pending Yashaswi | A run event naming the specific input and output marks that exact flow run_verified; reconciliation is recorded separately as reconciled | Agent assumption, 23 Nov 2026 |
 | 12 | Hub product interface order | open (phase 4) | Data Studio and Semantics first | |
 | 13 | Audit before copying INSYGHT code | decided | Security and licence review per module at the recorded commits | Yashaswi, 23 Nov 2026 |
 | 14 | Portfolio wording | open (before external use) | See design | |
 | 15 | Numeric acceptance thresholds | decided | Provisional; replace with measured baselines after phase 1 | Yashaswi, 23 Nov 2026 |
-| 16 | What the ID agent stores | open (phase 3) | Fields, formats, matches, keyed fingerprints; never raw values | |
-| 17 | Tracing individual ID values | open (phase 3) | Paths in profiler mode; specific values live, on request | |
-| 18 | Which IDs are tracked | open (phase 3) | Detect all; customer marks important IDs first | |
+| 16 | What the ID agent stores | assumed, pending Yashaswi | Identifier fields, formats, SAME_AS matches and keyed fingerprints; never raw values | Agent assumption, 23 Nov 2026 |
+| 17 | Tracing individual ID values | assumed, pending Yashaswi | Build field paths during profiler mode; trace a specific value live only when a person explicitly asks | Agent assumption, 23 Nov 2026 |
+| 18 | Which IDs are tracked | assumed, pending Yashaswi | Detect all identifier fields; let a tenant mark important business IDs to trace first | Agent assumption, 23 Nov 2026 |
 | 19 | Pricing by connector type | open (before launch) | Count by type so either answer works | |
 | 20 | Collating groups | decided | Profiler proposes, customer adjusts, one group per source | 18 Nov 2026 |
 | 21 | Single login, no personas | decided | No role switcher; personal agent has no role field | 18 Nov 2026 |
@@ -36,3 +36,4 @@ Status values: **decided**, **open** (with the phase it is needed by), or **assu
 | 28 | Phase 2 model and analytic demo provider | assumed, pending Yashaswi | Keep the phase-2 analytic demo deterministic and local, using the golden question set and typed plan/result envelopes; make no hosted model calls and require no model credentials. | Agent assumption, 23 Nov 2026 |
 | 29 | Governed definition approval separation | assumed, pending Yashaswi | A governed definition version must be approved by an authenticated member of the same tenant who is not its owner; approval is bound to the exact immutable version. | Agent assumption, 23 Nov 2026 |
 | 30 | Connector owner analytic access | assumed, pending Yashaswi | Activating a connector grants its activating user the read-only analytic capability for that connection only; access remains revocable and never expands to another tenant member or source. | Agent assumption, 23 Nov 2026 |
+| 31 | Phase 3 tool metadata inputs | assumed, pending Yashaswi | dbt manifests/catalogs and Tableau/Power BI report metadata are supplied as synthetic local fixtures; no vendor API or credentials are required for this phase. | Agent assumption, 23 Nov 2026 |
