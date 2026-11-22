@@ -34,7 +34,7 @@
 
 **Interfaces:** Expose strict `AnalyticPlanSchema`, `PlanStepSchema`, `ClaimSchema`, `EvidenceRefSchema`, and canonical `hashPlan(plan)`; fixtures contain 30 prompts and expected result/evidence for each of SQL Server, PostgreSQL, Snowflake and Excel.
 
-- [ ] Add named tests for invalid cycles, unauthorized sources, budgets, schema mismatch, plan hash stability and fixture coverage; run `pnpm exec vitest run tests/unit/analytic-plan.test.ts` and observe failures.
+- [ ] Add named tests for strict plan/step/claim/evidence schemas, canonical hash stability, 30 questions per connector and literal expected outputs; run `pnpm exec vitest run tests/unit/analytic-plan.test.ts` and observe failures.
 - [ ] Add schemas and deterministic corpus; pass at least 27/30 expected-result checks per connector with no model calls.
 - [ ] Run lint/typecheck/unit; commit `feat: define analytic plans and golden questions`.
 
@@ -54,7 +54,7 @@
 
 **Interfaces:** `createAnalyticPlan(input): AnalyticPlan`; `validateAnalyticPlan(pool,input): Promise<ValidatedPlan>`; `startAnalyticRun(pool,input): Promise<{runId:string}>`. Retrieve source groups, authorization and memory from tenant-scoped database state; never accept tenant/principal/entitlement claims from the body.
 
-- [ ] Add tests that invalid cycles/types/budgets/scope/auth never create a run or runner step.
+- [ ] Add tests that invalid cycles/types/budgets/scope/auth never create a run or runner step; add separate cases for wrong source-group version and malformed model-proposed step inputs.
 - [ ] Implement deterministic golden planner, canonical plan hash and policy recheck before step dispatch.
 - [ ] Add `POST /api/runs`, `GET /api/runs/:id`, and resumable `GET /api/runs/:id/events`; test cross-tenant and forged-principal cases; commit `feat: validate and start analytic runs`.
 
