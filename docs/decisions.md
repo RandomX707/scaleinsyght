@@ -31,4 +31,4 @@ Status values: **decided**, **open** (with the phase it is needed by).
 | 23 | Review inbox name | decided | "Approval matrix" | 18 Nov 2026 |
 | 24 | Scope location | decided | "Controls" page under Platform, plus a scope step when adding a connector | 18 Nov 2026 |
 | 25 | Dictionary page | decided | First-class page per connector (see CLAUDE.md 10.2) | 18 Nov 2026 |
-| 26 | Local development without Docker | decided | Native PostgreSQL 16, Node 22 with pnpm via Corepack, Python venv; Docker only for deployment packaging in phase 6. Contract tests still use real PostgreSQL | Yashaswi, 23 Nov 2026 |
+| 26 | Local development without Docker | decided | Native PostgreSQL 16, Node 22 with pnpm via Corepack, Python venv; Docker only for deployment packaging in phase 6. Contract tests still use real PostgreSQL. The local golden seed uses synthetic-only demo accounts, never production credentials. | Yashaswi, 23 Nov 2026 |

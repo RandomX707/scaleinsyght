@@ -14,8 +14,17 @@ Provide a runnable, two-tenant foundation where a scripted two-step read-only ru
 | `/login` | Email/password sign-in and session creation; no persona or role switcher. SSO is visibly unavailable until its later phase. | C1 §Identity; CLAUDE.md §10.2 Login |
 | `/` (Home) | Empty conversation state, “Analytic mode · read-only” and no runnable question interface until phase 2. | C1; CLAUDE.md §10.2 Home |
 | `/usage` | Active users and connector counts grouped by connector type, derived from tenant-scoped activity events. | C1 §Usage; CLAUDE.md §10.2 Usage |
+| `POST /api/auth/login`, `POST /api/auth/logout` | Verify a synthetic golden account, issue a signed HttpOnly session, revoke it on logout. | C1 tenant identity; CLAUDE.md §10.2 Login |
+| `GET /api/usage` | Require a live session and return usage from tenant-scoped activity events. | C1 §Usage |
+| `GET /api/health` | Native process readiness for local development and Playwright. | CLAUDE.md §§5, 5.1 |
 
-Shared shell: indigo light theme from the prototype `:root`; Scale Insyght branding, collapsed Workspace and Platform navigation groups, New chat, notification affordance, recent conversations placeholder, profile menu and persistent sidebar/group state. Phase 0 shows only available destinations; later destinations are not represented as working features. Keyboard navigation, visible focus, labeled icon controls, disclosure `aria-expanded`, reduced-motion support. **Contract:** C1 and CLAUDE.md §§10–11.
+Shared shell: indigo light theme from the prototype `:root`; Scale Insyght branding, collapsible Workspace and Platform navigation groups with persistent state, disabled New chat until phase 2, notification affordance, recent conversations placeholder, profile/sign-out menu. Phase 0 shows only available destinations; later destinations are not represented as working features. Keyboard navigation, visible focus, labeled icon controls, disclosure `aria-expanded`, reduced-motion support. **Contract:** C1 and CLAUDE.md §§10–11.
+
+## Local environment
+
+Development and test use native PostgreSQL 16.15 without Docker, per [CLAUDE.md §5.1](../../CLAUDE.md#51-local-environment-no-docker) and decision 26. The Homebrew PostgreSQL service is already running. `pnpm db:setup` uses the local superuser and creates only the separate Scale Insyght development database, `si_migrate`, `si_app`, `si_worker`, and the separate `si_test` database; it does not access existing application databases or tables. Integration and contract tests use the real PostgreSQL server and reset only `si_test`; no Docker, mocks, PGlite or SQLite.
+
+`.env.example` lists `DATABASE_URL`, `DATABASE_URL_WORKER` and `DATABASE_URL_MIGRATE`; `.env` contains generated local-only role passwords and is never committed. `scripts/db-setup.ts` uses local socket superuser access. If PostgreSQL is unreachable, tests fail with a clear message naming `DATABASE_URL`.
 
 ## Tables and ownership
 
@@ -24,12 +33,14 @@ All tenant-owned tables include `tenant_id`, enable and force RLS, and use polic
 | Schema/table | Purpose | Contract |
 |---|---|---|
 | `core.tenants`, `core.users`, `core.sessions`, `core.entitlements` | Tenant, verified users, hashed session tokens, connector/user allowance. | C1 |
-| `registry.capabilities`, `registry.capability_versions`, `registry.agents`, `registry.agent_versions` | Immutable capability/agent versions and effect-class manifest. | C2 |
+| `registry.capabilities`, `registry.capability_versions`, `registry.agents`, `registry.agent_versions` | Immutable capability versions, approved agent versions and immutable drafts, effect-class manifest. | C2 |
 | `registry.connections`, `registry.source_groups`, `registry.source_group_members` | Atomic connection/agent activation and exactly-one versioned group membership. | C2 |
+| `registry.events` | Append-only `agent_created` and `agent_retired` events, committed with registry changes. | C2 |
+| `registry.personal_memories` | Per-person role template, vocabulary, default source references, saved plan references, answer style and corrections; owner-only RLS. | C2 |
 | `runs.runs`, `runs.steps`, `runs.events`, `runs.authz_decisions`, `runs.outbox` | Durable run state, fencing/leases, append-only ordered events, per-call policy decisions, transactional dispatch. | C1, C5 |
 | `core.activity_events` | Append-only user and connector activity used to compute usage. | C1 §Usage |
 
-`tenant_id` belongs on every listed tenant table. Event/result payloads contain safe metadata and `result_ref` only; never result rows, credentials, or raw identifiers (C5; CLAUDE.md §3.9–10). No client connection/action credentials are introduced in this phase.
+`tenant_id` belongs on every listed tenant table. `runs.steps` pins `source_group_id` and `source_group_version` when supplied. Event/result payloads contain safe metadata and `result_ref` only; never result rows, credentials, or raw identifiers (C5; CLAUDE.md §3.9–10). No client connection/action credentials are introduced in this phase.
 
 ## Events
 
@@ -60,35 +71,29 @@ Each case is a required test name or equivalent descriptive test title; test fil
 | `c1_interleaved_pool_requests_never_cross_tenants` (1,000 interleaved requests) | C1 acceptance 3; C1 tenant identity 1–2 |
 | `c1_runtime_roles_and_all_tenant_tables_force_rls` (catalogue check) | C1 acceptance 4; C1 tenant identity 3–4 |
 | `c1_forged_job_tenant_uses_stored_run_tenant` | C1 acceptance 5; C1 tenant identity 6 |
-| `c1_capability_rechecks_source_entitlement` | C1 acceptance 6; C1 rules 2, 4 |
-| `c1_revocation_blocks_next_run_step` | C1 acceptance 7 |
-| `c1_each_capability_call_has_one_policy_decision` | C1 acceptance 8; C1 rules 4–5 |
-| `c1_usage_recount_matches_activity_event_log` | C1 acceptance 9; C1 Usage 1–2 |
+| `c1_revocation_blocks_next_run_step_and_each_call_has_one_decision` | C1 acceptance 6–8; C1 rules 2, 4–5 |
+| `c1_usage_recount_matches_activity_event_log` | C1 acceptance 9; C1 Usage 1–2; design §2.5 |
 | `c1_connector_over_allowance_rolls_back_activation_and_agent` | C1 acceptance 10; C1 Usage 3; C2 rule 5 |
+| `c1_golden_user_login_creates_revocable_tenant_session_and_usage_route` | C1 identity and session tenancy; CLAUDE.md §10.2 Login and Usage |
 | `c2_unregistered_unpinned_or_disabled_capability_is_rejected` | C2 acceptance 1; C2 rules 1–4 |
 | `c2_approved_agent_edit_creates_immutable_draft_version` | C2 acceptance 2; C2 rule 1 |
+| `c2_registered_versions_are_immutable_and_release_one_action_effects_stay_disabled` | C2 rules 1, 3 |
 | `c2_bad_capability_input_and_output_return_typed_errors` | C2 acceptance 3 |
 | `c2_failed_connection_activation_leaves_no_agent_or_event` | C2 acceptance 4; C2 rule 5 |
 | `c2_source_group_move_versions_without_changing_pinned_run` | C2 acceptance 5; C2 rule 6 |
-| `c2_personal_agent_memory_isolation` | C2 acceptance 6; C2 rule 7 |
-| `c2_personal_memory_contains_no_results_or_identifier_values` | C2 acceptance 7; C2 rule 7; CLAUDE.md §3.12 |
-| `c5_worker_crash_at_every_step_boundary_recovers_20_runs` | C5 acceptance 1; C5 rules 1, 5–8 |
-| `c5_racing_workers_claim_step_once` | C5 acceptance 2; C5 rule 5 |
-| `c5_expired_worker_fencing_rejects_stale_result` | C5 acceptance 3; C5 rules 6–8 |
-| `c5_expired_lease_reclaim_increments_attempt_and_fence` | C5 acceptance 4; C5 rule 8 |
+| `c2_personal_agent_memory_isolation_and_safe_storage` | C2 acceptances 6–7; C2 rule 7; CLAUDE.md §3.12 |
+| `c5_worker_crash_at_every_step_boundary_recovers_20_runs_across_two_tenants` | C5 acceptances 1, 3–4; C5 rules 1, 5–8; C1 + C5 phase 0 two-step outcome and design §2.5 |
+| `c5_racing_workers_claim_step_once_and_fence_completion` | C5 acceptance 2 and duplicate completion; C5 rules 5–8 |
 | `c5_lost_effect_response_is_unknown_and_never_blindly_retried` | C5 acceptance 5; C5 external effects rules 9–12; CLAUDE.md §3.3 |
-| `c5_duplicate_completion_message_is_idempotent` | C5 acceptance 6 |
 | `c5_event_stream_resumes_after_last_event_id_once_in_order` | C5 acceptance 7; C5 rule 17 |
 | `c5_event_replay_rebuilds_stored_run_state` | C5 acceptance 8; C5 rules 1–2 |
 | `c5_illegal_run_state_transition_is_refused` | C5 acceptance 9; C5 rules 3–4 |
 | `c5_partial_retry_creates_child_and_preserves_parent_events` | C5 acceptance 10; C5 rule 15 |
-| `phase0_two_tenant_two_step_run_survives_worker_termination` | C1 + C5; phase 0 outcome and acceptance in design §2.5 |
-| `phase0_usage_isolated_and_matches_activity_events` | C1 acceptance 9; design §2.5 |
-| `phase0_insyght_repository_and_services_untouched` | CLAUDE.md §3.1; design §2.2 and §2.5 |
+| `phase0_golden_login_reaches_empty_home_and_tenant_usage` | C1; CLAUDE.md §§10–11; phase 0 UI outcome |
 
 ## Demo and phase completion
 
-Run the two-tenant scripted two-step read-only run from the local Compose PostgreSQL deployment; terminate the worker after a step boundary, restart it, and show both tenants' event streams and Usage separately. Completion requires all named C1/C2/C5 cases, lint, typecheck, unit, PostgreSQL integration, contract and Playwright suites, plus the design §2.5 20-run crash-recovery acceptance. No INSYGHT repository, server, database, credential or deployment is accessed.
+Start the native services with `pnpm dev`, then run `pnpm demo:phase0`. It creates the scripted two-step read-only run for each synthetic golden tenant; the worker consumes only the golden result references. The contract suite also kills and restarts worker processes across 20 two-step runs, then checks both tenants' isolated event streams and Usage. Completion requires all named C1/C2/C5 cases, lint, typecheck, unit, PostgreSQL integration, contract and Playwright suites, plus the design §2.5 20-run crash-recovery acceptance. No INSYGHT repository, server, database, credential or deployment is accessed. Docker is not installed or required.
 
 ## Assumptions
 
@@ -96,3 +101,4 @@ Run the two-tenant scripted two-step read-only run from the local Compose Postgr
 - The bundled demo users and tenants are synthetic and live only in the local golden dataset/seed. No default production account or password is shipped.
 - Policy is an in-process implementation behind one interface, and jobs use PostgreSQL `FOR UPDATE SKIP LOCKED`; both are specified stack choices, not added infrastructure (CLAUDE.md §§5, 8; C1 rule 5; C5).
 - Usage counts distinct active users and active connectors by type from committed activity events for the selected period; connector pricing categorization stays undecided (C1 Usage; decision 19).
+- The local golden seed uses the explicitly synthetic password `golden-local-only` for two fixture accounts; it is not a production account or credential and is used only in the isolated development/test databases (CLAUDE.md §§3.15, 5.1).
