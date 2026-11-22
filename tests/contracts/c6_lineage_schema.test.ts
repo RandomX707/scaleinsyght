@@ -28,17 +28,27 @@ describe('c6 lineage and identifier schema contracts', () => {
     const ids = await withTenant(pool,tenantId,async(client)=>{
       const a = await client.query<{asset_id:string}>("INSERT INTO graph.assets(tenant_id,source_id,asset_type,qualified_name,fingerprint) VALUES($1,$2,'dataset','synthetic.source',decode(repeat('01',32),'hex')) RETURNING asset_id",[tenantId,connection.connectionId]);
       const b = await client.query<{asset_id:string}>("INSERT INTO graph.assets(tenant_id,source_id,asset_type,qualified_name,fingerprint) VALUES($1,$2,'dataset','synthetic.target',decode(repeat('02',32),'hex')) RETURNING asset_id",[tenantId,connection.connectionId]);
+      const c = await client.query<{asset_id:string}>("INSERT INTO graph.assets(tenant_id,source_id,asset_type,qualified_name,fingerprint) VALUES($1,$2,'dataset','synthetic.origin',decode(repeat('03',32),'hex')) RETURNING asset_id",[tenantId,connection.connectionId]);
       const edge = await client.query<{relationship_id:string}>("INSERT INTO graph.relationships(tenant_id,family,relationship_type,from_asset_id,to_asset_id,granularity) VALUES($1,'data_flow','DERIVES_FROM',$2,$3,'dataset') RETURNING relationship_id",[tenantId,a.rows[0]!.asset_id,b.rows[0]!.asset_id]);
+      await client.query("INSERT INTO graph.relationships(tenant_id,family,relationship_type,from_asset_id,to_asset_id,granularity) VALUES($1,'data_flow','DERIVES_FROM',$2,$3,'dataset')",[tenantId,c.rows[0]!.asset_id,a.rows[0]!.asset_id]);
       const evidence = await client.query<{evidence_id:string}>("INSERT INTO graph.evidence(tenant_id,evidence_type,safe_metadata) VALUES($1,'manifest','{}') RETURNING evidence_id",[tenantId]);
       await client.query("INSERT INTO graph.assertions(tenant_id,relationship_id,evidence_method,evidence_ids,collector_version) VALUES($1,$2,'declared',ARRAY[$3::uuid],'phase3-fixture')",[tenantId,edge.rows[0]!.relationship_id,evidence.rows[0]!.evidence_id]);
       await client.query("INSERT INTO graph.gaps(tenant_id,between_asset_ids,reason) VALUES($1,ARRAY[$2::uuid,$3::uuid],'synthetic manifest omits field mapping')",[tenantId,b.rows[0]!.asset_id,crypto.randomUUID()]);
-      return {source:a.rows[0]!.asset_id,target:b.rows[0]!.asset_id};
+      return {source:a.rows[0]!.asset_id,target:b.rows[0]!.asset_id,origin:c.rows[0]!.asset_id};
     });
     const lineage=await queryLineage(appPool,{tenantId,assetId:ids.source,direction:'downstream'});
     expect(lineage.asset_ids).toContain(ids.target);
     expect(lineage.assertions).toHaveLength(1);
     expect(lineage.gaps).toHaveLength(1);
-    expect(lineage.coverage).toBe(0);
+    expect(lineage.coverage).toBeLessThan(1);
+    const upstream=await queryLineage(appPool,{tenantId,assetId:ids.target,direction:'upstream'});
+    expect(upstream.asset_ids).toContain(ids.source);
+    const both=await queryLineage(appPool,{tenantId,assetId:ids.target,direction:'both'});
+    expect(both.asset_ids).toContain(ids.source);
+    expect(both.asset_ids).toContain(ids.origin);
+    const beforeCapture=await queryLineage(appPool,{tenantId,assetId:ids.source,direction:'downstream',asOf:new Date('2000-01-01T00:00:00.000Z')});
+    expect(beforeCapture.observable).toBe(false);
+    expect(beforeCapture.assertions).toHaveLength(0);
   });
 
   it('c1_phase3_graph_tables_are_tenant_scoped_and_forced_rls', async () => {

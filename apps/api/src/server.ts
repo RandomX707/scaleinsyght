@@ -9,7 +9,7 @@ import { getNotifications, markNotificationRead, readConnectionScope, readWorkbo
 import { applyPersonalContext, createAnalyticPlan, startAnalyticRun, submitFeedback, type StructuredAnswer } from '@scaleinsyght/analytic';
 import { eventsAfter } from '@scaleinsyght/runner';
 import { AnalyticPlanSchema, hashPlan } from '@scaleinsyght/contracts';
-import { importGoldenMetadata, queryLineage } from '@scaleinsyght/graph';
+import { importGoldenMetadata, queryLineage, reconcileAssertion, reviewGraphAssertion, verifyAssertionFromRun } from '@scaleinsyght/graph';
 
 export interface GoldenAccount { tenantId: string; email: string; }
 export interface ServerOptions { pool: Pool; sessionSecret: string; goldenAccounts: GoldenAccount[]; artifactStore?: EncryptedArtifactStore; }
@@ -66,6 +66,24 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const {assetId,direction='both',asOf}=request.query;
     if(!assetId||!['upstream','downstream','both'].includes(direction)|| (asOf!==undefined&&!Number.isFinite(Date.parse(asOf))))return reply.code(400).send({error:'invalid_lineage_query'});
     return reply.send(await queryLineage(options.pool,{tenantId:current.tenantId,assetId,direction,...(asOf?{asOf:new Date(asOf)}:{})}));
+  });
+  app.post<{Params:{assertionId:string};Body:{status?:string}}>('/api/lineage/assertions/:assertionId/review',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    if(!['accepted','disputed','rejected'].includes(request.body?.status??''))return reply.code(400).send({error:'invalid_review_status'});
+    try{return reply.send(await reviewGraphAssertion(options.pool,{tenantId:current.tenantId,principalId:current.userId,assertionId:request.params.assertionId,status:request.body!.status as 'accepted'|'disputed'|'rejected'}));}
+    catch(error){if(error instanceof Error&&error.message==='assertion_not_found')return reply.code(404).send({error:error.message});throw error;}
+  });
+  app.post<{Params:{assertionId:string};Body:{runId?:string}}>('/api/lineage/assertions/:assertionId/verify',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    if(typeof request.body?.runId!=='string'||!/^[0-9a-f-]{36}$/i.test(request.body.runId))return reply.code(400).send({error:'invalid_run_id'});
+    try{return reply.send(await verifyAssertionFromRun(options.pool,{tenantId:current.tenantId,assertionId:request.params.assertionId,runId:request.body.runId}));}
+    catch(error){const code=error instanceof Error?error.message:'lineage_verification_failed';if(code==='assertion_not_found')return reply.code(404).send({error:code});if(code==='exact_successful_run_pair_not_found')return reply.code(409).send({error:code});throw error;}
+  });
+  app.post<{Params:{assertionId:string};Body:{evidenceId?:string}}>('/api/lineage/assertions/:assertionId/reconcile',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    if(typeof request.body?.evidenceId!=='string'||!/^[0-9a-f-]{36}$/i.test(request.body.evidenceId))return reply.code(400).send({error:'invalid_evidence_id'});
+    try{return reply.send(await reconcileAssertion(options.pool,{tenantId:current.tenantId,assertionId:request.params.assertionId,evidenceId:request.body.evidenceId}));}
+    catch(error){if(error instanceof Error&&error.message==='reconciliation_evidence_not_found')return reply.code(409).send({error:error.message});throw error;}
   });
   app.post<{Body:{email?:string;password?:string}}>('/api/auth/login',async(request,reply)=>{
     const email=request.body?.email?.trim().toLowerCase();const password=request.body?.password;

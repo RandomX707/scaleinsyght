@@ -64,19 +64,21 @@ export interface QueryLineageInput {
 export async function queryLineage(pool: Pool, input: QueryLineageInput): Promise<LineagePath> {
   return withTenant(pool, input.tenantId, async (client) => {
     const edges = await client.query<{ from_asset_id: string; to_asset_id: string; relationship_id: string }>(
-      `WITH RECURSIVE walk(asset_id,depth,visited) AS (
-         SELECT $1::uuid,0,ARRAY[$1::uuid]
+      `WITH RECURSIVE walk(asset_id,depth,visited,relationship_id) AS (
+         SELECT $1::uuid,0,ARRAY[$1::uuid],NULL::uuid
          UNION ALL
-         SELECT CASE WHEN $2='upstream' THEN r.from_asset_id ELSE r.to_asset_id END,w.depth+1,
-           w.visited || CASE WHEN $2='upstream' THEN r.from_asset_id ELSE r.to_asset_id END
+         SELECT next.asset_id,w.depth+1,w.visited || next.asset_id,r.relationship_id
          FROM walk w JOIN graph.relationships r ON r.tenant_id=$3 AND r.family='data_flow'
-           AND ((($2 IN ('downstream','both')) AND r.from_asset_id=w.asset_id) OR (($2 IN ('upstream','both')) AND r.to_asset_id=w.asset_id))
-         WHERE w.depth<20 AND NOT (CASE WHEN $2='upstream' THEN r.from_asset_id ELSE r.to_asset_id END=ANY(w.visited))
+         CROSS JOIN LATERAL (
+           SELECT r.to_asset_id AS asset_id WHERE $2 IN ('downstream','both') AND r.from_asset_id=w.asset_id
+           UNION ALL
+           SELECT r.from_asset_id AS asset_id WHERE $2 IN ('upstream','both') AND r.to_asset_id=w.asset_id
+         ) next
+         WHERE w.depth<20 AND NOT (next.asset_id=ANY(w.visited))
        )
        SELECT DISTINCT r.from_asset_id,r.to_asset_id,r.relationship_id FROM walk w
-       JOIN graph.relationships r ON r.tenant_id=$3 AND r.family='data_flow'
-         AND (r.from_asset_id=w.asset_id OR r.to_asset_id=w.asset_id)
-       WHERE w.depth>0 OR r.from_asset_id=$1 OR r.to_asset_id=$1`,
+       JOIN graph.relationships r ON r.tenant_id=$3 AND r.relationship_id=w.relationship_id
+       WHERE w.relationship_id IS NOT NULL`,
       [input.assetId,input.direction,input.tenantId],
     );
     const visited = [...new Set([input.assetId,...edges.rows.flatMap((row) => [row.from_asset_id,row.to_asset_id])])];
@@ -179,5 +181,60 @@ export async function importGoldenMetadata(pool: Pool, input: ImportGoldenMetada
     const event:GraphEvent={event_type:'metadata_imported',safe_payload:{fixture_key:input.fixtureKey,asset_count:assetIds.size,tool:fixture.tool}};
     await writeGraphEvent(client,event);
     return {assets:assetIds.size,flows:flowCount,reports:fixture.reports.length,gaps:gapCount};
+  });
+}
+
+export async function reviewGraphAssertion(pool:Pool,input:{tenantId:string;principalId:string;assertionId:string;status:'accepted'|'disputed'|'rejected'}):Promise<GraphAssertion>{
+  return withTenant(pool,input.tenantId,async(client)=>{
+    const result=await client.query<GraphAssertion>(
+      `UPDATE graph.assertions SET review_status=$3,reviewer_id=$4,reviewed_at=clock_timestamp()
+       WHERE tenant_id=$1 AND assertion_id=$2 RETURNING assertion_id,relationship_id,evidence_method,review_status,verification,evidence_ids,confidence_score,explanation,transformation,collector_version,captured_at,valid_from,valid_to`,
+      [input.tenantId,input.assertionId,input.status,input.principalId]);
+    if(!result.rowCount)throw new Error('assertion_not_found');
+    await writeGraphEvent(client,{event_type:'assertion_reviewed',assertion_id:input.assertionId,safe_payload:{review_status:input.status}});
+    return result.rows[0]!;
+  });
+}
+
+export async function verifyAssertionFromRun(pool:Pool,input:{tenantId:string;assertionId:string;runId:string}):Promise<GraphAssertion>{
+  return withTenant(pool,input.tenantId,async(client)=>{
+    const assertion=await client.query<{from_asset_id:string;to_asset_id:string;granularity:string}>(
+      `SELECT r.from_asset_id,r.to_asset_id,r.granularity FROM graph.assertions a
+       JOIN graph.relationships r ON r.tenant_id=a.tenant_id AND r.relationship_id=a.relationship_id
+       WHERE a.tenant_id=$1 AND a.assertion_id=$2 AND r.family='data_flow'`,[input.tenantId,input.assertionId]);
+    const edge=assertion.rows[0];if(!edge)throw new Error('assertion_not_found');
+    const run=await client.query<{state:string}>(
+      'SELECT state FROM runs.runs WHERE tenant_id=$1 AND run_id=$2',[input.tenantId,input.runId]);
+    const completion=await client.query<{event_id:string}>(
+      `SELECT event_id FROM runs.events WHERE tenant_id=$1 AND run_id=$2 AND event_type='lineage_observed'
+       AND safe_payload->'lineage' @> $3::jsonb
+       AND EXISTS(SELECT 1 FROM runs.events terminal WHERE terminal.tenant_id=$1 AND terminal.run_id=$2 AND terminal.event_type='run_terminal' AND terminal.safe_payload->>'state'='COMPLETED')
+       ORDER BY sequence DESC LIMIT 1`,
+      [input.tenantId,input.runId,JSON.stringify([{from_asset_id:edge.from_asset_id,to_asset_id:edge.to_asset_id,granularity:edge.granularity}])]);
+    if(run.rows[0]?.state!=='COMPLETED'||!completion.rowCount)throw new Error('exact_successful_run_pair_not_found');
+    const evidence=await client.query<{evidence_id:string}>(
+      `INSERT INTO graph.evidence(tenant_id,evidence_type,safe_metadata) VALUES($1,'run_event',$2::jsonb) RETURNING evidence_id`,
+      [input.tenantId,JSON.stringify({run_id:input.runId,event_id:completion.rows[0]!.event_id})]);
+    const updated=await client.query<GraphAssertion>(
+      `UPDATE graph.assertions SET verification='run_verified',evidence_ids=array_append(evidence_ids,$3::uuid)
+       WHERE tenant_id=$1 AND assertion_id=$2 RETURNING assertion_id,relationship_id,evidence_method,review_status,verification,evidence_ids,confidence_score,explanation,transformation,collector_version,captured_at,valid_from,valid_to`,
+      [input.tenantId,input.assertionId,evidence.rows[0]!.evidence_id]);
+    await writeGraphEvent(client,{event_type:'assertion_verification_changed',assertion_id:input.assertionId,safe_payload:{verification:'run_verified'}});
+    return updated.rows[0]!;
+  });
+}
+
+export async function reconcileAssertion(pool:Pool,input:{tenantId:string;assertionId:string;evidenceId:string}):Promise<GraphAssertion>{
+  return withTenant(pool,input.tenantId,async(client)=>{
+    const result=await client.query<GraphAssertion>(
+      `UPDATE graph.assertions a SET verification='reconciled',evidence_ids=array_append(a.evidence_ids,$3::uuid)
+       FROM graph.relationships r WHERE a.tenant_id=$1 AND a.assertion_id=$2 AND r.tenant_id=a.tenant_id AND r.relationship_id=a.relationship_id AND r.family='data_flow' AND EXISTS(
+         SELECT 1 FROM graph.evidence e WHERE e.tenant_id=a.tenant_id AND e.evidence_id=$3 AND e.evidence_type='reconciliation'
+          AND e.safe_metadata @> jsonb_build_object('from_asset_id',r.from_asset_id,'to_asset_id',r.to_asset_id,'granularity',r.granularity))
+       RETURNING a.assertion_id,a.relationship_id,a.evidence_method,a.review_status,a.verification,a.evidence_ids,a.confidence_score,a.explanation,a.transformation,a.collector_version,a.captured_at,a.valid_from,a.valid_to`,
+      [input.tenantId,input.assertionId,input.evidenceId]);
+    if(!result.rowCount)throw new Error('reconciliation_evidence_not_found');
+    await writeGraphEvent(client,{event_type:'assertion_verification_changed',assertion_id:input.assertionId,safe_payload:{verification:'reconciled'}});
+    return result.rows[0]!;
   });
 }
