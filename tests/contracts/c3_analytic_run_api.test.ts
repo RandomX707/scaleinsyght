@@ -56,6 +56,10 @@ describe('contract 3 authenticated analytic run routes', () => {
       const otherCookie = otherLogin.headers['set-cookie'];
       const hidden = await server.inject({ method: 'GET', url: `/api/runs/${runId}`, headers: { cookie: String(otherCookie) } });
       expect(hidden.statusCode).toBe(404);
+      await withTenant(migrate, tenantId, async (db) => {
+        await db.query("UPDATE runs.steps SET state='CANCELLED' WHERE tenant_id=$1 AND run_id=$2", [tenantId, runId]);
+        await db.query("UPDATE runs.runs SET state='CANCELLED',state_version=state_version+1 WHERE tenant_id=$1 AND run_id=$2", [tenantId, runId]);
+      });
     } finally { await server.close(); }
   });
 });
