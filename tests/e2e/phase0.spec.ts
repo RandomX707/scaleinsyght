@@ -50,3 +50,25 @@ test('phase1_golden_source_activation_profiles_dictionary_and_read_once_notifica
  await newNotification.click();
  await expect(page.getByText('Earlier',{exact:true})).toBeVisible();
 });
+
+test('phase1_keyboard_navigation_and_catalogue_search_use_stored_metadata_only',async({page})=>{
+ await page.goto('/login');
+ await page.getByLabel('Email').fill('analyst@north.example');
+ await page.getByLabel('Password').fill('golden-local-only');
+ await page.getByRole('button',{name:'Sign in'}).click();
+ await expect(page).toHaveURL('/');
+ const dictionary=page.getByRole('link',{name:/Dictionary/});
+ await dictionary.focus();
+ await page.keyboard.press('Enter');
+ await expect(page.getByRole('heading',{name:'Dictionary'})).toBeVisible();
+ await page.goto('/');
+ let modelEndpointRequests=0;
+ page.on('request',request=>{if(request.url().includes('/api/model'))modelEndpointRequests+=1;});
+ const response=page.waitForResponse(item=>item.url().includes('/api/catalogue/search'));
+ await page.getByLabel('Catalog question').fill('Table_001');
+ await page.getByRole('button',{name:'Search catalog'}).click();
+ const result=await (await response).json() as {matches:string[];modelRequests:number};
+ expect(result.matches).toContain('X_Golden.Table_001');
+ expect(result.modelRequests).toBe(0);
+ expect(modelEndpointRequests).toBe(0);
+});
