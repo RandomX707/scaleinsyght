@@ -32,6 +32,10 @@ function localPassword(): string {
   return randomBytes(32).toString('base64url');
 }
 
+export function localArtifactMasterKey(): string {
+  return randomBytes(32).toString('base64');
+}
+
 function createEnvFile(envPath: string, examplePath: string): void {
   if (existsSync(envPath)) return;
 
@@ -43,7 +47,8 @@ function createEnvFile(envPath: string, examplePath: string): void {
     .replace('si_app:replace-me@', `si_app:${appPassword}@`)
     .replace('si_worker:replace-me@', `si_worker:${workerPassword}@`)
     .replace('si_migrate:replace-me@', `si_migrate:${migratePassword}@`)
-    .replace('replace-with-a-random-local-secret', sessionSecret);
+    .replace('replace-with-a-random-local-secret', sessionSecret)
+    .replace('replace-with-base64-for-a-random-32-byte-key', localArtifactMasterKey());
   writeFileSync(envPath, contents, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
 }
 
