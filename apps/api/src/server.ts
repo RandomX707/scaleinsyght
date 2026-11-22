@@ -2,11 +2,11 @@ import { createHash, createHmac, randomBytes, randomUUID, scryptSync, timingSafe
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { withTenant, getUsage } from '@scaleinsyght/db';
-import { activateConnection, createConnectionDraft, moveConnectionToGroup, type ConnectorType } from '@scaleinsyght/registry';
+import { activateConnection, createConnectionDraft, deletePersonalMemory, getPersonalMemory, moveConnectionToGroup, putPersonalMemory, type ConnectorType, type PersonalMemoryData } from '@scaleinsyght/registry';
 import { createGoldenConnector, listGoldenSources } from '@scaleinsyght/connectors';
 import { EncryptedArtifactStore } from '@scaleinsyght/artifacts';
 import { getNotifications, markNotificationRead, readConnectionScope, readWorkbook, retireConnection, runGoldenProfile, saveConnectionScope, storeWorkbook } from '@scaleinsyght/profiler';
-import { createAnalyticPlan, startAnalyticRun } from '@scaleinsyght/analytic';
+import { applyPersonalContext, createAnalyticPlan, startAnalyticRun, submitFeedback, type StructuredAnswer } from '@scaleinsyght/analytic';
 import { eventsAfter } from '@scaleinsyght/runner';
 
 export interface GoldenAccount { tenantId: string; email: string; }
@@ -76,6 +76,44 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const from=new Date();from.setUTCDate(1);from.setUTCHours(0,0,0,0);const to=new Date(from);to.setUTCMonth(to.getUTCMonth()+1);
     return reply.send(await getUsage(options.pool,current.tenantId,from,to));
   });
+  app.get('/api/me/agent',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const memory=await getPersonalMemory(options.pool,{tenantId:current.tenantId,principalId:current.userId});
+    if(memory.defaultSources.length){
+      const visible=await withTenant(options.pool,current.tenantId,async(client)=>{
+        const active=await client.query<{connection_id:string}>("SELECT connection_id FROM registry.connections WHERE tenant_id=$1 AND status='active' AND connection_id=ANY($2::uuid[])",[current.tenantId,memory.defaultSources]);
+        const grants=await client.query<{resource_id:string|null}>("SELECT resource_id FROM core.entitlements WHERE tenant_id=$1 AND principal_id=$2 AND capability_id='analytic.read' AND allowed AND (resource_id IS NULL OR resource_id=ANY($3::text[]))",[current.tenantId,current.userId,memory.defaultSources]);
+        const global=grants.rows.some((row)=>row.resource_id===null);return memory.defaultSources.filter((id)=>active.rows.some((row)=>row.connection_id===id)&&(global||grants.rows.some((row)=>row.resource_id===id)));
+      });
+      memory.defaultSources=visible;
+    }
+    return reply.send({memory});
+  });
+  app.put<{Body:Partial<PersonalMemoryData>}>('/api/me/agent',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const body=request.body as Record<string,unknown>|undefined;const allowedKeys=['vocabulary','defaultSources','savedPlanIds','answerStyle','corrections'];
+    if(!body||Object.keys(body).some((key)=>!allowedKeys.includes(key)))return reply.code(400).send({error:'invalid_personal_memory'});
+    const vocabulary=body.vocabulary??{};const defaultSources=body.defaultSources??[];const savedPlanIds=body.savedPlanIds??[];const corrections=body.corrections??[];const answerStyle=body.answerStyle??null;
+    if(!vocabulary||typeof vocabulary!=='object'||Array.isArray(vocabulary)||Object.values(vocabulary).some((value)=>typeof value!=='string')
+      ||!Array.isArray(defaultSources)||defaultSources.some((id)=>typeof id!=='string'||! /^[0-9a-f-]{36}$/i.test(id))
+      ||!Array.isArray(savedPlanIds)||savedPlanIds.some((id)=>typeof id!=='string'||! /^[0-9a-f-]{36}$/i.test(id))
+      ||!Array.isArray(corrections)||corrections.some((item)=>!item||typeof item!=='object'||Array.isArray(item)||Object.keys(item).sort().join(',')!=='meaning,term'||typeof (item as {term?:unknown}).term!=='string'||typeof (item as {meaning?:unknown}).meaning!=='string')
+      ||!([null,'concise','detailed','sql_first','lineage_first'] as unknown[]).includes(answerStyle))return reply.code(400).send({error:'invalid_personal_memory'});
+    const permitted=await withTenant(options.pool,current.tenantId,async(client)=>{
+      if(!defaultSources.length)return true;
+      const active=await client.query<{connection_id:string}>("SELECT connection_id FROM registry.connections WHERE tenant_id=$1 AND status='active' AND connection_id=ANY($2::uuid[])",[current.tenantId,defaultSources]);
+      if(active.rowCount!==new Set(defaultSources as string[]).size)return false;
+      const grants=await client.query<{resource_id:string|null}>("SELECT resource_id FROM core.entitlements WHERE tenant_id=$1 AND principal_id=$2 AND capability_id='analytic.read' AND allowed AND (resource_id IS NULL OR resource_id=ANY($3::text[]))",[current.tenantId,current.userId,defaultSources]);
+      return grants.rows.some((row)=>row.resource_id===null)||(defaultSources as string[]).every((id)=>grants.rows.some((row)=>row.resource_id===id));
+    });
+    if(!permitted)return reply.code(403).send({error:'default_source_not_authorized'});
+    try{const memory={vocabulary:vocabulary as Record<string,string>,defaultSources:defaultSources as string[],savedPlanIds:savedPlanIds as string[],answerStyle:answerStyle as PersonalMemoryData['answerStyle'],corrections:corrections as NonNullable<PersonalMemoryData['corrections']>};await putPersonalMemory(options.pool,{tenantId:current.tenantId,principalId:current.userId,memory});return reply.send({memory});}
+    catch(error){if(error instanceof Error&&error.message==='invalid_personal_memory')return reply.code(400).send({error:'invalid_personal_memory'});throw error;}
+  });
+  app.delete('/api/me/agent',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    return reply.send({deleted:await deletePersonalMemory(options.pool,{tenantId:current.tenantId,principalId:current.userId})});
+  });
 
   app.post<{Body:{question?:string;sourceIds?:string[]}}>('/api/runs',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
@@ -95,7 +133,15 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
        LEFT JOIN runs.analytic_answers a USING(tenant_id,run_id)
        WHERE r.tenant_id=$1 AND r.principal_id=$2 AND r.run_id=$3`,[current.tenantId,current.userId,request.params.runId]));
     if(!result.rowCount)return reply.code(404).send({error:'run_not_found'});
-    const row=result.rows[0]!;return reply.send({runId:row.run_id,state:row.state,stateVersion:row.state_version,plan:row.plan,planHash:row.plan_hash,answer:row.answer});
+    const row=result.rows[0]!;const memory=await getPersonalMemory(options.pool,{tenantId:current.tenantId,principalId:current.userId});
+    return reply.send({runId:row.run_id,state:row.state,stateVersion:row.state_version,plan:row.plan,planHash:row.plan_hash,answer:row.answer?applyPersonalContext(row.answer as unknown as StructuredAnswer,memory):null});
+  });
+  app.post<{ Params: { runId: string }; Body: { verdict?: 'useful' | 'not_useful'; correction?: { term: string; meaning: string } } }>('/api/runs/:runId/feedback',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const body=request.body;
+    if(!body||!['useful','not_useful'].includes(String(body.verdict))||(body.correction&&(Object.keys(body.correction).sort().join(',')!=='meaning,term'||typeof body.correction.term!=='string'||typeof body.correction.meaning!=='string')))return reply.code(400).send({error:'invalid_feedback'});
+    try{return reply.code(201).send(await submitFeedback(options.pool,{tenantId:current.tenantId,principalId:current.userId,runId:request.params.runId,verdict:body.verdict!,...(body.correction?{correction:body.correction}:{})}));}
+    catch(error){const code=error instanceof Error?error.message:'feedback_failed';if(code==='run_not_found')return reply.code(404).send({error:code});if(code==='unsafe_correction'||code==='correction_not_allowed_for_useful_verdict')return reply.code(400).send({error:code});throw error;}
   });
   app.get<{Params:{runId:string};Querystring:{after?:string}}>('/api/runs/:runId/events',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});

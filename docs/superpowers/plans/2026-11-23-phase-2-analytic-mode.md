@@ -74,9 +74,9 @@
 
 **Interfaces:** `applyPersonalContext(answer,memory)` may alter wording/order only; numeric values, claims, evidence and authorized sources remain identical. `submitFeedback(...)` writes one verdict; a safe correction updates only that principal's memory and inserts one evaluation case.
 
-- [ ] Test two owners get identical values but distinct answer shape, corrections are owner-only, no raw identifiers/rows persist, and thumbs-up stores a reusable plan reference only.
-- [ ] Add `GET/PUT/DELETE /api/me/agent` and `POST /api/runs/:id/feedback`; test entitlement recheck for saved defaults.
-- [ ] Run targeted contracts/unit tests; commit `feat: add personal memory and answer feedback`.
+- [x] Test two owners get identical values but distinct answer shape, corrections are owner-only, no raw identifiers/rows persist, and thumbs-up stores a reusable plan reference only.
+- [x] Add `GET/PUT/DELETE /api/me/agent` and `POST /api/runs/:id/feedback`; test entitlement recheck for saved defaults.
+- [x] Run targeted contracts/unit tests; commit `feat: add personal memory and answer feedback`.
 
 ## Task 6: Governed-agent lifecycle
 

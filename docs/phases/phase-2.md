@@ -74,7 +74,7 @@ Each named case cites the frozen contract or design acceptance it implements. Co
 |---|---|
 | `c1_analytic_request_uses_session_tenant_and_rechecks_source_authorization` | C1 rules 1–4; CLAUDE.md §3.4 |
 | `c2_personal_memory_is_owner_only_editable_and_deletable` | C2 rule 7 and acceptances 6–7; C1; design §2.5 |
-| `c2_personal_defaults_cannot_widen_entitlements` | C2 rule 7; C1; C3 rule 9 |
+| `c7_feedback_is_owner_scoped_hash_only_and_changes_only_presentation` | C2 rule 7; C1 entitlement recheck; C7 rules 10, 15; design §2.5 |
 | `c2_group_move_creates_new_version_and_pinned_run_keeps_old_membership` | C2 rule 6 and acceptance 5; design §2.5 |
 | `c2_governed_definition_versions_are_immutable_and_approval_is_version_bound` | C2 rules 1–4; design §2.5 |
 | `c3_invalid_cycles_types_budgets_or_unauthorized_sources_never_queue_steps` | C3 rules 1–5, 10 and acceptances 1, 3, 8 |

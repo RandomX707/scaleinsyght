@@ -41,7 +41,9 @@ export async function createAnalyticPlan(input: { question: string; runId: strin
   return AnalyticPlanSchema.parse(parsed);
 }
 
-export { collateGroupResults, criticCheck, executeGoldenStep, finalizeAnalyticRun } from './executor.js';
+export { collateGroupResults, criticCheck, executeGoldenStep, finalizeAnalyticRun, type StructuredAnswer, type StructuredResult } from './executor.js';
+export { applyPersonalContext, type PersonalizedAnswer } from './personal-context.js';
+export { submitFeedback, type SafeCorrection } from './feedback.js';
 
 function validatePlanGraph(plan: AnalyticPlan): void {
   if (new Set(plan.scope.source_ids).size !== plan.scope.source_ids.length || plan.budgets.max_source_queries < plan.steps.length) throw new Error('analytic_plan_invalid');

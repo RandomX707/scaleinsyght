@@ -185,7 +185,8 @@ export interface PersonalMemoryData {
  corrections?:Array<{term:string;meaning:string}>;
 }
 function validateMemory(memory:PersonalMemoryData):void{
- if(Object.keys(memory.vocabulary).length>100||Object.entries(memory.vocabulary).some(([key,value])=>!key.trim()||key.length>120||value.length>500)||[...memory.defaultSources,...memory.savedPlanIds].some(id=>!/^\w[\w-]{0,127}$/.test(id))||(memory.corrections??[]).length>100||(memory.corrections??[]).some(item=>!item.term.trim()||item.term.length>120||!item.meaning.trim()||item.meaning.length>500))throw new Error('invalid_personal_memory');
+ const unsafe=(text:string)=>/[\r\n;]|\b(?:select|insert|update|delete|drop)\b/i.test(text)||/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/.test(text)||/\b[0-9a-f]{8}-[0-9a-f-]{27,}\b/i.test(text)||/\b\d{8,}\b/.test(text)||/\b(?:id|identifier|account|customer|email|ssn|phone)\s*[:=#]\s*\S+/i.test(text);
+ if(Object.keys(memory.vocabulary).length>100||Object.entries(memory.vocabulary).some(([key,value])=>!key.trim()||key.length>120||value.length>500||unsafe(`${key} ${value}`))||[...memory.defaultSources,...memory.savedPlanIds].some(id=>!/^\w[\w-]{0,127}$/.test(id))||(memory.corrections??[]).length>100||(memory.corrections??[]).some(item=>!item.term.trim()||item.term.length>120||!item.meaning.trim()||item.meaning.length>500||unsafe(`${item.term} ${item.meaning}`)))throw new Error('invalid_personal_memory');
 }
 export async function putPersonalMemory(pool:Pool,input:{tenantId:string;principalId:string;memory:PersonalMemoryData}):Promise<void>{
  const memory=input.memory;validateMemory(memory);
