@@ -5,6 +5,8 @@
 ## Assumptions (pending Yashaswi)
 
 - **Decision 28:** exercise the analytic path with a deterministic local provider and the synthetic golden question set; no hosted model calls or credentials.
+- **Decision 29:** governed definitions require approval by a same-tenant member other than the owner, bound to the exact immutable version.
+- **Decision 30:** activating a connector grants its owner read-only analytic access to that source only; other members need a separate grant.
 - Use the design's source-group recommendation: profiler-created groups, editable through a new version, with each connection in exactly one current group (decision 20; C2 rule 6).
 - Since CLAUDE.md section 3.13 forbids personas and roles, personal answer differences use vocabulary and answer style only; there is no role field or role switcher (C2 rule 7; CLAUDE.md §3.13; decision 21).
 
@@ -17,6 +19,7 @@ Ask a synthetic question that spans two source groups; show the validated plan a
 | Route | Behavior | Contract |
 |---|---|---|
 | `POST /api/runs` | Validate a nonempty question and authorized active source set; create a durable run and enqueue a deterministic golden analytic plan. Returns run id only. | C1 rules 2, 4; C3 rules 1–10; C5 rules 1–8 |
+| `GET /api/analytic/sources` | List only active sources the authenticated person is entitled to query. | C1 rules 1–4; C3 rules 1–5 |
 | `GET /api/runs/:runId` | Return tenant-scoped run state, validated plan summary, structured answer, evidence refs, trust route and safe error. | C1; C3; C4 rules 1–8; C5 |
 | `GET /api/runs/:runId/events` | Resume append-only run events after `Last-Event-ID`; browser refresh does not restart work. | C5 rules 1–2, 17; design §1.4 |
 | `POST /api/runs/:runId/feedback` | Store right/wrong verdict; thumbs-down correction updates only the current person's memory and inserts a safe evaluation case. | C1 owner scope; C2 rule 7; C7 rules 10, 15 |
@@ -24,8 +27,8 @@ Ask a synthetic question that spans two source groups; show the validated plan a
 | `GET /api/agents` | Return tenant agent summaries and current source-group membership, not prompts or secrets. | C1; C2 rules 4–8 |
 | `POST /api/groups/:groupId/members/:connectionId` | Move a connection by creating a new versioned group membership; validate tenant and active connection. | C1; C2 rule 6 and acceptance 5 |
 | `POST /api/governed-agents` | Save a typed, read-only definition as immutable draft version 1. | C2 rules 1–4; C3; C5 |
-| `POST /api/governed-agents/:id/approve` | Approve an immutable definition version and record its approver and event. | C1; C2 rules 1, 3; C5 |
-| `POST /api/governed-agents/:id/runs` | Start a durable run pinned to the approved version; rerun deterministic plan without a model call. | C1; C2; C3; C5; C7 |
+| `POST /api/governed-agents/:id/approve` | A different same-tenant member approves the exact immutable definition version and creates an audit event. | C1; C2 rules 1, 3; C5; Decision 29 |
+| `POST /api/governed-agents/:id/runs` | Start a durable run pinned to the approved version; rerun deterministic plan without a model call. | C1; C2; C3; C5; C7; Decision 29 |
 | `GET /api/evaluation` | Return counts and question identifiers for the tenant's synthetic evaluation set; never returns result rows. | C1; C2 acceptance 7; C4; C7 |
 
 Invalid plans are rejected before a step is queued. A person’s personal context may affect wording and source preference only; it never widens authorization. Event streams and logs contain identifiers, safe counts and references, never rows, SQL parameter values, raw model output or personal result data. **Contracts:** C1, C3–C5, C7.
@@ -57,6 +60,7 @@ Tenant-owned tables use `tenant_id`, `ENABLE/FORCE ROW LEVEL SECURITY`, transact
 | `registry.governed_definitions`, `registry.governed_versions` | Definition identity and immutable typed plan snapshots with status and owner. | C1; C2 rules 1–4 |
 | `registry.governed_approvals` | Approver, decision, definition version and timestamp. | C1; C2; C5 |
 | `registry.governed_events` | Append-only governed draft and version approval audit events with actor and version reference. | C1; C2; C5 |
+| `runs.governed_run_pins` | Immutable run-to-governed-definition version link, inserted atomically with the run and protected by tenant RLS. | C1; C2; C5; Decision 29 |
 | Existing `registry.source_groups`, `registry.source_group_members`, `registry.agents`, `registry.agent_versions` | Versioned groups and logical orchestrator/collating/governed agents. Each active connection has exactly one group version. | C1; C2 rules 4–8 |
 | Existing `runs.events` | `plan_proposed`, `plan_validated`, `plan_rejected`, step lifecycle, evidence, feedback and governed approval/run events; append-only and sequence contiguous. | C4; C5 |
 
@@ -73,6 +77,7 @@ Each named case cites the frozen contract or design acceptance it implements. Co
 | Test case | Contract / criterion |
 |---|---|
 | `c1_analytic_request_uses_session_tenant_and_rechecks_source_authorization` | C1 rules 1–4; CLAUDE.md §3.4 |
+| `c1_analytic_source_selector_lists_only_authorized_active_sources` | C1 rules 1–4; C3 rules 1–5 |
 | `c2_personal_memory_is_owner_only_editable_and_deletable` | C2 rule 7 and acceptances 6–7; C1; design §2.5 |
 | `c7_feedback_is_owner_scoped_hash_only_and_changes_only_presentation` | C2 rule 7; C1 entitlement recheck; C7 rules 10, 15; design §2.5 |
 | `c2_group_move_creates_new_version_and_pinned_run_keeps_old_membership` | C2 rule 6 and acceptance 5; design §2.5 |
@@ -87,6 +92,9 @@ Each named case cites the frozen contract or design acceptance it implements. Co
 | `phase2_two_people_receive_equal_values_in_distinct_saved_answer_styles` | Design §2.5 analytic acceptance; C2 rule 7 |
 | `phase2_thumbs_down_correction_changes_only_owners_next_answer_and_enters_evaluation_set` | Decision 22; C2 rule 7; C7; design §2.5 |
 | `phase2_governed_agent_rerun_returns_identical_numbers_without_model_calls` | C2; C3; C5; design §2.5 |
+| `phase2_governed_approval_requires_different_member_and_run_pins_exact_version` | C1; C2 rules 1–4; C5; Decision 29 |
+| `phase2_governed_definition_requires_second_member_approval_and_owner_reruns_approved_version` | C1; C2 rules 1–4; C3; C5; Decision 29 |
+| `phase2_home_persists_analytic_run_and_renders_evidence_and_feedback` | C1; C3–C5; C7; CLAUDE.md §§10–11 |
 | `phase2_each_of_30_golden_questions_per_connector_meets_expected_result` | Design §2.5: at least 90% per connector |
 | `phase2_home_plan_feedback_and_my_agent_are_keyboard_accessible` | CLAUDE.md §§10–11; C1–C5 |
 

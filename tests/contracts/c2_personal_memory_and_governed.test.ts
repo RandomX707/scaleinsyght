@@ -66,10 +66,11 @@ describe('contract 2 personal memory and governed definitions', () => {
 
   it('c2_governed_definition_versions_are_immutable_and_approval_is_version_bound', async () => {
     const tenantId = `governed-${crypto.randomUUID()}`;
-    const [ownerId] = await createPeople(tenantId);
+    const [ownerId, approverId] = await createPeople(tenantId);
     const plan = { plan: 'synthetic-read-only-v1', output: { metric: 'profiled_count' } };
     const draft = await createGovernedDraft(app, { tenantId, principalId: ownerId, name: 'Synthetic profile summary', plan });
-    const approval = await approveGovernedVersion(app, { tenantId, principalId: ownerId, governedId: draft.governedId, version: draft.version });
+    await expect(approveGovernedVersion(app, { tenantId, principalId: ownerId, governedId: draft.governedId, version: draft.version })).rejects.toThrow('governed_self_approval_not_allowed');
+    const approval = await approveGovernedVersion(app, { tenantId, principalId: approverId, governedId: draft.governedId, version: draft.version });
     const approved = await getApprovedGovernedVersion(app, { tenantId, governedId: draft.governedId, version: draft.version });
     expect(approved).toMatchObject({ version: 1, status: 'approved', plan });
     expect(approval.version).toBe(1);

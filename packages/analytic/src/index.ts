@@ -91,7 +91,7 @@ export async function validateAnalyticPlan(pool: Pool, input: { tenantId: string
   return { tenantId: input.tenantId, principalId: input.principalId, plan };
 }
 
-export async function startAnalyticRun(pool: Pool, input: { tenantId: string; principalId: string; plan: unknown }): Promise<{ runId: string }> {
+export async function startAnalyticRun(pool: Pool, input: { tenantId: string; principalId: string; plan: unknown; governed?: { governedId: string; version: number } }): Promise<{ runId: string }> {
   const validated = await validateAnalyticPlan(pool, input);
   const { plan } = validated; const planHash = plan.plan_hash;
   await withTenant(pool, input.tenantId, async (client) => {
@@ -118,8 +118,17 @@ export async function startAnalyticRun(pool: Pool, input: { tenantId: string; pr
       );
       if (!currentEntitlement.rows.some((row) => row.resource_id === null)
         && plan.scope.source_ids.some((sourceId) => !currentEntitlement.rows.some((row) => row.resource_id === sourceId))) throw new Error('principal_not_entitled');
+      if(input.governed){
+        const approved=await client.query<{plan:AnalyticPlan}>(
+          `SELECT v.plan FROM registry.governed_versions v JOIN registry.governed_approvals a USING(tenant_id,governed_id,version)
+           WHERE v.tenant_id=$1 AND v.governed_id=$2 AND v.version=$3 FOR SHARE`,[input.tenantId,input.governed.governedId,input.governed.version]);
+        if(!approved.rowCount)throw new Error('governed_version_not_approved');
+        const fingerprint=(value:AnalyticPlan)=>hashPlan(Object.fromEntries(Object.entries(value).filter(([key])=>key!=='run_id'&&key!=='plan_hash')));
+        if(await fingerprint(approved.rows[0]!.plan)!==await fingerprint(plan))throw new Error('governed_plan_mismatch');
+      }
       const runId = plan.run_id;
       await client.query(`INSERT INTO runs.runs(tenant_id,run_id,principal_id,state,plan_id) VALUES($1,$2,$3,'CREATED',$4)`, [input.tenantId, runId, input.principalId, plan.plan_id]);
+      if(input.governed)await client.query('INSERT INTO runs.governed_run_pins(tenant_id,run_id,governed_id,version) VALUES($1,$2,$3,$4)',[input.tenantId,runId,input.governed.governedId,input.governed.version]);
       await client.query('INSERT INTO runs.analytic_plans(tenant_id,run_id,plan,plan_hash) VALUES($1,$2,$3::jsonb,$4)', [input.tenantId, runId, JSON.stringify(plan), planHash]);
       const decision = await client.query<{ decision_id: string }>(
         `INSERT INTO runs.authz_decisions(tenant_id,run_id,principal_id,capability_id,outcome,policy_version,reasons)

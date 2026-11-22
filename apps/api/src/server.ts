@@ -2,12 +2,13 @@ import { createHash, createHmac, randomBytes, randomUUID, scryptSync, timingSafe
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { withTenant, getUsage } from '@scaleinsyght/db';
-import { activateConnection, createConnectionDraft, deletePersonalMemory, getPersonalMemory, moveConnectionToGroup, putPersonalMemory, type ConnectorType, type PersonalMemoryData } from '@scaleinsyght/registry';
+import { activateConnection, approveGovernedVersion, createConnectionDraft, createGovernedDraft, deletePersonalMemory, getApprovedGovernedVersion, getPersonalMemory, moveConnectionToGroup, putPersonalMemory, type ConnectorType, type PersonalMemoryData } from '@scaleinsyght/registry';
 import { createGoldenConnector, listGoldenSources } from '@scaleinsyght/connectors';
 import { EncryptedArtifactStore } from '@scaleinsyght/artifacts';
 import { getNotifications, markNotificationRead, readConnectionScope, readWorkbook, retireConnection, runGoldenProfile, saveConnectionScope, storeWorkbook } from '@scaleinsyght/profiler';
 import { applyPersonalContext, createAnalyticPlan, startAnalyticRun, submitFeedback, type StructuredAnswer } from '@scaleinsyght/analytic';
 import { eventsAfter } from '@scaleinsyght/runner';
+import { AnalyticPlanSchema, hashPlan } from '@scaleinsyght/contracts';
 
 export interface GoldenAccount { tenantId: string; email: string; }
 export interface ServerOptions { pool: Pool; sessionSecret: string; goldenAccounts: GoldenAccount[]; artifactStore?: EncryptedArtifactStore; }
@@ -156,6 +157,19 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     if(!await authenticatedSession(request))return reply.code(401).send({error:'unauthorized'});
     return reply.send({sources:listGoldenSources()});
   });
+  app.get('/api/agents',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const result=await withTenant(options.pool,current.tenantId,async(client)=>{
+      const groups=await client.query<{group_id:string;version:number;connection_id:string;connector_type:string;agent_id:string}>('SELECT g.source_group_id AS group_id,g.version,c.connection_id,c.connector_type,c.connector_agent_id AS agent_id FROM registry.source_groups g JOIN registry.source_group_members m ON m.tenant_id=g.tenant_id AND m.source_group_id=g.source_group_id AND m.group_version=g.version AND m.valid_to IS NULL JOIN registry.connections c ON c.tenant_id=m.tenant_id AND c.connection_id=m.connection_id WHERE g.tenant_id=$1 ORDER BY g.source_group_id,c.connection_id',[current.tenantId]);
+      const governed=await client.query<{governed_id:string;name:string;owner_id:string;version:number;approved_by:string|null}>('SELECT d.governed_id,d.name,d.owner_id,v.version,a.approved_by FROM registry.governed_definitions d JOIN registry.governed_versions v USING(tenant_id,governed_id) LEFT JOIN registry.governed_approvals a USING(tenant_id,governed_id,version) WHERE d.tenant_id=$1 ORDER BY d.governed_id,v.version',[current.tenantId]);
+      const agents=await client.query<{agent_id:string;agent_type:string;status:string;owner_id:string|null;active_version:number}>('SELECT agent_id,agent_type,status,owner_id,active_version FROM registry.agents WHERE tenant_id=$1 ORDER BY created_at',[current.tenantId]);
+      return{groups:groups.rows.map(row=>({groupId:row.group_id,version:row.version,connectionId:row.connection_id,connectorType:row.connector_type,agentId:row.agent_id})),governed:governed.rows.map(row=>({governedId:row.governed_id,name:row.name,ownerId:row.owner_id,version:row.version,approvedBy:row.approved_by})),agents:agents.rows};
+    });return reply.send(result);
+  });
+  app.get('/api/evaluation',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    return reply.send(await withTenant(options.pool,current.tenantId,async(client)=>{const result=await client.query<{question_hash:string}>('SELECT question_hash FROM memory.evaluation_cases WHERE tenant_id=$1 ORDER BY created_at',[current.tenantId]);return{count:result.rowCount??0,questionIds:result.rows.map(row=>row.question_hash)};}));
+  });
   app.get('/api/connections',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const result=await withTenant(options.pool,current.tenantId,async(client)=>client.query(
@@ -170,10 +184,47 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
       lastJobState:row.last_job_state,
     }))});
   });
+  app.get('/api/analytic/sources',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const result=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{connection_id:string;connector_type:string}>(
+      `SELECT c.connection_id,c.connector_type FROM registry.connections c JOIN registry.capabilities cap ON cap.tenant_id=c.tenant_id AND cap.capability_id='analytic.read'
+       WHERE c.tenant_id=$1 AND c.status='active' AND cap.enabled AND cap.effect_class='READ' AND cap.active_version=1
+       AND EXISTS(SELECT 1 FROM core.entitlements e WHERE e.tenant_id=c.tenant_id AND e.principal_id=$2 AND e.capability_id='analytic.read' AND e.allowed AND (e.resource_id IS NULL OR e.resource_id=c.connection_id::text))
+       ORDER BY c.created_at`,[current.tenantId,current.userId]));
+    return reply.send({sources:result.rows.map(row=>({id:row.connection_id,type:row.connector_type}))});
+  });
   app.post<{Params:{groupId:string;connectionId:string}}>('/api/groups/:groupId/members/:connectionId',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     try{return reply.send(await moveConnectionToGroup(options.pool,{tenantId:current.tenantId,connectionId:request.params.connectionId,targetGroupId:request.params.groupId,actor:'person'}));}
     catch(error){const code=error instanceof Error?error.message:'group_move_failed';if(code==='connection_not_found'||code==='source_group_not_found')return reply.code(404).send({error:code});throw error;}
+  });
+  app.post<{Body:{name?:string;question?:string;sourceIds?:string[];governedId?:string}}>('/api/governed-agents',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const {name,question,sourceIds,governedId}=request.body??{};
+    if(typeof name!=='string'||!name.trim()||typeof question!=='string'||!question.trim()||!Array.isArray(sourceIds)||!sourceIds.length||sourceIds.some((id)=>typeof id!=='string'||! /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)))return reply.code(400).send({error:'invalid_governed_draft'});
+    const sources=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{source_id:string;agent_id:string;group_id:string;group_version:number}>(
+      `SELECT connection_id AS source_id,connector_agent_id AS agent_id,source_group_id AS group_id,source_group_version AS group_version
+       FROM registry.connections WHERE tenant_id=$1 AND status='active' AND connection_id=ANY($2::uuid[])`,[current.tenantId,sourceIds]));
+    if(sources.rowCount!==new Set(sourceIds).size)return reply.code(403).send({error:'source_not_active_or_available'});
+    try{const plan=await createAnalyticPlan({question,runId:randomUUID(),sources:sources.rows.map((source)=>({sourceId:source.source_id,agentId:source.agent_id,groupId:source.group_id,groupVersion:source.group_version}))});const draft=await createGovernedDraft(options.pool,{tenantId:current.tenantId,principalId:current.userId,name,plan, ...(governedId?{governedId}:{})});return reply.code(201).send(draft);}
+    catch(error){const code=error instanceof Error?error.message:'governed_draft_failed';if(['governed_definition_not_found','governed_definition_forbidden'].includes(code))return reply.code(404).send({error:code});if(code.startsWith('invalid_'))return reply.code(400).send({error:code});throw error;}
+  });
+  app.post<{Params:{governedId:string};Body:{version?:number}}>('/api/governed-agents/:governedId/approve',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    if(!Number.isInteger(request.body?.version)||request.body!.version!<1)return reply.code(400).send({error:'invalid_governed_version'});
+    try{return reply.send(await approveGovernedVersion(options.pool,{tenantId:current.tenantId,principalId:current.userId,governedId:request.params.governedId,version:request.body!.version!}));}
+    catch(error){const code=error instanceof Error?error.message:'governed_approval_failed';if(code==='governed_self_approval_not_allowed')return reply.code(403).send({error:code});if(code==='governed_version_not_found')return reply.code(404).send({error:code});throw error;}
+  });
+  app.post<{Params:{governedId:string};Body:{version?:number}}>('/api/governed-agents/:governedId/runs',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    if(!Number.isInteger(request.body?.version)||request.body!.version!<1)return reply.code(400).send({error:'invalid_governed_version'});
+    try{
+      const approved=await getApprovedGovernedVersion(options.pool,{tenantId:current.tenantId,governedId:request.params.governedId,version:request.body!.version!});
+      const plan=AnalyticPlanSchema.parse({...approved.plan,run_id:randomUUID(),plan_hash:'0'.repeat(64)});
+      plan.plan_hash=await hashPlan({...plan,plan_hash:''});
+      const run=await startAnalyticRun(options.pool,{tenantId:current.tenantId,principalId:current.userId,plan,governed:{governedId:request.params.governedId,version:approved.version}});
+      return reply.code(201).send({...run,governedId:request.params.governedId,version:approved.version});
+    }catch(error){const code=error instanceof Error?error.message:'governed_run_failed';if(['governed_version_not_found','governed_version_not_approved'].includes(code))return reply.code(404).send({error:code});if(code==='principal_not_entitled')return reply.code(403).send({error:code});if(code==='governed_plan_mismatch'||code.startsWith('analytic_plan'))return reply.code(400).send({error:code});throw error;}
   });
   app.post<{Body:{sourceId?:string}}>('/api/connections',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
@@ -199,6 +250,12 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const checked=await createGoldenConnector(source.id).test();if(!checked.ok)return reply.code(400).send({error:'connection_test_failed'});
     const scope=request.body?.scope??[];
     const activated=await activateConnection(options.pool,{tenantId:current.tenantId,principalId:current.userId,connectorType:source.type as ConnectorType,connectionId:request.params.connectionId,sourceRef:source.id,scope});
+    await withTenant(options.pool,current.tenantId,async(client)=>{
+      await client.query("INSERT INTO registry.capabilities(tenant_id,capability_id,active_version,effect_class,effect_safety,enabled) VALUES($1,'analytic.read',1,'READ','not_applicable',true) ON CONFLICT(tenant_id,capability_id) DO UPDATE SET enabled=true,effect_class='READ',effect_safety='not_applicable'",[current.tenantId]);
+      await client.query("INSERT INTO registry.capability_versions(tenant_id,capability_id,version,input_schema,output_schema) VALUES($1,'analytic.read',1,'{}'::jsonb,'{}'::jsonb) ON CONFLICT DO NOTHING",[current.tenantId]);
+      const existing=await client.query("SELECT 1 FROM core.entitlements WHERE tenant_id=$1 AND principal_id=$2 AND capability_id='analytic.read' AND resource_id=$3 AND allowed",[current.tenantId,current.userId,activated.connectionId]);
+      if(!existing.rowCount)await client.query("INSERT INTO core.entitlements(tenant_id,principal_id,capability_id,resource_id,allowed) VALUES($1,$2,'analytic.read',$3,true)",[current.tenantId,current.userId,activated.connectionId]);
+    });
     const profile=await runGoldenProfile(options.pool,{tenantId:current.tenantId,connectionId:activated.connectionId,connector:createGoldenConnector(source.id),jobType:'discovery'});
     return reply.send({connectionId:activated.connectionId,agentId:activated.agentId,sourceName:source.name,profile});
   });
