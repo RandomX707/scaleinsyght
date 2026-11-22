@@ -28,6 +28,7 @@
     "@scaleinsyght/registry": "workspace:*",
     "@scaleinsyght/runner": "workspace:*",
     "@scaleinsyght/connectors": "workspace:*",
+    "@scaleinsyght/classification": "workspace:*",
     "@scaleinsyght/api": "workspace:*",
     "fastify": "^5.6.2",
     "dotenv": "^16.6.1",

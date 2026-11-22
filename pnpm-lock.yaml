@@ -178,6 +178,9 @@ importers:
       '@scaleinsyght/api':
         specifier: workspace:*
         version: link:apps/api
+      '@scaleinsyght/classification':
+        specifier: workspace:*
+        version: link:packages/classification
       '@scaleinsyght/connectors':
         specifier: workspace:*
         version: link:packages/connectors
@@ -291,6 +294,8 @@ importers:
       '@scaleinsyght/runner':
         specifier: workspace:*
         version: link:../../packages/runner
+
+  packages/classification: {}
 
   packages/connectors: {}
 

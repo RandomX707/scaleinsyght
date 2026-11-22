@@ -64,7 +64,7 @@ export interface ReadOnlyConnector {
   readonly modelRequests: number;
   test(): Promise<{ ok: true; capabilities: ['discover', 'profile']; readOnly: true }>;
   discover(input: { mode: 'profile' | 'nightly'; scope?: ConnectorScope }): Promise<DiscoveryResult>;
-  profile(assetKey: string): Promise<ObjectProfile>;
+  profile(assetKey: string, scope?: ConnectorScope): Promise<ObjectProfile>;
 }
 
 const fixturePath = fileURLToPath(new URL('../../../tests/golden/phase1.json', import.meta.url));
@@ -155,10 +155,14 @@ class GoldenConnector implements ReadOnlyConnector {
     return result;
   }
 
-  async profile(assetKey: string): Promise<ObjectProfile> {
+  async profile(assetKey: string, scope?: ConnectorScope): Promise<ObjectProfile> {
     const object = this.objects.find((candidate) => keyFor(this.id, candidate.qualifiedName) === assetKey);
     if (!object) throw new Error('asset_not_found');
     if (this.inaccessible.has(object.qualifiedName)) throw new Error('object_inaccessible');
+    if (scope?.exclude?.includes(object.qualifiedName) || scope?.listOnly?.includes(object.qualifiedName)) {
+      throw new Error('object_out_of_scope');
+    }
+    if (scope?.profile?.length && !scope.profile.includes(object.qualifiedName)) throw new Error('object_out_of_scope');
     const columns = [
       { name: 'record_id', dataType: 'text', isNullable: false, sensitivityTags: ['identifier'], statistics: { nullRate: null, distinctCount: null } },
       { name: 'display_name', dataType: 'text', isNullable: true, sensitivityTags: [], statistics: { nullRate: 0.03, distinctCount: 87 } },

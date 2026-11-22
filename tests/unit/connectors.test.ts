@@ -35,4 +35,21 @@ describe('synthetic read-only connectors', () => {
     expect(result.objects.map((object) => object.type)).toEqual(['table', 'table', 'table']);
     expect(result.objects.map((object) => object.qualifiedName)).toContain('Riverside workbook.Departments');
   });
+
+  it('phase1_scope_controls_prevent_out_of_scope_discovery_and_query', async () => {
+    const connector = createGoldenConnector('golden-postgres');
+    const all = await connector.discover({ mode: 'profile' });
+    const profiled = all.objects[2]!;
+    const listOnly = all.objects[0]!;
+    const excluded = all.objects[1]!;
+    const result = await connector.discover({
+      mode: 'profile',
+      scope: { profile: [profiled.qualifiedName], listOnly: [listOnly.qualifiedName], exclude: [excluded.qualifiedName] },
+    });
+    expect(result.objects.map((object) => object.qualifiedName)).toEqual([profiled.qualifiedName]);
+    expect(result.listOnlyObjects.map((object) => object.qualifiedName)).toContain(listOnly.qualifiedName);
+    expect(result.excludedObjects.map((object) => object.qualifiedName)).toContain(excluded.qualifiedName);
+    await expect(connector.profile(excluded.assetKey, { exclude: [excluded.qualifiedName] })).rejects.toThrow('object_out_of_scope');
+    await expect(connector.profile(listOnly.assetKey, { listOnly: [listOnly.qualifiedName] })).rejects.toThrow('object_out_of_scope');
+  });
 });
