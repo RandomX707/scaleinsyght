@@ -9,6 +9,8 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
     ALTER TABLE registry.governed_events ADD CONSTRAINT governed_events_event_type_check
       CHECK(event_type IN ('draft_created','version_approved','self_approved'));
     ALTER TABLE reports.schedules
+      RENAME COLUMN utc_time TO local_time;
+    ALTER TABLE reports.schedules
       ADD COLUMN cadence text NOT NULL DEFAULT 'daily' CHECK(cadence IN ('daily','weekly')),
       ADD COLUMN tenant_time_zone text NOT NULL DEFAULT 'Asia/Kolkata',
       ADD COLUMN local_weekday smallint CHECK(local_weekday BETWEEN 1 AND 7);
@@ -19,6 +21,7 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
 export async function down(pgm: MigrationBuilder): Promise<void> {
   pgm.sql(`ALTER TABLE reports.schedules DROP CONSTRAINT reports_weekly_weekday_required,
       DROP COLUMN local_weekday, DROP COLUMN tenant_time_zone, DROP COLUMN cadence;
+    ALTER TABLE reports.schedules RENAME COLUMN local_time TO utc_time;
     ALTER TABLE registry.governed_events DROP CONSTRAINT governed_events_event_type_check;
     ALTER TABLE registry.governed_events ADD CONSTRAINT governed_events_event_type_check
       CHECK(event_type IN ('draft_created','version_approved'));

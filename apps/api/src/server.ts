@@ -11,7 +11,7 @@ import { eventsAfter } from '@scaleinsyght/runner';
 import { AnalyticPlanSchema, FlowSpecSchema, hashPlan } from '@scaleinsyght/contracts';
 import { compareGraphSnapshots, getIdentifierPath, getImpactRadius, importGoldenMetadata, listGraphAssertions, listGraphAssets, listGraphSnapshots, listIdentifierFields, listReports, queryLineage, reconcileAssertion, reviewGraphAssertion, traceIdentifier, verifyAssertionFromRun } from '@scaleinsyght/graph';
 import { createGoldenHubAdapters, getGoldenHubFixtures, type FlowSpecDelivery, type SemanticsAdapter } from '@scaleinsyght/hub-adapters';
-import { renderEvidencePack, safeEvidencePack, type ExportFormat, type SafeEvidencePack } from '@scaleinsyght/reports';
+import { nextScheduleInstant, renderEvidencePack, safeEvidencePack, type ExportFormat, type SafeEvidencePack } from '@scaleinsyght/reports';
 import { ClaimSchema, EvidenceRefSchema } from '@scaleinsyght/contracts';
 import { authorise } from '@scaleinsyght/policy';
 
@@ -582,23 +582,25 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
   });
   app.get('/api/me/schedules',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
-    const rows=await withTenant(options.pool,current.tenantId,async(client)=>{await client.query("SELECT set_config('app.principal_id',$1,true)",[current.userId]);return client.query('SELECT schedule_id,report_id,utc_time,next_run_at,enabled FROM reports.schedules WHERE tenant_id=$1 AND owner_id=$2 ORDER BY created_at',[current.tenantId,current.userId]);});
-    return reply.send({schedules:rows.rows.map((row)=>({scheduleId:row.schedule_id,reportId:row.report_id,utcTime:String(row.utc_time).slice(0,5),nextRunAt:(row.next_run_at as Date).toISOString(),enabled:row.enabled}))});
+    const rows=await withTenant(options.pool,current.tenantId,async(client)=>{await client.query("SELECT set_config('app.principal_id',$1,true)",[current.userId]);return client.query<{schedule_id:string;report_id:string;local_time:string;cadence:string;local_weekday:number|null;tenant_time_zone:string;next_run_at:Date;enabled:boolean}>('SELECT schedule_id,report_id,local_time::text AS local_time,cadence,local_weekday,tenant_time_zone,next_run_at,enabled FROM reports.schedules WHERE tenant_id=$1 AND owner_id=$2 ORDER BY created_at',[current.tenantId,current.userId]);});
+    return reply.send({schedules:rows.rows.map((row)=>({scheduleId:row.schedule_id,reportId:row.report_id,localTime:row.local_time.slice(0,5),cadence:row.cadence,weekday:row.local_weekday,timeZone:row.tenant_time_zone,nextRunAt:row.next_run_at.toISOString(),enabled:row.enabled}))});
   });
-  app.post<{Body:{reportId?:string;utcTime?:string}}>('/api/me/schedules',async(request,reply)=>{
+  app.post<{Body:{reportId?:string;localTime?:string;cadence?:string;weekday?:number}}>('/api/me/schedules',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
-    const {reportId,utcTime}=request.body??{};if(typeof reportId!=='string'||typeof utcTime!=='string'||!/^([01]\d|2[0-3]):[0-5]\d$/.test(utcTime))return reply.code(400).send({error:'invalid_daily_schedule'});
+    const {reportId,localTime,cadence='daily',weekday}=request.body??{};if(typeof reportId!=='string'||typeof localTime!=='string'||!['daily','weekly'].includes(cadence)||!/^([01]\d|2[0-3]):[0-5]\d$/.test(localTime)||(cadence==='weekly'&&(!Number.isInteger(weekday)||weekday!<1||weekday!>7))||(cadence==='daily'&&weekday!==undefined))return reply.code(400).send({error:'invalid_schedule'});
     const row=await withTenant(options.pool,current.tenantId,async(client)=>{
       await client.query("SELECT set_config('app.principal_id',$1,true)",[current.userId]);
+      const tenant=await client.query<{time_zone:string}>('SELECT time_zone FROM core.tenants WHERE tenant_id=$1',[current.tenantId]);const timeZone=tenant.rows[0]?.time_zone;if(!timeZone)throw new Error('tenant_not_found');
+      let nextRunAt:Date;try{nextRunAt=nextScheduleInstant({after:new Date(),cadence:cadence as 'daily'|'weekly',timeZone,localTime,...(weekday===undefined?{}:{weekday})});}catch(error){if(error instanceof Error&&error.message==='schedule_local_time_does_not_exist')throw error;throw new Error('invalid_schedule');}
       return client.query<{schedule_id:string;next_run_at:Date}>(
-        `WITH owned AS(SELECT report_id FROM reports.definitions WHERE tenant_id=$1 AND report_id=$2 AND owner_id=$3),
-         next_slot AS(SELECT CASE WHEN ((clock_timestamp() AT TIME ZONE 'UTC')::date+$4::time) AT TIME ZONE 'UTC'>clock_timestamp() THEN ((clock_timestamp() AT TIME ZONE 'UTC')::date+$4::time) AT TIME ZONE 'UTC' ELSE (((clock_timestamp() AT TIME ZONE 'UTC')::date+1)+$4::time) AT TIME ZONE 'UTC' END AS due)
-         INSERT INTO reports.schedules(tenant_id,report_id,owner_id,utc_time,next_run_at) SELECT $1,o.report_id,$3,$4::time,n.due FROM owned o CROSS JOIN next_slot n
-         ON CONFLICT(tenant_id,report_id) DO UPDATE SET utc_time=EXCLUDED.utc_time,next_run_at=EXCLUDED.next_run_at,enabled=true
-         RETURNING schedule_id,next_run_at`,[current.tenantId,reportId,current.userId,utcTime]);
+        `WITH owned AS(SELECT report_id FROM reports.definitions WHERE tenant_id=$1 AND report_id=$2 AND owner_id=$3)
+         INSERT INTO reports.schedules(tenant_id,report_id,owner_id,local_time,next_run_at,cadence,tenant_time_zone,local_weekday) SELECT $1,o.report_id,$3,$4::time,$5::timestamptz,$6,$7,$8 FROM owned o
+         ON CONFLICT(tenant_id,report_id) DO UPDATE SET local_time=EXCLUDED.local_time,next_run_at=EXCLUDED.next_run_at,cadence=EXCLUDED.cadence,tenant_time_zone=EXCLUDED.tenant_time_zone,local_weekday=EXCLUDED.local_weekday,enabled=true
+         RETURNING schedule_id,next_run_at`,[current.tenantId,reportId,current.userId,localTime,nextRunAt,cadence,timeZone,weekday??null]);
     });
     if(!row.rowCount)return reply.code(404).send({error:'report_not_found'});
-    return reply.code(201).send({scheduleId:row.rows[0]!.schedule_id,reportId,utcTime,nextRunAt:row.rows[0]!.next_run_at.toISOString(),cadence:'daily'});
+    const timeZone=(await withTenant(options.pool,current.tenantId,client=>client.query<{time_zone:string}>('SELECT time_zone FROM core.tenants WHERE tenant_id=$1',[current.tenantId]))).rows[0]!.time_zone;
+    return reply.code(201).send({scheduleId:row.rows[0]!.schedule_id,reportId,localTime,cadence,weekday:weekday??null,timeZone,nextRunAt:row.rows[0]!.next_run_at.toISOString()});
   });
   app.delete<{Params:{scheduleId:string}}>('/api/me/schedules/:scheduleId',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});

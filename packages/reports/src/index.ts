@@ -3,7 +3,7 @@ import { once } from 'node:events';
 import ExcelJS from 'exceljs';
 import PDFDocument from 'pdfkit';
 import PptxGenJS from 'pptxgenjs';
-export { claimDueSchedule, markScheduleSlotSkipped, markScheduleSlotStarted, type DueReportSchedule } from './scheduler.js';
+export { claimDueSchedule, markScheduleSlotSkipped, markScheduleSlotStarted, nextScheduleInstant, type DueReportSchedule } from './scheduler.js';
 export { persistReportSnapshot, startScheduledReportRun } from './snapshots.js';
 
 export type ExportFormat = 'pdf' | 'xlsx' | 'pptx';
