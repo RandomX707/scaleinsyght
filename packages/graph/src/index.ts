@@ -1,4 +1,4 @@
-import { createHash, createHmac } from 'node:crypto';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { GraphEventSchema, LineagePathSchema, type GraphAssertion, type GraphEvent, type LineagePath } from '@scaleinsyght/contracts';
 import { withTenant, type Pool, type PoolClient } from '@scaleinsyght/db';
 import { getGoldenMetadataFixture, getGoldenPhase3Dataset } from '@scaleinsyght/connectors';
@@ -67,12 +67,14 @@ export async function queryLineage(pool: Pool, input: QueryLineageInput): Promis
       `WITH RECURSIVE walk(asset_id,depth,visited,relationship_id) AS (
          SELECT $1::uuid,0,ARRAY[$1::uuid],NULL::uuid
          UNION ALL
-         SELECT next.asset_id,w.depth+1,w.visited || next.asset_id,r.relationship_id
-         FROM walk w JOIN graph.relationships r ON r.tenant_id=$3 AND r.family='data_flow'
+         SELECT next.asset_id,w.depth+1,w.visited || next.asset_id,next.relationship_id
+         FROM walk w
          CROSS JOIN LATERAL (
-           SELECT r.to_asset_id AS asset_id WHERE $2 IN ('downstream','both') AND r.from_asset_id=w.asset_id
+           SELECT r.to_asset_id AS asset_id,r.relationship_id FROM graph.relationships r
+           WHERE $2 IN ('downstream','both') AND r.tenant_id=$3 AND r.family='data_flow' AND r.from_asset_id=w.asset_id
            UNION ALL
-           SELECT r.from_asset_id AS asset_id WHERE $2 IN ('upstream','both') AND r.to_asset_id=w.asset_id
+           SELECT r.from_asset_id AS asset_id,r.relationship_id FROM graph.relationships r
+           WHERE $2 IN ('upstream','both') AND r.tenant_id=$3 AND r.family='data_flow' AND r.to_asset_id=w.asset_id
          ) next
          WHERE w.depth<20 AND NOT (next.asset_id=ANY(w.visited))
        )
@@ -145,7 +147,7 @@ export async function importGoldenMetadata(pool: Pool, input: ImportGoldenMetada
         [input.tenantId,JSON.stringify({asset_id:reportId,tool:report.tool,safe_path:report.safe_path,fixture_key:input.fixtureKey})]);
     }
     let flowCount=0;
-    const evidenceFor=new Map<string,string>();
+    const assertionFor=new Map<string,string>();
     for(const flow of corpus.flows){
       const fromId=assetIds.get(flow.from),toId=assetIds.get(flow.to);
       if(!fromId||!toId)continue;
@@ -157,11 +159,11 @@ export async function importGoldenMetadata(pool: Pool, input: ImportGoldenMetada
       const evidence=await client.query<{evidence_id:string}>(
         `INSERT INTO graph.evidence(tenant_id,evidence_type,safe_metadata) VALUES($1,$2,$3::jsonb) RETURNING evidence_id`,
         [input.tenantId,flow.method==='parsed'?'sql_parse':'manifest',JSON.stringify({fixture_key:input.fixtureKey,tool:fixture.tool,grain:flow.grain})]);
-      const assertion=await client.query(
+      const assertion=await client.query<{assertion_id:string}>(
         `INSERT INTO graph.assertions(tenant_id,relationship_id,evidence_method,evidence_ids,confidence_score,explanation,collector_version,review_status)
-         VALUES($1,$2,$3,ARRAY[$4::uuid],$5,$6,'phase3-golden-v1','unreviewed')`,
+         VALUES($1,$2,$3,ARRAY[$4::uuid],$5,$6,'phase3-golden-v1','unreviewed') RETURNING assertion_id`,
         [input.tenantId,relation.rows[0]!.relationship_id,flow.method,evidence.rows[0]!.evidence_id,flow.confidence,flow.change==='renamed'?'Identifier renamed across synthetic systems':null]);
-      evidenceFor.set(`${flow.from}\0${flow.to}`,evidence.rows[0]!.evidence_id);
+      assertionFor.set(`${flow.from}\0${flow.to}`,assertion.rows[0]!.assertion_id);
       flowCount+=assertion.rowCount??0;
     }
     const dispute=corpus.disputed;
@@ -173,20 +175,33 @@ export async function importGoldenMetadata(pool: Pool, input: ImportGoldenMetada
       const evidenceIds=[];
       for(const label of dispute.evidence){const item=await client.query<{evidence_id:string}>(
         'INSERT INTO graph.evidence(tenant_id,evidence_type,safe_metadata) VALUES($1,\'manifest\',$2::jsonb) RETURNING evidence_id',[input.tenantId,JSON.stringify({fixture_key:input.fixtureKey,source:label})]);evidenceIds.push(item.rows[0]!.evidence_id);}
-      await client.query(`INSERT INTO graph.assertions(tenant_id,relationship_id,evidence_method,review_status,evidence_ids,confidence_score,explanation,collector_version)
-        VALUES($1,$2,'inferred','disputed',$3::uuid[],0.62,'Conflicting synthetic mapping evidence','phase3-golden-v1')`,[input.tenantId,relationship.rows[0]!.relationship_id,evidenceIds]);
+      const assertion=await client.query<{assertion_id:string}>(`INSERT INTO graph.assertions(tenant_id,relationship_id,evidence_method,review_status,evidence_ids,confidence_score,explanation,collector_version)
+        VALUES($1,$2,'inferred','disputed',$3::uuid[],0.62,'Conflicting synthetic mapping evidence','phase3-golden-v1') RETURNING assertion_id`,[input.tenantId,relationship.rows[0]!.relationship_id,evidenceIds]);
+      assertionFor.set(`${dispute.from}\0${dispute.to}`,assertion.rows[0]!.assertion_id);
     }
     let gapCount=0;
+    const gapIds=new Map<string,string>();
     for(const gap of corpus.gaps){
       const ids=gap.between.map((name)=>assetIds.get(name)).filter((id):id is string=>Boolean(id));
       if(ids.length<1)continue;
-      await client.query('INSERT INTO graph.gaps(tenant_id,between_asset_ids,reason) VALUES($1,$2::uuid[],$3)',[input.tenantId,ids,gap.reason]);gapCount++;
+      const inserted=await client.query<{gap_id:string}>('INSERT INTO graph.gaps(tenant_id,between_asset_ids,reason) VALUES($1,$2::uuid[],$3) RETURNING gap_id',[input.tenantId,ids,gap.reason]);
+      gapIds.set(gap.between.join('\0'),inserted.rows[0]!.gap_id);gapCount++;
     }
     for(const asset of corpus.assets.filter((candidate)=>candidate.kind==='field'&&/\.(customer_id|customer_key)$/.test(candidate.name))){
       const fieldName=asset.name.split('.').at(-1)!;
       const assetId=asset&&assetIds.get(asset.name);
       if(assetId)await client.query(`INSERT INTO graph.id_fields(tenant_id,asset_id,field_name,entity_hint,format_pattern,detection,confidence)
         VALUES($1,$2,$3,'customer','opaque_customer_key','inferred',0.900) ON CONFLICT(tenant_id,asset_id,field_name) DO UPDATE SET active=true`,[input.tenantId,assetId,fieldName]);
+    }
+    const idPathNames=['SyntheticSQL.Customer.customer_id','SyntheticSnowflake.DIM_CUSTOMER.customer_key','dbt.customer_mart.customer_key'];
+    const idPathId=randomUUID();
+    const missingGap=corpus.gaps.find((gap)=>gap.between.includes(idPathNames.at(-1)!));
+    const missingGapId=missingGap?gapIds.get(missingGap.between.join('\0'))??null:null;
+    for(const [index,name] of idPathNames.entries()){
+      const assetId=assetIds.get(name);if(!assetId)continue;
+      const assertionId=index<idPathNames.length-1?assertionFor.get(`${name}\0${idPathNames[index+1]}`):assertionFor.get(`${idPathNames[index-1]}\0${name}`);
+      await client.query(`INSERT INTO graph.id_path_steps(tenant_id,path_id,sequence,asset_id,assertion_id,change_type,confidence,gap_id)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,[input.tenantId,idPathId,index+1,assetId,assertionId??null,index===1?'renamed':'none',index===0?0.94:0.62,index===idPathNames.length-1?missingGapId:null]);
     }
     const impactedAssetId=assetIds.get(corpus.reportImpact.changedAsset);
     const reportAssetId=assetIds.get(corpus.reportImpact.report);
@@ -282,6 +297,15 @@ export async function traceIdentifier(pool:Pool,input:{tenantId:string;assetId:s
 }
 
 export async function getIdentifierPath(pool:Pool,input:{tenantId:string;assetId:string}):Promise<IdPath & {fields:Array<{assetId:string;fieldName:string}>}>{
+  const stored=await withTenant(pool,input.tenantId,async(client)=>client.query<{asset_id:string;field_name:string|null;change_type:IdPathStep['change'];confidence:number;assertion_id:string|null;gap_id:string|null}>(
+    `SELECT s.asset_id,d.field_name,s.change_type,s.confidence,s.assertion_id,s.gap_id FROM graph.id_path_steps s
+     LEFT JOIN graph.id_fields d ON d.tenant_id=s.tenant_id AND d.asset_id=s.asset_id
+     WHERE s.tenant_id=$1 AND s.path_id=(SELECT path_id FROM graph.id_path_steps WHERE tenant_id=$1 AND asset_id=$2 ORDER BY path_id LIMIT 1)
+     ORDER BY s.sequence`,[input.tenantId,input.assetId]));
+  if(stored.rows.length){
+    const steps=stored.rows.map((row)=>({assetId:row.asset_id,change:row.change_type,confidence:Number(row.confidence),assertionId:row.assertion_id}));
+    return {...buildIdPath(steps,stored.rows.flatMap((row)=>row.gap_id?[row.gap_id]:[])),fields:stored.rows.filter((row)=>row.field_name!==null).map((row)=>({assetId:row.asset_id,fieldName:row.field_name!}))};
+  }
   const lineage=await queryLineage(pool,{tenantId:input.tenantId,assetId:input.assetId,direction:'both'});
   return withTenant(pool,input.tenantId,async(client)=>{
     const fields=await client.query<{asset_id:string;field_name:string}>(

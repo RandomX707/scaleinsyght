@@ -14,6 +14,8 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
     CREATE UNIQUE INDEX notifications_report_impact_unique ON core.notifications(tenant_id,user_id,report_asset_id,notification_type) WHERE notification_type='report_impact';
     ALTER TABLE graph.assets DROP CONSTRAINT assets_asset_type_check;
     ALTER TABLE graph.assets ADD CONSTRAINT assets_asset_type_check CHECK(asset_type IN ('system','container','dataset','field','report','metric'));
+    CREATE INDEX graph_relationships_from_lineage ON graph.relationships(tenant_id,from_asset_id,relationship_id) WHERE family='data_flow';
+    CREATE INDEX graph_relationships_to_lineage ON graph.relationships(tenant_id,to_asset_id,relationship_id) WHERE family='data_flow';
 
     CREATE TABLE graph.id_fields (
       tenant_id text NOT NULL, asset_id uuid NOT NULL, field_name text NOT NULL,
@@ -72,5 +74,5 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
 }
 
 export async function down(pgm: MigrationBuilder): Promise<void> {
-  pgm.sql(`DROP TABLE graph.events; DROP FUNCTION graph.reject_event_mutation(); DROP TABLE graph.snapshots; DROP TABLE graph.id_path_steps; DROP TABLE graph.id_fingerprints; DROP TABLE graph.id_fields; ALTER TABLE graph.assets DROP CONSTRAINT assets_asset_type_check; ALTER TABLE graph.assets ADD CONSTRAINT assets_asset_type_check CHECK(asset_type IN ('system','container','dataset','field')); ALTER TABLE core.notifications DROP CONSTRAINT notifications_notification_type_check; ALTER TABLE core.notifications ADD CONSTRAINT notifications_notification_type_check CHECK(notification_type IN ('discovery','nightly')); ALTER TABLE graph.assertions DROP CONSTRAINT assertions_valid_window; ALTER TABLE graph.assertions DROP COLUMN valid_to; ALTER TABLE graph.assertions DROP COLUMN valid_from;`);
+  pgm.sql(`DROP TABLE graph.events; DROP FUNCTION graph.reject_event_mutation(); DROP TABLE graph.snapshots; DROP TABLE graph.id_path_steps; DROP TABLE graph.id_fingerprints; DROP TABLE graph.id_fields; DROP INDEX graph_relationships_from_lineage; DROP INDEX graph_relationships_to_lineage; ALTER TABLE graph.assets DROP CONSTRAINT assets_asset_type_check; ALTER TABLE graph.assets ADD CONSTRAINT assets_asset_type_check CHECK(asset_type IN ('system','container','dataset','field')); ALTER TABLE core.notifications DROP CONSTRAINT notifications_notification_type_check; ALTER TABLE core.notifications ADD CONSTRAINT notifications_notification_type_check CHECK(notification_type IN ('discovery','nightly')); ALTER TABLE graph.assertions DROP CONSTRAINT assertions_valid_window; ALTER TABLE graph.assertions DROP COLUMN valid_to; ALTER TABLE graph.assertions DROP COLUMN valid_from;`);
 }

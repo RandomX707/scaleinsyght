@@ -68,6 +68,9 @@ describe('c6 synthetic metadata import',()=>{
       const path=await server.inject({method:'GET',url:`/api/ids/${idField.asset_id}/path`,headers:{cookie}});
       expect(path.statusCode, path.body).toBe(200);
       expect(JSON.stringify(path.json())).toContain(idField.field_name);
+      expect(path.json() as {complete:boolean;gapIds:string[];fields:Array<unknown>;confidence:number}).toMatchObject({complete:false,confidence:0.62});
+      expect((path.json() as {gapIds:string[]}).gapIds).toHaveLength(1);
+      expect((path.json() as {fields:unknown[]}).fields).toHaveLength(3);
       const persistedIdentifiers=await withTenant(migrate,tenantId,async(client)=>client.query<{raw_matches:number}>(
         `SELECT ((SELECT count(*) FROM graph.assets WHERE tenant_id=$1 AND qualified_name LIKE '%'||$2||'%')+
          (SELECT count(*) FROM graph.evidence WHERE tenant_id=$1 AND safe_metadata::text LIKE '%'||$2||'%')+
@@ -108,19 +111,21 @@ describe('c6 synthetic metadata import',()=>{
       const persisted=await withTenant(migrate,tenantId,async(client)=>{
       const principal=await client.query<{user_id:string}>('SELECT user_id FROM core.users WHERE tenant_id=$1',[tenantId]);
       await client.query("SELECT set_config('app.principal_id',$1,true)",[principal.rows[0]!.user_id]);
-      return client.query<{datasets:number;reports:number;flows:number;assertions:number;events:number;id_fields:number;impacts:number}>(
+      return client.query<{datasets:number;reports:number;flows:number;assertions:number;events:number;id_fields:number;impacts:number;id_path_steps:number}>(
       `SELECT (SELECT count(*)::int FROM graph.assets WHERE tenant_id=$1 AND asset_type='dataset') datasets,
        (SELECT count(*)::int FROM graph.assets WHERE tenant_id=$1 AND asset_type='report') reports,
        (SELECT count(*)::int FROM graph.relationships WHERE tenant_id=$1 AND family='data_flow') flows,
        (SELECT count(*)::int FROM graph.assertions WHERE tenant_id=$1) assertions,
        (SELECT count(*)::int FROM graph.events WHERE tenant_id=$1 AND event_type='metadata_imported') events,
        (SELECT count(*)::int FROM graph.id_fields WHERE tenant_id=$1) id_fields,
-       (SELECT count(*)::int FROM core.notifications WHERE tenant_id=$1 AND notification_type='report_impact') impacts`,[tenantId]);
+       (SELECT count(*)::int FROM core.notifications WHERE tenant_id=$1 AND notification_type='report_impact') impacts,
+       (SELECT count(*)::int FROM graph.id_path_steps WHERE tenant_id=$1) id_path_steps`,[tenantId]);
     });
     expect(persisted.rows[0]).toMatchObject({datasets:expect.any(Number),reports:expect.any(Number),flows:expect.any(Number),assertions:expect.any(Number),events:2});
     expect(persisted.rows[0]!.datasets).toBeGreaterThan(0);
     expect(persisted.rows[0]!.reports).toBeGreaterThan(0);
     expect(persisted.rows[0]!.id_fields).toBe(3);
+    expect(persisted.rows[0]!.id_path_steps).toBeGreaterThanOrEqual(3);
     expect(persisted.rows[0]!.impacts).toBe(1);
   });
 });
