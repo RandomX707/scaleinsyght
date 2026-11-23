@@ -24,16 +24,32 @@ async function selectAssetAndWaitForLineage(page:import('@playwright/test').Page
   expect(response.ok()).toBe(true);
 }
 
+async function importDemoLineage(page:import('@playwright/test').Page){
+  await page.getByRole('link',{name:/Controls/}).click();
+  await expect(page.getByRole('heading',{name:'Demo data'})).toBeVisible();
+  await page.getByRole('button',{name:'Import data model'}).click();
+  await expect(page.getByRole('status')).toContainText('Example catalog imported.');
+  await page.getByRole('button',{name:'Import additional reports'}).click();
+  await expect(page.getByRole('status')).toContainText('Example catalog imported.');
+}
+
 test('phase3_lineage_id_trace_impact_reports_and_snapshot_compare_are_keyboard_accessible', async ({ page }) => {
   await signIn(page,'phase3-lineage@synthetic.example');
   await page.getByRole('link', { name: /Lineage/ }).click();
   await expect(page.getByRole('heading', { name: 'Lineage workspace' })).toBeVisible();
-  await page.getByRole('button', { name: 'Import synthetic Power BI reports' }).click();
-  await expect(page.getByRole('status')).toContainText('Synthetic lineage imported');
-  await page.getByRole('button', { name: 'Import synthetic dbt manifest' }).click();
-  await expect(page.getByRole('status')).toContainText('Synthetic lineage imported');
+  await importDemoLineage(page);
+  await page.getByRole('link', { name: /Lineage/ }).click();
+  const connectedAsset = await page.evaluate(async () => {
+    const response = await fetch('/api/lineage/assets');
+    const data = await response.json() as { assets: Array<{ asset_id: string; qualified_name: string }> };
+    return data.assets.find(asset => asset.qualified_name === 'dbt.customer_mart')?.asset_id ?? '';
+  });
+  expect(connectedAsset).not.toBe('');
+  await page.reload();
+  await expect(page.getByLabel('Graph asset')).toHaveValue(connectedAsset);
+  await expect(page.locator('.lineage-edges')).toContainText('Report Studio · Customer Health');
   await selectAssetAndWaitForLineage(page,'dbt.customer_mart');
-  await expect(page.locator('.lineage-edges')).toContainText('Power BI.Customer Health');
+  await expect(page.locator('.lineage-edges')).toContainText('Report Studio · Customer Health');
   const idTraceLink=page.getByRole('link', { name: 'ID trace' });
   await idTraceLink.focus();
   await expect(idTraceLink).toBeFocused();
@@ -44,20 +60,18 @@ test('phase3_lineage_id_trace_impact_reports_and_snapshot_compare_are_keyboard_a
   await expect(page.getByRole('heading', { name: 'Snapshot compare' })).toBeVisible();
   await expect(page.getByLabel('Earlier snapshot')).toBeVisible();
   await expect(page.getByLabel('Later snapshot')).toBeVisible();
-  await page.getByRole('link', { name: 'BI reports', exact: true }).click();
+  await page.getByRole('navigation',{name:'Lineage workspace views'}).getByRole('link', { name: 'BI reports', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'BI reports' })).toBeVisible();
-  await expect(page.getByRole('link', { name: 'Open Power BI.Customer Health' })).toHaveAttribute('href', '/demo/power-bi/customer-health');
+  await expect(page.getByRole('link', { name: 'Open Report Studio · Customer Health' })).toHaveAttribute('href', '/demo/power-bi/customer-health');
 });
 
 test('c6_accepted_inference_stays_unverified_in_api_and_lineage_ui',async({page})=>{
   await signIn(page,'phase3-review@synthetic.example');
   await page.getByRole('link',{name:/Lineage/}).click();
-  await page.getByRole('button',{name:'Import synthetic dbt manifest'}).click();
-  await expect(page.getByRole('status')).toContainText('Synthetic lineage imported');
-  await page.getByRole('button',{name:'Import synthetic Power BI reports'}).click();
-  await expect(page.getByRole('status')).toContainText('Synthetic lineage imported');
+  await importDemoLineage(page);
+  await page.getByRole('link',{name:/Lineage/}).click();
   await selectAssetAndWaitForLineage(page,'dbt.customer_mart');
-  await expect(page.locator('.lineage-edges')).toContainText('Power BI.Customer Health');
+  await expect(page.locator('.lineage-edges')).toContainText('Report Studio · Customer Health');
   const accept=page.getByRole('button',{name:'Accept assertion'}).first();
   await expect(accept).toBeVisible();
   await accept.click();

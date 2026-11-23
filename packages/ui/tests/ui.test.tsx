@@ -1,7 +1,7 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { Badge, Button, Card, Collapsible, EmptyState, Input, Logo, Modal, PageHeader, Select, Table, Tabs, Textarea, Toast } from '../src/index.js';
+import { Badge, Button, Card, Collapsible, EmptyState, Input, Logo, Modal, PageHeader, PoweredBy, Select, Table, Tabs, Textarea, Toast } from '../src/index.js';
 import { prototypeTokens } from '../src/tokens.js';
 
 describe('prototype-aligned shared UI', () => {
@@ -22,6 +22,7 @@ describe('prototype-aligned shared UI', () => {
     const markup = renderToStaticMarkup(<>
       <PageHeader title="Overview" description="Current state" />
       <Logo />
+      <PoweredBy />
       <Card><Button variant="primary">Save</Button><Button variant="secondary">Cancel</Button><Button variant="ghost">More</Button></Card>
       <label>Email<Input aria-label="Email" /></label><label>Details<Textarea aria-label="Details" /></label><label>Source<Select aria-label="Source"><option>Riverside</option></Select></label>
       <Tabs label="Sections" items={[{ id: 'one', label: 'One' }, { id: 'two', label: 'Two' }]} selected="one" onSelect={() => undefined} />
@@ -32,6 +33,7 @@ describe('prototype-aligned shared UI', () => {
     expect(markup).toContain('aria-label="Sections"');
     expect(markup).toContain('role="dialog"');
     expect(markup).toContain('alt="INSYGHT"');
+    expect(markup).toContain('alt="ScaleHealthTech"');
     expect(markup).toContain('role="status"');
     expect(markup).toContain('<details class="ui-collapsible">');
     expect(markup).toContain('class="ui-button ui-button--primary"');
