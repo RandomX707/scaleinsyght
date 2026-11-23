@@ -27,9 +27,9 @@ describe('contract 7 OpenAI gateway disclosure and budget boundary',()=>{
     const identifier='SYN-P-000001';
     const response=await gateway.complete({tenantId,alias:'cheap',question:`Compare encounters for patient code ${identifier}`,identifierValues:[identifier],metadata:{classification:'METADATA_STRUCTURAL',structural:{qualified_name:'public.encounters',columns:[{name:'patient_id',data_type:'integer',sensitivity:'identifier'},{name:'department_id',data_type:'integer'}],patient_code:identifier,comment:'Sample Person C-1042 sample.person@example.invalid'},descriptive:{},statistical:{},sensitivityTags:[]}});
     expect(response.text).toContain('aggregate metadata');
-    const sent=JSON.parse(outgoing) as {model:string;messages:Array<{content:string}>};
+    const sent=JSON.parse(outgoing) as {model:string;max_completion_tokens?:number;max_tokens?:number;messages:Array<{content:string}>};
     const payload=sent.messages[1]!.content;
-    expect(calls).toBe(1);expect(sent.model).toBe('test-cheap');expect(payload).not.toContain(identifier);expect(payload).not.toContain('Sample Person');expect(payload).not.toContain('C-1042');expect(payload).not.toContain('sample.person@example.invalid');expect(payload).toContain('[redacted_identifier]');
+    expect(calls).toBe(1);expect(sent.model).toBe('test-cheap');expect(sent.max_completion_tokens).toBe(1000);expect(sent.max_tokens).toBeUndefined();expect(payload).not.toContain(identifier);expect(payload).not.toContain('Sample Person');expect(payload).not.toContain('C-1042');expect(payload).not.toContain('sample.person@example.invalid');expect(payload).toContain('[redacted_identifier]');
     const captured=JSON.parse(payload) as {identifier_fingerprints:string[]};
     expect(captured.identifier_fingerprints).toHaveLength(1);expect(captured.identifier_fingerprints[0]).toMatch(/^[a-f0-9]{64}$/);
     const stored=await withTenant(migrate,tenantId,async(db)=>db.query<{model_alias:string;model_name:string;input_tokens:number;output_tokens:number;cost_usd:string;outcome:string}>('SELECT model_alias,model_name,input_tokens,output_tokens,cost_usd,outcome FROM core.model_usage WHERE tenant_id=$1',[tenantId]));

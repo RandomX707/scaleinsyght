@@ -79,7 +79,7 @@ export class OpenAIModelGateway{
     const question=safeQuestion(input.question,rawIdentifiers);
     const fingerprints=[...rawIdentifiers].map(value=>fingerprint(this.config.fingerprintKey,input.tenantId,value));
     const maxOutputTokens=Math.min(2048,Math.max(64,input.maxOutputTokens??1000));
-    const payload={model,messages:[{role:'system',content:'Answer only from the disclosed metadata. Do not infer hidden row values. If metadata is insufficient, say so.'},{role:'user',content:JSON.stringify({question,metadata:safeMetadata,identifier_fingerprints:fingerprints})}],max_tokens:maxOutputTokens,temperature:0};
+    const payload={model,messages:[{role:'system',content:'Answer only from the disclosed metadata. Do not infer hidden row values. If metadata is insufficient, say so.'},{role:'user',content:JSON.stringify({question,metadata:safeMetadata,identifier_fingerprints:fingerprints})}],max_completion_tokens:maxOutputTokens,temperature:0};
     const body=JSON.stringify(payload);const estimatedInput=estimateTokens(body);const estimatedTokens=estimatedInput+maxOutputTokens;
     const reservedCost=priceTokens(price,estimatedInput,maxOutputTokens);const id=requestId();
     const reservation=await withTenant(this.pool,input.tenantId,async(client)=>{
@@ -97,7 +97,7 @@ export class OpenAIModelGateway{
     });
     if(!reservation)throw new ModelGatewayError('model_budget_daily_cap_reached');
     try{
-      const response=await this.fetcher(`${this.config.baseUrl}/chat/completions`,{method:'POST',headers:{authorization:`Bearer ${this.config.apiKey}`,'content-type':'application/json'},body});
+      const response=await this.fetcher(`${this.config.baseUrl}/chat/completions`,{method:'POST',headers:{authorization:`Bearer ${this.config.apiKey}`,'content-type':'application/json'},body,signal:AbortSignal.timeout(60_000)});
       if(!response.ok)throw new ModelGatewayError('model_provider_request_failed');
       const data=await response.json() as {choices?:Array<{message?:{content?:unknown}}>;usage?:{prompt_tokens?:number;completion_tokens?:number}};
       const text=typeof data.choices?.[0]?.message?.content==='string'?data.choices[0].message.content:null;
