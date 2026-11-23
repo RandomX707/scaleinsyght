@@ -133,6 +133,25 @@ export const EvidenceRefSchema = z.object({
 }).strict();
 export type EvidenceRef = z.infer<typeof EvidenceRefSchema>;
 
+export const FlowSpecSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  sourceSnapshotIds: z.array(z.string().uuid()).min(1).max(50),
+  nodes: z.array(z.object({
+    id: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/),
+    kind: z.enum(['read', 'map', 'deliver']),
+    capability: z.string().min(1).max(120),
+    inputs: z.record(z.string(), z.unknown()).default({}),
+  }).strict()).min(1).max(50),
+}).strict().superRefine((spec, context) => {
+  if (spec.nodes.some((node) => node.kind === 'deliver' && node.capability !== 'flowspec.handoff')) {
+    context.addIssue({ code: 'custom', message: 'Unsupported delivery capability', path: ['nodes'] });
+  }
+  if (spec.nodes.some((node) => /mutation|deploy|release|irreversible/i.test(node.capability))) {
+    context.addIssue({ code: 'custom', message: 'Mutating capabilities are not allowed', path: ['nodes'] });
+  }
+});
+export type FlowSpec = z.infer<typeof FlowSpecSchema>;
+
 export const GraphAssertionSchema = z.object({
   assertion_id: Uuid,
   relationship_id: Uuid,

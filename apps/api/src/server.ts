@@ -8,7 +8,7 @@ import { EncryptedArtifactStore } from '@scaleinsyght/artifacts';
 import { getNotifications, markNotificationRead, readConnectionScope, readWorkbook, retireConnection, runGoldenProfile, saveConnectionScope, storeWorkbook } from '@scaleinsyght/profiler';
 import { applyPersonalContext, createAnalyticPlan, startAnalyticRun, submitFeedback, type StructuredAnswer } from '@scaleinsyght/analytic';
 import { eventsAfter } from '@scaleinsyght/runner';
-import { AnalyticPlanSchema, hashPlan } from '@scaleinsyght/contracts';
+import { AnalyticPlanSchema, FlowSpecSchema, hashPlan } from '@scaleinsyght/contracts';
 import { compareGraphSnapshots, getIdentifierPath, getImpactRadius, importGoldenMetadata, listGraphAssertions, listGraphAssets, listGraphSnapshots, listIdentifierFields, listReports, queryLineage, reconcileAssertion, reviewGraphAssertion, traceIdentifier, verifyAssertionFromRun } from '@scaleinsyght/graph';
 import { createGoldenHubAdapters, getGoldenHubFixtures, type FlowSpecDelivery, type SemanticsAdapter } from '@scaleinsyght/hub-adapters';
 import { ClaimSchema, EvidenceRefSchema } from '@scaleinsyght/contracts';
@@ -34,6 +34,62 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
   const hubAdapters=options.hubAdapters??createGoldenHubAdapters(getGoldenHubFixtures());
   app.addContentTypeParser('application/octet-stream',{parseAs:'buffer'},(_request,payload,done)=>done(null,payload));
   app.get('/api/health',async()=>({status:'ok'}));
+  app.get('/api/flowspecs',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const result=await withTenant(options.pool,current.tenantId,async(client)=>client.query(
+      `SELECT f.flowspec_id AS "flowspecId",f.owner_id AS "ownerId",f.latest_version AS "latestVersion",v.subject_hash AS "subjectHash",a.status AS "approvalStatus"
+       FROM hub.flowspecs f LEFT JOIN hub.flowspec_versions v ON v.tenant_id=f.tenant_id AND v.flowspec_id=f.flowspec_id AND v.version=f.latest_version
+       LEFT JOIN hub.flowspec_approvals a ON a.tenant_id=v.tenant_id AND a.flowspec_id=v.flowspec_id AND a.version=v.version AND a.subject_hash=v.subject_hash
+       WHERE f.tenant_id=$1 ORDER BY f.created_at DESC`,[current.tenantId]));
+    return reply.send({flowspecs:result.rows});
+  });
+  app.post('/api/flowspecs',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const parsed=FlowSpecSchema.safeParse(request.body);if(!parsed.success)return reply.code(400).send({error:'invalid_flowspec',details:parsed.error.issues.map(({path,message})=>({path,message}))});
+    const flowspecId=randomUUID();const payload=parsed.data;const subjectHash=createHash('sha256').update(JSON.stringify(payload)).digest('hex');const sourceSnapshotHash=createHash('sha256').update(JSON.stringify([...payload.sourceSnapshotIds].sort())).digest('hex');
+    await withTenant(options.pool,current.tenantId,async(client)=>{
+      await client.query('INSERT INTO hub.flowspecs(tenant_id,flowspec_id,owner_id,latest_version) VALUES($1,$2,$3,1)',[current.tenantId,flowspecId,current.userId]);
+      await client.query(`INSERT INTO hub.flowspec_versions(tenant_id,flowspec_id,version,payload,subject_hash,source_snapshot_ids,policy_version,created_by)
+        VALUES($1,$2,1,$3::jsonb,$4,$5::jsonb,'phase4-v1',$6)`,[current.tenantId,flowspecId,JSON.stringify(payload),subjectHash,JSON.stringify(payload.sourceSnapshotIds),current.userId]);
+      await client.query(`INSERT INTO hub.flowspec_approvals(tenant_id,flowspec_id,version,subject_hash,source_snapshot_hash,policy_version,requested_by,status,expires_at)
+        VALUES($1,$2,1,$3,$4,'phase4-v1',$5,'pending',clock_timestamp()+interval '7 days')`,[current.tenantId,flowspecId,subjectHash,sourceSnapshotHash,current.userId]);
+    });
+    return reply.code(201).send({flowspecId,version:1,subjectHash,status:'pending_approval'});
+  });
+  app.get<{Params:{id:string}}>('/api/flowspecs/:id',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const result=await withTenant(options.pool,current.tenantId,async(client)=>client.query(
+      `SELECT f.flowspec_id AS "flowspecId",f.owner_id AS "ownerId",v.version,v.payload,v.subject_hash AS "subjectHash",v.source_snapshot_ids AS "sourceSnapshotIds",v.policy_version AS "policyVersion",a.status AS "approvalStatus",a.approved_by AS "approvedBy",a.expires_at AS "expiresAt"
+       FROM hub.flowspecs f JOIN hub.flowspec_versions v USING(tenant_id,flowspec_id) LEFT JOIN hub.flowspec_approvals a USING(tenant_id,flowspec_id,version,subject_hash)
+       WHERE f.tenant_id=$1 AND f.flowspec_id=$2 ORDER BY v.version`,[current.tenantId,request.params.id]));
+    if(!result.rowCount)return reply.code(404).send({error:'flowspec_not_found'});return reply.send({versions:result.rows});
+  });
+  app.post<{Params:{id:string}}>('/api/flowspecs/:id/versions',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const parsed=FlowSpecSchema.safeParse(request.body);if(!parsed.success)return reply.code(400).send({error:'invalid_flowspec'});
+    const payload=parsed.data;const subjectHash=createHash('sha256').update(JSON.stringify(payload)).digest('hex');const sourceSnapshotHash=createHash('sha256').update(JSON.stringify([...payload.sourceSnapshotIds].sort())).digest('hex');
+    const created=await withTenant(options.pool,current.tenantId,async(client)=>{
+      const owner=await client.query<{owner_id:string;latest_version:number}>('SELECT owner_id,latest_version FROM hub.flowspecs WHERE tenant_id=$1 AND flowspec_id=$2 FOR UPDATE',[current.tenantId,request.params.id]);
+      const row=owner.rows[0];if(!row)return {status:'missing' as const};if(row.owner_id!==current.userId)return {status:'forbidden' as const};
+      const version=row.latest_version+1;
+      await client.query('INSERT INTO hub.flowspec_versions(tenant_id,flowspec_id,version,payload,subject_hash,source_snapshot_ids,policy_version,created_by) VALUES($1,$2,$3,$4::jsonb,$5,$6::jsonb,\'phase4-v1\',$7)',[current.tenantId,request.params.id,version,JSON.stringify(payload),subjectHash,JSON.stringify(payload.sourceSnapshotIds),current.userId]);
+      await client.query('UPDATE hub.flowspecs SET latest_version=$3 WHERE tenant_id=$1 AND flowspec_id=$2',[current.tenantId,request.params.id,version]);
+      await client.query(`INSERT INTO hub.flowspec_approvals(tenant_id,flowspec_id,version,subject_hash,source_snapshot_hash,policy_version,requested_by,status,expires_at) VALUES($1,$2,$3,$4,$5,'phase4-v1',$6,'pending',clock_timestamp()+interval '7 days')`,[current.tenantId,request.params.id,version,subjectHash,sourceSnapshotHash,current.userId]);
+      return {status:'created' as const,version};
+    });
+    if(created.status==='missing')return reply.code(404).send({error:'flowspec_not_found'});if(created.status==='forbidden')return reply.code(403).send({error:'flowspec_owner_required'});
+    return reply.code(201).send({flowspecId:request.params.id,version:created.version,subjectHash,status:'pending_approval'});
+  });
+  app.post<{Params:{id:string}}>('/api/flowspecs/:id/approve',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const version=Number((request.body as {version?:unknown})?.version);if(!Number.isInteger(version)||version<1)return reply.code(400).send({error:'invalid_version'});
+    const outcome=await withTenant(options.pool,current.tenantId,async(client)=>{
+      const result=await client.query<{requested_by:string;expires_at:Date;status:string}>('SELECT requested_by,expires_at,status FROM hub.flowspec_approvals WHERE tenant_id=$1 AND flowspec_id=$2 AND version=$3 FOR UPDATE',[current.tenantId,request.params.id,version]);
+      const approval=result.rows[0];if(!approval)return 'missing';if(approval.requested_by===current.userId)return 'self_approval';if(approval.status!=='pending'||approval.expires_at.getTime()<=Date.now())return 'not_pending';
+      await client.query("UPDATE hub.flowspec_approvals SET approved_by=$4,status='approved',decided_at=clock_timestamp() WHERE tenant_id=$1 AND flowspec_id=$2 AND version=$3",[current.tenantId,request.params.id,version,current.userId]);return 'approved';
+    });
+    if(outcome==='missing')return reply.code(404).send({error:'approval_not_found'});if(outcome==='self_approval')return reply.code(403).send({error:'second_member_required'});if(outcome!=='approved')return reply.code(409).send({error:'approval_not_pending'});return reply.send({flowspecId:request.params.id,version,status:'approved'});
+  });
   app.get('/api/hub/adapters',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const adapters=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{product:string;connected:boolean;version:number;capabilities:string[];updated_at:Date}>(
