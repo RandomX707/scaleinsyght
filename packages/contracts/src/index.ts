@@ -185,6 +185,8 @@ export type LineageGap = z.infer<typeof LineageGapSchema>;
 
 export const LineagePathSchema = z.object({
   asset_ids: z.array(Uuid),
+  assets: z.array(z.object({asset_id:Uuid,qualified_name:z.string(),asset_type:z.string(),active:z.boolean()}).strict()).default([]),
+  edges: z.array(z.object({relationship_id:Uuid,from_asset_id:Uuid,to_asset_id:Uuid,granularity:z.enum(['system','dataset','field','metric','report'])}).strict()).default([]),
   assertions: z.array(GraphAssertionSchema),
   evidence: z.array(z.object({ evidence_id: Uuid, evidence_type: z.string(), safe_metadata: z.record(z.string(), z.unknown()), captured_at: z.string().datetime({ offset: true }) }).strict()),
   gaps: z.array(LineageGapSchema),

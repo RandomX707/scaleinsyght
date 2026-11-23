@@ -63,7 +63,7 @@ export interface QueryLineageInput {
 
 export async function queryLineage(pool: Pool, input: QueryLineageInput): Promise<LineagePath> {
   return withTenant(pool, input.tenantId, async (client) => {
-    const edges = await client.query<{ from_asset_id: string; to_asset_id: string; relationship_id: string }>(
+    const edges = await client.query<{ from_asset_id: string; to_asset_id: string; relationship_id: string; granularity:'system'|'dataset'|'field'|'metric'|'report' }>(
       `WITH RECURSIVE walk(asset_id,depth,visited,relationship_id) AS (
          SELECT $1::uuid,0,ARRAY[$1::uuid],NULL::uuid
          UNION ALL
@@ -76,12 +76,14 @@ export async function queryLineage(pool: Pool, input: QueryLineageInput): Promis
          ) next
          WHERE w.depth<20 AND NOT (next.asset_id=ANY(w.visited))
        )
-       SELECT DISTINCT r.from_asset_id,r.to_asset_id,r.relationship_id FROM walk w
+       SELECT DISTINCT r.from_asset_id,r.to_asset_id,r.relationship_id,r.granularity FROM walk w
        JOIN graph.relationships r ON r.tenant_id=$3 AND r.relationship_id=w.relationship_id
        WHERE w.relationship_id IS NOT NULL`,
       [input.assetId,input.direction,input.tenantId],
     );
     const visited = [...new Set([input.assetId,...edges.rows.flatMap((row) => [row.from_asset_id,row.to_asset_id])])];
+    const assets=await client.query<{asset_id:string;qualified_name:string;asset_type:string;active:boolean}>(
+      'SELECT asset_id,qualified_name,asset_type,active FROM graph.assets WHERE tenant_id=$1 AND asset_id=ANY($2::uuid[])',[input.tenantId,visited]);
     const assertionRows = await client.query<{ assertion_id:string; relationship_id:string; evidence_method:GraphAssertion['evidence_method']; review_status:GraphAssertion['review_status']; verification:GraphAssertion['verification']; evidence_ids:string[]; confidence_score:number|null; explanation:string|null; transformation:Record<string,unknown>|null; collector_version:string; captured_at:Date; valid_from:Date|null; valid_to:Date|null }>(
       `SELECT a.assertion_id,a.relationship_id,a.evidence_method,a.review_status,a.verification,a.evidence_ids,a.confidence_score,
          a.explanation,a.transformation,a.collector_version,a.captured_at,a.valid_from,a.valid_to
@@ -98,6 +100,8 @@ export async function queryLineage(pool: Pool, input: QueryLineageInput): Promis
       'SELECT gap_id,between_asset_ids,reason,detected_at,closed_by_assertion_id FROM graph.gaps WHERE tenant_id=$1 AND between_asset_ids && $2::uuid[]',[input.tenantId,visited]);
     const result = {
       asset_ids:visited,
+      assets:assets.rows,
+      edges:edges.rows,
       assertions,
       evidence:evidenceRows.rows.map((row) => ({ ...row,captured_at:row.captured_at.toISOString() })),
       gaps:gaps.rows.map((row) => ({ ...row,detected_at:row.detected_at.toISOString() })),
@@ -134,7 +138,8 @@ export async function importGoldenMetadata(pool: Pool, input: ImportGoldenMetada
          RETURNING asset_id`,[input.tenantId,input.connectionId,kind,asset.name,fingerprint]);
       assetIds.set(asset.name,inserted.rows[0]!.asset_id);
     }
-    for(const report of fixture.reports){
+    const reportLinks=[...getGoldenMetadataFixture('tableau-reports').reports,...getGoldenMetadataFixture('power-bi-reports').reports];
+    for(const report of reportLinks){
       const reportId=assetIds.get(report.name);
       if(reportId)await client.query('INSERT INTO graph.evidence(tenant_id,evidence_type,safe_metadata) VALUES($1,\'report_link\',$2::jsonb)',
         [input.tenantId,JSON.stringify({asset_id:reportId,tool:report.tool,safe_path:report.safe_path,fixture_key:input.fixtureKey})]);
@@ -197,7 +202,7 @@ export async function importGoldenMetadata(pool: Pool, input: ImportGoldenMetada
     const cursor=await client.query<{event_cursor:string}>("SELECT coalesce(max(event_id),0)::text event_cursor FROM graph.events WHERE tenant_id=$1",[input.tenantId]);
     const count=await client.query<{asset_count:number}>("SELECT count(*)::int asset_count FROM graph.assets WHERE tenant_id=$1",[input.tenantId]);
     await client.query('INSERT INTO graph.snapshots(tenant_id,event_cursor,asset_count) VALUES($1,$2,$3)',[input.tenantId,cursor.rows[0]!.event_cursor,count.rows[0]!.asset_count]);
-    return {assets:assetIds.size,flows:flowCount,reports:fixture.reports.length,gaps:gapCount};
+    return {assets:assetIds.size,flows:flowCount,reports:reportLinks.length,gaps:gapCount};
   });
 }
 
@@ -330,6 +335,27 @@ export async function listReports(pool:Pool,tenantId:string):Promise<Array<{asse
        FROM graph.assets a LEFT JOIN LATERAL (SELECT safe_metadata FROM graph.evidence WHERE tenant_id=a.tenant_id AND evidence_type='report_link'
         AND safe_metadata->>'asset_id'=a.asset_id::text ORDER BY captured_at DESC LIMIT 1) e ON true
        WHERE a.tenant_id=$1 AND a.asset_type='report' AND a.active ORDER BY a.qualified_name`,[tenantId]);
+    return result.rows;
+  });
+}
+
+export async function listGraphAssertions(pool:Pool,tenantId:string):Promise<Array<{assertion_id:string;from_name:string;to_name:string;evidence_method:string;review_status:string;verification:string;confidence_score:number|null;evidence_count:number}>>{
+  return withTenant(pool,tenantId,async(client)=>{
+    const result=await client.query<{assertion_id:string;from_name:string;to_name:string;evidence_method:string;review_status:string;verification:string;confidence_score:number|null;evidence_count:number}>(
+      `SELECT a.assertion_id,f.qualified_name AS from_name,t.qualified_name AS to_name,a.evidence_method,a.review_status,a.verification,
+       a.confidence_score,cardinality(a.evidence_ids)::int AS evidence_count
+       FROM graph.assertions a JOIN graph.relationships r USING(tenant_id,relationship_id)
+       JOIN graph.assets f ON f.tenant_id=r.tenant_id AND f.asset_id=r.from_asset_id
+       JOIN graph.assets t ON t.tenant_id=r.tenant_id AND t.asset_id=r.to_asset_id
+       WHERE a.tenant_id=$1 ORDER BY a.captured_at DESC,a.assertion_id`,[tenantId]);
+    return result.rows.map((row)=>({...row,confidence_score:row.confidence_score===null?null:Number(row.confidence_score)}));
+  });
+}
+
+export async function listGraphAssets(pool:Pool,tenantId:string):Promise<Array<{asset_id:string;qualified_name:string;asset_type:string;active:boolean}>>{
+  return withTenant(pool,tenantId,async(client)=>{
+    const result=await client.query<{asset_id:string;qualified_name:string;asset_type:string;active:boolean}>(
+      'SELECT asset_id,qualified_name,asset_type,active FROM graph.assets WHERE tenant_id=$1 ORDER BY qualified_name,asset_id',[tenantId]);
     return result.rows;
   });
 }

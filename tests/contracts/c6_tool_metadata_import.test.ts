@@ -38,6 +38,7 @@ describe('c6 synthetic metadata import',()=>{
       const reports=await server.inject({method:'GET',url:'/api/reports',headers:{cookie}});
       expect(reports.statusCode).toBe(200);
       expect(JSON.stringify(reports.json())).toContain('Power BI.Customer Health');
+      expect((reports.json() as {reports:Array<{name:string;safe_path:string|null}>}).reports.find(item=>item.name==='Power BI.Customer Health')?.safe_path).toBe('/demo/power-bi/customer-health');
       const changedAsset=await withTenant(migrate,tenantId,async(client)=>(await client.query<{asset_id:string}>("SELECT asset_id FROM graph.assets WHERE tenant_id=$1 AND qualified_name='dbt.customer_mart.customer_key' LIMIT 1",[tenantId])).rows[0]!.asset_id);
       const impact=await server.inject({method:'GET',url:`/api/lineage/${changedAsset}/impact`,headers:{cookie}});
       expect(impact.statusCode).toBe(200);
