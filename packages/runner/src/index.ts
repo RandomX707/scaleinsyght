@@ -48,7 +48,7 @@ export async function transitionRun(pool: Pool,input:{tenantId:string;runId:stri
   });
 }
 
-export async function claimNextStep(pool:Pool,workerId:string,leaseMs:number):Promise<StepClaim|null>{
+export async function claimNextStep(pool:Pool,workerId:string,leaseMs:number,tenantId?:string):Promise<StepClaim|null>{
   if(!workerId.trim()||!Number.isSafeInteger(leaseMs)||leaseMs<1) throw new Error('invalid_claim_arguments');
   const client=await pool.connect();
   try{
@@ -58,8 +58,9 @@ export async function claimNextStep(pool:Pool,workerId:string,leaseMs:number):Pr
     await client.query("SELECT set_config('app.worker_claim','enabled',true)");
     const candidate=await client.query<{tenant_id:string;run_id:string;step_id:string}>(`
       SELECT tenant_id,run_id,step_id FROM runs.steps
-      WHERE state='PENDING' OR (state IN ('CLAIMED','RUNNING') AND lease_expires_at<=clock_timestamp())
-      ORDER BY created_at,step_order FOR UPDATE SKIP LOCKED LIMIT 1`);
+      WHERE (state='PENDING' OR (state IN ('CLAIMED','RUNNING') AND lease_expires_at<=clock_timestamp()))
+        AND ($1::text IS NULL OR tenant_id=$1)
+      ORDER BY created_at,step_order FOR UPDATE SKIP LOCKED LIMIT 1`,[tenantId??null]);
     if(!candidate.rowCount){await client.query('COMMIT');return null;}
     const selected=candidate.rows[0]!;
     await client.query("SELECT set_config('app.tenant_id',$1,true)",[selected.tenant_id]);

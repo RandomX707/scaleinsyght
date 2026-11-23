@@ -23,7 +23,7 @@ describe('contract 2 source groups and personal memory',()=>{
   const current=await withTenant(migrate,tenant,async(db)=>db.query<{source_group_id:string;source_group_version:number}>('SELECT source_group_id,source_group_version FROM registry.connections WHERE connection_id=$1',[second.connectionId]));
   expect(current.rows[0]).toEqual({source_group_id:first.sourceGroupId,source_group_version:2});
   expect(first.agentId).not.toBe(second.agentId);
-  const claim=await claimNextStep(worker,'group-pin-worker',60_000);
+  const claim=await claimNextStep(worker,'group-pin-worker',60_000,tenant);
   expect(claim?.runId).toBe(run.runId);
   await completeStep(worker,claim!,{resultRef:'golden://phase0/summary'});
  });

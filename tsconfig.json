@@ -13,6 +13,7 @@
     { "path": "./packages/analytic" },
     { "path": "./packages/graph" },
     { "path": "./packages/hub-adapters" },
+    { "path": "./packages/reports" },
     { "path": "./apps/api" },
     { "path": "./apps/worker" },
     { "path": "./apps/web" },
