@@ -66,27 +66,35 @@ export async function queryLineage(pool: Pool, input: QueryLineageInput): Promis
   const maxDepth=input.maxDepth??20;
   if(!Number.isInteger(maxDepth)||maxDepth<1||maxDepth>20)throw new Error('invalid_lineage_depth');
   return withTenant(pool, input.tenantId, async (client) => {
-    const edges = await client.query<{ from_asset_id: string; to_asset_id: string; relationship_id: string; granularity:'system'|'dataset'|'field'|'metric'|'report' }>(
-      `WITH RECURSIVE walk(asset_id,depth,visited,relationship_id) AS (
-         SELECT $1::uuid,0,ARRAY[$1::uuid],NULL::uuid
-         UNION ALL
-         SELECT next.asset_id,w.depth+1,w.visited || next.asset_id,next.relationship_id
-         FROM walk w
-         CROSS JOIN LATERAL (
-           SELECT r.to_asset_id AS asset_id,r.relationship_id FROM graph.relationships r
-           WHERE $2 IN ('downstream','both') AND r.tenant_id=$3 AND r.family='data_flow' AND r.from_asset_id=w.asset_id
-           UNION ALL
-           SELECT r.from_asset_id AS asset_id,r.relationship_id FROM graph.relationships r
-           WHERE $2 IN ('upstream','both') AND r.tenant_id=$3 AND r.family='data_flow' AND r.to_asset_id=w.asset_id
-         ) next
-         WHERE w.depth<$4 AND NOT (next.asset_id=ANY(w.visited))
-       )
-       SELECT DISTINCT r.from_asset_id,r.to_asset_id,r.relationship_id,r.granularity FROM walk w
-       JOIN graph.relationships r ON r.tenant_id=$3 AND r.relationship_id=w.relationship_id
-       WHERE w.relationship_id IS NOT NULL`,
-      [input.assetId,input.direction,input.tenantId,maxDepth],
-    );
-    const visited = [...new Set([input.assetId,...edges.rows.flatMap((row) => [row.from_asset_id,row.to_asset_id])])];
+    type LineageEdge={from_asset_id:string;to_asset_id:string;relationship_id:string;granularity:'system'|'dataset'|'field'|'metric'|'report'};
+    const edgeById=new Map<string,LineageEdge>();
+    const visitedSet=new Set<string>([input.assetId]);
+    let frontier=[input.assetId];
+    for(let depth=0;depth<maxDepth&&frontier.length>0;depth++){
+      const level=await client.query<LineageEdge>(
+        `SELECT r.from_asset_id,r.to_asset_id,r.relationship_id,r.granularity FROM graph.relationships r
+         WHERE $3 IN ('downstream','both') AND r.tenant_id=$1 AND r.family='data_flow' AND r.from_asset_id=ANY($2::uuid[])
+           AND EXISTS(SELECT 1 FROM graph.assertions a WHERE a.tenant_id=r.tenant_id AND a.relationship_id=r.relationship_id
+             AND ($4::timestamptz IS NULL OR (a.captured_at<=$4 AND (a.valid_from IS NULL OR a.valid_from<=$4) AND (a.valid_to IS NULL OR a.valid_to>=$4)))
+             AND ($5::text[] IS NULL OR a.evidence_method=ANY($5::text[])))
+         UNION
+         SELECT r.from_asset_id,r.to_asset_id,r.relationship_id,r.granularity FROM graph.relationships r
+         WHERE $3 IN ('upstream','both') AND r.tenant_id=$1 AND r.family='data_flow' AND r.to_asset_id=ANY($2::uuid[])
+           AND EXISTS(SELECT 1 FROM graph.assertions a WHERE a.tenant_id=r.tenant_id AND a.relationship_id=r.relationship_id
+             AND ($4::timestamptz IS NULL OR (a.captured_at<=$4 AND (a.valid_from IS NULL OR a.valid_from<=$4) AND (a.valid_to IS NULL OR a.valid_to>=$4)))
+             AND ($5::text[] IS NULL OR a.evidence_method=ANY($5::text[])))`,
+        [input.tenantId,frontier,input.direction,input.asOf??null,input.methods??null]);
+      const next=new Set<string>();
+      for(const edge of level.rows){
+        edgeById.set(edge.relationship_id,edge);
+        if(input.direction!=='upstream'&&!visitedSet.has(edge.to_asset_id))next.add(edge.to_asset_id);
+        if(input.direction!=='downstream'&&!visitedSet.has(edge.from_asset_id))next.add(edge.from_asset_id);
+      }
+      for(const assetId of next)visitedSet.add(assetId);
+      frontier=[...next];
+    }
+    const edgeRows=[...edgeById.values()];
+    const visited=[...visitedSet];
     const assets=await client.query<{asset_id:string;qualified_name:string;asset_type:string;active:boolean}>(
       'SELECT asset_id,qualified_name,asset_type,active FROM graph.assets WHERE tenant_id=$1 AND asset_id=ANY($2::uuid[])',[input.tenantId,visited]);
     const assertionRows = await client.query<{ assertion_id:string; relationship_id:string; evidence_method:GraphAssertion['evidence_method']; review_status:GraphAssertion['review_status']; verification:GraphAssertion['verification']; evidence_ids:string[]; confidence_score:number|null; explanation:string|null; transformation:Record<string,unknown>|null; collector_version:string; captured_at:Date; valid_from:Date|null; valid_to:Date|null }>(
@@ -95,7 +103,7 @@ export async function queryLineage(pool: Pool, input: QueryLineageInput): Promis
        FROM graph.assertions a WHERE a.tenant_id=$1 AND a.relationship_id=ANY($2::uuid[])
        AND ($3::timestamptz IS NULL OR (a.captured_at <= $3 AND (a.valid_from IS NULL OR a.valid_from <= $3) AND (a.valid_to IS NULL OR a.valid_to >= $3)))
        AND ($4::text[] IS NULL OR a.evidence_method=ANY($4::text[]))`,
-      [input.tenantId,edges.rows.map((row) => row.relationship_id),input.asOf ?? null,input.methods ?? null],
+      [input.tenantId,edgeRows.map((row) => row.relationship_id),input.asOf ?? null,input.methods ?? null],
     );
     const assertions = assertionRows.rows.map((row) => ({ ...row, confidence_score:row.confidence_score===null?null:Number(row.confidence_score),captured_at:row.captured_at.toISOString(),valid_from:row.valid_from?.toISOString() ?? null,valid_to:row.valid_to?.toISOString() ?? null }));
     const evidenceIds = [...new Set(assertions.flatMap((row) => row.evidence_ids))];
@@ -106,11 +114,11 @@ export async function queryLineage(pool: Pool, input: QueryLineageInput): Promis
     const result = {
       asset_ids:visited,
       assets:assets.rows,
-      edges:edges.rows,
+      edges:edgeRows,
       assertions,
       evidence:evidenceRows.rows.map((row) => ({ ...row,captured_at:row.captured_at.toISOString() })),
       gaps:gaps.rows.map((row) => ({ ...row,detected_at:row.detected_at.toISOString() })),
-      coverage:edges.rows.length === 0 ? 0 : Math.max(0, 1 - gaps.rows.length / edges.rows.length),
+      coverage:edgeRows.length === 0 ? 0 : Math.max(0, 1 - gaps.rows.length / edgeRows.length),
       observable:input.asOf === undefined || assertions.length > 0,
     };
     return LineagePathSchema.parse(result);
@@ -124,6 +132,38 @@ export interface ImportGoldenMetadataInput {
   fixtureKey: string;
 }
 
+const idPathAssetNames=['SyntheticSQL.Customer.customer_id','SyntheticSnowflake.DIM_CUSTOMER.customer_key','dbt.customer_mart.customer_key'];
+
+async function ensureGraphEvidence(client:PoolClient,input:{tenantId:string;evidenceType:string;safeMetadata:Record<string,unknown>}):Promise<string>{
+  const metadata=JSON.stringify(input.safeMetadata);
+  const existing=await client.query<{evidence_id:string}>(
+    'SELECT evidence_id FROM graph.evidence WHERE tenant_id=$1 AND evidence_type=$2 AND safe_metadata=$3::jsonb ORDER BY captured_at,evidence_id LIMIT 1',
+    [input.tenantId,input.evidenceType,metadata]);
+  if(existing.rows[0])return existing.rows[0].evidence_id;
+  const inserted=await client.query<{evidence_id:string}>(
+    'INSERT INTO graph.evidence(tenant_id,evidence_type,safe_metadata) VALUES($1,$2,$3::jsonb) RETURNING evidence_id',
+    [input.tenantId,input.evidenceType,metadata]);
+  return inserted.rows[0]!.evidence_id;
+}
+
+async function ensureGraphAssertion(client:PoolClient,input:{tenantId:string;relationshipId:string;evidenceMethod:GraphAssertion['evidence_method'];evidenceId:string;confidence:number;explanation:string|null;reviewStatus:GraphAssertion['review_status']}):Promise<string>{
+  const existing=await client.query<{assertion_id:string;evidence_ids:string[]}>(
+    `SELECT assertion_id,evidence_ids FROM graph.assertions
+     WHERE tenant_id=$1 AND relationship_id=$2 AND evidence_method=$3 AND collector_version='phase3-golden-v1'
+     ORDER BY captured_at,assertion_id LIMIT 1`,[input.tenantId,input.relationshipId,input.evidenceMethod]);
+  if(existing.rows[0]){
+    if(!existing.rows[0].evidence_ids.includes(input.evidenceId))await client.query(
+      'UPDATE graph.assertions SET evidence_ids=array_append(evidence_ids,$3::uuid) WHERE tenant_id=$1 AND assertion_id=$2',
+      [input.tenantId,existing.rows[0].assertion_id,input.evidenceId]);
+    return existing.rows[0].assertion_id;
+  }
+  const inserted=await client.query<{assertion_id:string}>(
+    `INSERT INTO graph.assertions(tenant_id,relationship_id,evidence_method,evidence_ids,confidence_score,explanation,collector_version,review_status)
+     VALUES($1,$2,$3,ARRAY[$4::uuid],$5,$6,'phase3-golden-v1',$7) RETURNING assertion_id`,
+    [input.tenantId,input.relationshipId,input.evidenceMethod,input.evidenceId,input.confidence,input.explanation,input.reviewStatus]);
+  return inserted.rows[0]!.assertion_id;
+}
+
 export async function importGoldenMetadata(pool: Pool, input: ImportGoldenMetadataInput): Promise<{ assets: number; flows: number; reports: number; gaps: number }> {
   const fixture=getGoldenMetadataFixture(input.fixtureKey);
   const expectedSource={dbt:'golden-dbt',tableau:'golden-tableau',power_bi:'golden-powerbi'}[fixture.tool];
@@ -134,7 +174,7 @@ export async function importGoldenMetadata(pool: Pool, input: ImportGoldenMetada
     if(!row||row.status!=='active'||row.connector_type!==fixture.tool||row.source_ref!==expectedSource)throw new Error('metadata_connection_not_found');
     const corpus=getGoldenPhase3Dataset();
     const assetIds=new Map<string,string>();
-    for(const asset of corpus.assets){
+    for(const asset of fixture.assets){
       const kind=asset.kind==='report'?'report':asset.kind==='metric'?'metric':asset.kind==='field'?'field':'dataset';
       const fingerprint=createHash('sha256').update(`${input.tenantId}\0${asset.name}`).digest();
       const inserted=await client.query<{asset_id:string}>(
@@ -143,15 +183,25 @@ export async function importGoldenMetadata(pool: Pool, input: ImportGoldenMetada
          RETURNING asset_id`,[input.tenantId,input.connectionId,kind,asset.name,fingerprint]);
       assetIds.set(asset.name,inserted.rows[0]!.asset_id);
     }
-    const reportLinks=[...getGoldenMetadataFixture('tableau-reports').reports,...getGoldenMetadataFixture('power-bi-reports').reports];
-    for(const report of reportLinks){
+    const referencedNames=[...new Set([
+      ...fixture.flows.flatMap((flow)=>[flow.from,flow.to]),
+      fixture.disputed.from,fixture.disputed.to,
+      ...corpus.gaps.flatMap((gap)=>gap.between),
+      ...corpus.assets.filter((asset)=>asset.kind==='field'&&/\.(customer_id|customer_key)$/.test(asset.name)).map((asset)=>asset.name),
+      ...idPathAssetNames,
+      corpus.reportImpact.changedAsset,corpus.reportImpact.report,
+    ])];
+    const referenced=await client.query<{asset_id:string;qualified_name:string}>(
+      'SELECT asset_id,qualified_name FROM graph.assets WHERE tenant_id=$1 AND active AND qualified_name=ANY($2::text[]) ORDER BY qualified_name,first_seen_at,asset_id',
+      [input.tenantId,referencedNames]);
+    for(const asset of referenced.rows)if(!assetIds.has(asset.qualified_name))assetIds.set(asset.qualified_name,asset.asset_id);
+    for(const report of fixture.reports){
       const reportId=assetIds.get(report.name);
-      if(reportId)await client.query('INSERT INTO graph.evidence(tenant_id,evidence_type,safe_metadata) VALUES($1,\'report_link\',$2::jsonb)',
-        [input.tenantId,JSON.stringify({asset_id:reportId,tool:report.tool,safe_path:report.safe_path,fixture_key:input.fixtureKey})]);
+      if(reportId)await ensureGraphEvidence(client,{tenantId:input.tenantId,evidenceType:'report_link',safeMetadata:{asset_id:reportId,tool:report.tool,safe_path:report.safe_path,fixture_key:input.fixtureKey}});
     }
     let flowCount=0;
     const assertionFor=new Map<string,string>();
-    for(const flow of corpus.flows){
+    for(const flow of fixture.flows){
       const fromId=assetIds.get(flow.from),toId=assetIds.get(flow.to);
       if(!fromId||!toId)continue;
       const granularity=flow.grain==='field'?'field':flow.grain==='metric'?'metric':flow.grain==='report'?'report':'dataset';
@@ -159,36 +209,31 @@ export async function importGoldenMetadata(pool: Pool, input: ImportGoldenMetada
         `INSERT INTO graph.relationships(tenant_id,family,relationship_type,from_asset_id,to_asset_id,granularity)
          VALUES($1,'data_flow','DERIVES_FROM',$2,$3,$4) ON CONFLICT(tenant_id,family,relationship_type,from_asset_id,to_asset_id,granularity) DO UPDATE SET relationship_type=EXCLUDED.relationship_type RETURNING relationship_id`,
         [input.tenantId,fromId,toId,granularity]);
-      const evidence=await client.query<{evidence_id:string}>(
-        `INSERT INTO graph.evidence(tenant_id,evidence_type,safe_metadata) VALUES($1,$2,$3::jsonb) RETURNING evidence_id`,
-        [input.tenantId,flow.method==='parsed'?'sql_parse':'manifest',JSON.stringify({fixture_key:input.fixtureKey,tool:fixture.tool,grain:flow.grain})]);
-      const assertion=await client.query<{assertion_id:string}>(
-        `INSERT INTO graph.assertions(tenant_id,relationship_id,evidence_method,evidence_ids,confidence_score,explanation,collector_version,review_status)
-         VALUES($1,$2,$3,ARRAY[$4::uuid],$5,$6,'phase3-golden-v1','unreviewed') RETURNING assertion_id`,
-        [input.tenantId,relation.rows[0]!.relationship_id,flow.method,evidence.rows[0]!.evidence_id,flow.confidence,flow.change==='renamed'?'Identifier renamed across synthetic systems':null]);
-      assertionFor.set(`${flow.from}\0${flow.to}`,assertion.rows[0]!.assertion_id);
-      flowCount+=assertion.rowCount??0;
+      const evidenceId=await ensureGraphEvidence(client,{tenantId:input.tenantId,evidenceType:flow.method==='parsed'?'sql_parse':'manifest',safeMetadata:{fixture_key:input.fixtureKey,tool:fixture.tool,grain:flow.grain}});
+      const assertionId=await ensureGraphAssertion(client,{tenantId:input.tenantId,relationshipId:relation.rows[0]!.relationship_id,evidenceMethod:flow.method,evidenceId,confidence:flow.confidence,explanation:flow.change==='renamed'?'Identifier renamed across synthetic systems':null,reviewStatus:'unreviewed'});
+      assertionFor.set(`${flow.from}\0${flow.to}`,assertionId);
+      flowCount++;
     }
-    const dispute=corpus.disputed;
+    const dispute=fixture.disputed;
     const disputedFrom=assetIds.get(dispute.from),disputedTo=assetIds.get(dispute.to);
-    if(disputedFrom&&disputedTo){
+    if(fixture.tool==='dbt'&&disputedFrom&&disputedTo){
       const relationship=await client.query<{relationship_id:string}>(
         `INSERT INTO graph.relationships(tenant_id,family,relationship_type,from_asset_id,to_asset_id,granularity)
          VALUES($1,'data_flow','MAPS_TO',$2,$3,'field') ON CONFLICT(tenant_id,family,relationship_type,from_asset_id,to_asset_id,granularity) DO UPDATE SET relationship_type=EXCLUDED.relationship_type RETURNING relationship_id`,[input.tenantId,disputedFrom,disputedTo]);
-      const evidenceIds=[];
-      for(const label of dispute.evidence){const item=await client.query<{evidence_id:string}>(
-        'INSERT INTO graph.evidence(tenant_id,evidence_type,safe_metadata) VALUES($1,\'manifest\',$2::jsonb) RETURNING evidence_id',[input.tenantId,JSON.stringify({fixture_key:input.fixtureKey,source:label})]);evidenceIds.push(item.rows[0]!.evidence_id);}
-      const assertion=await client.query<{assertion_id:string}>(`INSERT INTO graph.assertions(tenant_id,relationship_id,evidence_method,review_status,evidence_ids,confidence_score,explanation,collector_version)
-        VALUES($1,$2,'inferred','disputed',$3::uuid[],0.62,'Conflicting synthetic mapping evidence','phase3-golden-v1') RETURNING assertion_id`,[input.tenantId,relationship.rows[0]!.relationship_id,evidenceIds]);
-      assertionFor.set(`${dispute.from}\0${dispute.to}`,assertion.rows[0]!.assertion_id);
+      const evidenceIds:string[]=[];
+      for(const source of dispute.evidence)evidenceIds.push(await ensureGraphEvidence(client,{tenantId:input.tenantId,evidenceType:'manifest',safeMetadata:{fixture_key:input.fixtureKey,source}}));
+      let assertionId='';
+      for(const evidenceId of evidenceIds)assertionId=await ensureGraphAssertion(client,{tenantId:input.tenantId,relationshipId:relationship.rows[0]!.relationship_id,evidenceMethod:'inferred',evidenceId,confidence:0.62,explanation:'Conflicting synthetic mapping evidence',reviewStatus:'disputed'});
+      assertionFor.set(`${dispute.from}\0${dispute.to}`,assertionId);
     }
     let gapCount=0;
     const gapIds=new Map<string,string>();
     for(const gap of corpus.gaps){
       const ids=gap.between.map((name)=>assetIds.get(name)).filter((id):id is string=>Boolean(id));
-      if(ids.length<1)continue;
-      const inserted=await client.query<{gap_id:string}>('INSERT INTO graph.gaps(tenant_id,between_asset_ids,reason) VALUES($1,$2::uuid[],$3) RETURNING gap_id',[input.tenantId,ids,gap.reason]);
-      gapIds.set(gap.between.join('\0'),inserted.rows[0]!.gap_id);gapCount++;
+      if(ids.length!==gap.between.length)continue;
+      const existing=await client.query<{gap_id:string}>('SELECT gap_id FROM graph.gaps WHERE tenant_id=$1 AND between_asset_ids=$2::uuid[] AND reason=$3 ORDER BY detected_at,gap_id LIMIT 1',[input.tenantId,ids,gap.reason]);
+      const inserted=existing.rows[0]??(await client.query<{gap_id:string}>('INSERT INTO graph.gaps(tenant_id,between_asset_ids,reason) VALUES($1,$2::uuid[],$3) RETURNING gap_id',[input.tenantId,ids,gap.reason])).rows[0]!;
+      gapIds.set(gap.between.join('\0'),inserted.gap_id);gapCount++;
     }
     for(const asset of corpus.assets.filter((candidate)=>candidate.kind==='field'&&/\.(customer_id|customer_key)$/.test(candidate.name))){
       const fieldName=asset.name.split('.').at(-1)!;
@@ -196,15 +241,19 @@ export async function importGoldenMetadata(pool: Pool, input: ImportGoldenMetada
       if(assetId)await client.query(`INSERT INTO graph.id_fields(tenant_id,asset_id,field_name,entity_hint,format_pattern,detection,confidence)
         VALUES($1,$2,$3,'customer','opaque_customer_key','inferred',0.900) ON CONFLICT(tenant_id,asset_id,field_name) DO UPDATE SET active=true`,[input.tenantId,assetId,fieldName]);
     }
-    const idPathNames=['SyntheticSQL.Customer.customer_id','SyntheticSnowflake.DIM_CUSTOMER.customer_key','dbt.customer_mart.customer_key'];
-    const idPathId=randomUUID();
-    const missingGap=corpus.gaps.find((gap)=>gap.between.includes(idPathNames.at(-1)!));
+    const fieldAssetIds=idPathAssetNames.map((name)=>assetIds.get(name));
+    const missingGap=corpus.gaps.find((gap)=>gap.between.includes(idPathAssetNames.at(-1)!));
     const missingGapId=missingGap?gapIds.get(missingGap.between.join('\0'))??null:null;
-    for(const [index,name] of idPathNames.entries()){
-      const assetId=assetIds.get(name);if(!assetId)continue;
-      const assertionId=index<idPathNames.length-1?assertionFor.get(`${name}\0${idPathNames[index+1]}`):assertionFor.get(`${idPathNames[index-1]}\0${name}`);
-      await client.query(`INSERT INTO graph.id_path_steps(tenant_id,path_id,sequence,asset_id,assertion_id,change_type,confidence,gap_id)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,[input.tenantId,idPathId,index+1,assetId,assertionId??null,index===1?'renamed':'none',index===0?0.94:0.62,index===idPathNames.length-1?missingGapId:null]);
+    if(fieldAssetIds.every((assetId):assetId is string=>Boolean(assetId))){
+      const existingPath=await client.query<{path_id:string}>('SELECT path_id FROM graph.id_path_steps WHERE tenant_id=$1 AND asset_id=ANY($2::uuid[]) ORDER BY sequence LIMIT 1',[input.tenantId,fieldAssetIds]);
+      const idPathId=existingPath.rows[0]?.path_id??randomUUID();
+      for(const [index,name] of idPathAssetNames.entries()){
+        const assetId=fieldAssetIds[index]!;
+        const assertionId=index<idPathAssetNames.length-1?assertionFor.get(`${name}\0${idPathAssetNames[index+1]}`):assertionFor.get(`${idPathAssetNames[index-1]}\0${name}`);
+        await client.query(`INSERT INTO graph.id_path_steps(tenant_id,path_id,sequence,asset_id,assertion_id,change_type,confidence,gap_id)
+          VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(tenant_id,path_id,sequence) DO UPDATE SET asset_id=EXCLUDED.asset_id,assertion_id=EXCLUDED.assertion_id,change_type=EXCLUDED.change_type,confidence=EXCLUDED.confidence,gap_id=EXCLUDED.gap_id`,
+          [input.tenantId,idPathId,index+1,assetId,assertionId??null,index===1?'renamed':'none',index===0?0.94:0.62,index===idPathAssetNames.length-1?missingGapId:null]);
+      }
     }
     const impactedAssetId=assetIds.get(corpus.reportImpact.changedAsset);
     const reportAssetId=assetIds.get(corpus.reportImpact.report);
@@ -213,14 +262,17 @@ export async function importGoldenMetadata(pool: Pool, input: ImportGoldenMetada
       await client.query(`INSERT INTO core.notifications(tenant_id,user_id,notification_type,safe_summary,report_asset_id)
         VALUES($1,$2,'report_impact',$3::jsonb,$4) ON CONFLICT(tenant_id,user_id,report_asset_id,notification_type) WHERE notification_type='report_impact' DO NOTHING`,
         [input.tenantId,input.principalId,JSON.stringify({report_name:corpus.reportImpact.report,changed_asset:corpus.reportImpact.changedAsset,reason_code:'synthetic_lineage_change'}),reportAssetId]);
-      await writeGraphEvent(client,{event_type:'report_impacted',asset_id:impactedAssetId,report_asset_id:reportAssetId,safe_payload:{report_count:1,reason_code:'synthetic_lineage_change'}});
+      const existingImpact=await client.query<{event_id:string}>(
+        "SELECT event_id FROM graph.events WHERE tenant_id=$1 AND event_type='report_impacted' AND asset_id=$2 AND report_asset_id=$3 LIMIT 1",
+        [input.tenantId,impactedAssetId,reportAssetId]);
+      if(!existingImpact.rowCount)await writeGraphEvent(client,{event_type:'report_impacted',asset_id:impactedAssetId,report_asset_id:reportAssetId,safe_payload:{report_count:1,reason_code:'synthetic_lineage_change'}});
     }
     const event:GraphEvent={event_type:'metadata_imported',safe_payload:{fixture_key:input.fixtureKey,asset_count:assetIds.size,tool:fixture.tool}};
     await writeGraphEvent(client,event);
     const cursor=await client.query<{event_cursor:string}>("SELECT coalesce(max(event_id),0)::text event_cursor FROM graph.events WHERE tenant_id=$1",[input.tenantId]);
     const count=await client.query<{asset_count:number}>("SELECT count(*)::int asset_count FROM graph.assets WHERE tenant_id=$1",[input.tenantId]);
     await client.query('INSERT INTO graph.snapshots(tenant_id,event_cursor,asset_count) VALUES($1,$2,$3)',[input.tenantId,cursor.rows[0]!.event_cursor,count.rows[0]!.asset_count]);
-    return {assets:assetIds.size,flows:flowCount,reports:reportLinks.length,gaps:gapCount};
+    return {assets:fixture.assets.length,flows:flowCount,reports:fixture.reports.length,gaps:gapCount};
   });
 }
 

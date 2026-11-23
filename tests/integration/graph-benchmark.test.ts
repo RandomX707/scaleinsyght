@@ -52,6 +52,11 @@ describe('phase 3 graph traversal benchmark',()=>{
         INSERT INTO graph.relationships(tenant_id,family,relationship_type,from_asset_id,to_asset_id,granularity)
         SELECT $1,'data_flow','MAPS_TO',parent.asset_id,child.asset_id,'dataset' FROM shortcuts s
         JOIN nodes child ON child.n=s.child_n JOIN nodes parent ON parent.n=s.parent_n`,[tenantId]);
+      const evidence=await client.query<{evidence_id:string}>(
+        "INSERT INTO graph.evidence(tenant_id,evidence_type,safe_metadata) VALUES($1,'manifest','{\"fixture\":\"synthetic_graph_benchmark\"}') RETURNING evidence_id",[tenantId]);
+      await client.query(`INSERT INTO graph.assertions(tenant_id,relationship_id,evidence_method,evidence_ids,confidence_score,collector_version)
+        SELECT $1,relationship_id,'declared',ARRAY[$2::uuid],0.950,'phase3-benchmark-v1'
+        FROM graph.relationships WHERE tenant_id=$1 AND family='data_flow'`,[tenantId,evidence.rows[0]!.evidence_id]);
     });
     await migrate.query('ANALYZE graph.assets');
     await migrate.query('ANALYZE graph.relationships');
@@ -78,19 +83,17 @@ describe('phase 3 graph traversal benchmark',()=>{
     expect(rls.rows[0]).toEqual({role:'si_app',tenant:tenantId});
     const explain=await withTenant(app,tenantId,async(client)=>client.query<{ 'QUERY PLAN':string }>(
       `EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT TEXT)
-       WITH RECURSIVE walk(asset_id,depth,visited,relationship_id) AS (
-         SELECT $1::uuid,0,ARRAY[$1::uuid],NULL::uuid
-         UNION ALL
-         SELECT next.asset_id,w.depth+1,w.visited||next.asset_id,next.relationship_id
-         FROM walk w CROSS JOIN LATERAL (
-           SELECT r.to_asset_id AS asset_id,r.relationship_id FROM graph.relationships r
-           WHERE r.tenant_id=$2 AND r.family='data_flow' AND r.from_asset_id=w.asset_id
-           UNION ALL SELECT r.from_asset_id,r.relationship_id FROM graph.relationships r
-           WHERE r.tenant_id=$2 AND r.family='data_flow' AND r.to_asset_id=w.asset_id
-         ) next WHERE w.depth<4 AND NOT(next.asset_id=ANY(w.visited))
-       ) SELECT DISTINCT r.from_asset_id,r.to_asset_id,r.relationship_id,r.granularity
-         FROM walk w JOIN graph.relationships r ON r.tenant_id=$2 AND r.relationship_id=w.relationship_id
-         WHERE w.relationship_id IS NOT NULL`,[starts.rows[0]!.asset_id,tenantId]));
+       SELECT r.from_asset_id,r.to_asset_id,r.relationship_id,r.granularity FROM graph.relationships r
+       WHERE $3 IN ('downstream','both') AND r.tenant_id=$1 AND r.family='data_flow' AND r.from_asset_id=ANY($2::uuid[])
+         AND EXISTS(SELECT 1 FROM graph.assertions a WHERE a.tenant_id=r.tenant_id AND a.relationship_id=r.relationship_id
+           AND ($4::timestamptz IS NULL OR (a.captured_at<=$4 AND (a.valid_from IS NULL OR a.valid_from<=$4) AND (a.valid_to IS NULL OR a.valid_to>=$4)))
+           AND ($5::text[] IS NULL OR a.evidence_method=ANY($5::text[])))
+       UNION
+       SELECT r.from_asset_id,r.to_asset_id,r.relationship_id,r.granularity FROM graph.relationships r
+       WHERE $3 IN ('upstream','both') AND r.tenant_id=$1 AND r.family='data_flow' AND r.to_asset_id=ANY($2::uuid[])
+         AND EXISTS(SELECT 1 FROM graph.assertions a WHERE a.tenant_id=r.tenant_id AND a.relationship_id=r.relationship_id
+           AND ($4::timestamptz IS NULL OR (a.captured_at<=$4 AND (a.valid_from IS NULL OR a.valid_from<=$4) AND (a.valid_to IS NULL OR a.valid_to>=$4)))
+           AND ($5::text[] IS NULL OR a.evidence_method=ANY($5::text[])))`,[tenantId,[starts.rows[0]!.asset_id],'both',null,null]));
     console.info(`EXPLAIN ANALYZE on si_app with RLS enabled:\n${explain.rows.map(row=>row['QUERY PLAN']).join('\n')}`);
     const samples:number[]=[];
     const activeSamples:Array<{wait_event_type:string|null;wait_event:string|null;query:string}> = [];
@@ -104,6 +107,7 @@ describe('phase 3 graph traversal benchmark',()=>{
       try{
         const result=await queryLineage(app,{tenantId,assetId:start.asset_id,direction:'both',maxDepth:4});
         expect(result.asset_ids).toContain(start.asset_id);
+        expect(result.edges.length).toBeGreaterThan(0);
       }finally{
         monitoring=false;
         await monitorTask;

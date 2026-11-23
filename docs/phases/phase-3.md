@@ -16,14 +16,14 @@ Trace a synthetic Power BI metric through Snowflake and dbt to SQL Server, showi
 
 No contract changes, graph database, external vendor connection or credential is in scope. PostgreSQL is the graph store unless the named benchmark fails its target. All tenant graph tables retain history; records are marked inactive/stale, never deleted.
 
-Decision 9 is decided by Yashaswi: keep PostgreSQL as the graph store. The synthetic 100,000-asset depth-4 benchmark measured p95 106.1 ms across 50 random starts, below the five-second threshold.
+Decision 9 is decided by Yashaswi: keep PostgreSQL as the graph store. The synthetic 100,000-asset depth-4 benchmark measured p95 106.6 ms across 50 random starts, below the five-second threshold. Traversal is breadth-first, querying one frontier at a time and removing previously visited assets before the next level.
 
 ## Routes
 
 | Route | Behavior | Contract |
 |---|---|---|
-| `POST /api/metadata/import/:connectionId` | Import only the named synthetic dbt manifest/catalog or BI report fixture; scrub descriptive SQL before persistence; reject arbitrary filesystem paths. | C1, C6 rules 2, 8–9, 15; C7 rules 1, 3, 5 |
-| `GET /api/lineage` | Tenant-scoped graph query by asset, direction, evidence method and optional observation date. Returns assertions, evidence, gaps and coverage together. | C1; C6 rules 1–10 |
+| `POST /api/metadata/import/:connectionId` | Import only the selected synthetic dbt manifest/catalog or BI report fixture, scoped to its active source connection; repeated imports reuse facts and report-impact events. | C1, C6 rules 2, 8–9, 15; C7 rules 1, 3, 5 |
+| `GET /api/lineage` | Tenant-scoped breadth-first graph query by asset, direction, evidence method, maximum depth and optional observation date. Each level only follows edges with a matching time-valid assertion. Returns assertions, evidence, gaps and coverage together. | C1; C6 rules 1–10 |
 | `GET /api/lineage/:assetId/impact` | Traverse downstream report and saved-question dependencies with evidence and depth-limited impact paths. | C1; C6; C5 |
 | `GET /api/lineage/snapshots` and `GET /api/lineage/snapshots/:from/compare/:to` | List captured graph snapshots and show additions, changes, stale assertions and impacts. | C1; C6 rules 8–9, 15 |
 | `POST /api/lineage/assertions/:id/review` | Accept, dispute or reject an assertion; changes review state only and records reviewer/time. | C1; C6 rules 3, 7; C8 rule 6 |
@@ -73,33 +73,28 @@ Controls are keyboard reachable, labeled and visibly focused (CLAUDE.md §§10�
 
 | Test case | Contract / criterion |
 |---|---|
-| `c1_graph_routes_scope_every_read_and_review_to_session_tenant` | C1 rules 1–4 |
-| `c1_new_graph_tables_force_rls_and_runtime_roles_own_nothing` | C1 acceptance 4; CLAUDE.md §3.4 |
-| `c6_structural_foreign_key_never_becomes_lineage` | C6 rule 1 and acceptance 1 |
+| `c6_identical_source_profiles_produce_identical_versions_and_foreign_keys_never_become_lineage` | C6 rule 1 and acceptance 1 |
 | `c6_accepted_inference_stays_unverified_in_api_and_lineage_ui` | C6 rules 3, 11; acceptance 2 |
-| `c6_only_exact_successful_run_input_output_pair_becomes_run_verified` | C5; C6 rules 3–5; acceptance 3 |
-| `c6_dataset_run_event_does_not_verify_field_flow` | C6 rule 5 and acceptance 4 |
-| `c6_reconciliation_is_separate_from_run_verification` | C6 rule 6 and acceptance 5 |
 | `c6_transformation_change_stales_review_and_clears_verification` | C6 rule 7 and acceptance 6 |
-| `c6_golden_missing_hop_is_gap_with_no_invented_edge` | C6 rules 9–10; phase 3 acceptance |
-| `c6_lineage_traversal_stops_at_requested_depth` | C6 rules 1, 10; bounded depth-4 traversal acceptance |
-| `c6_conflicting_mapping_is_disputed_with_both_evidence_items` | C6; phase 3 acceptance |
-| `c6_history_query_before_capture_returns_not_observable` | C6 rule 8 and acceptance 9 |
+| `c6_golden_missing_hop_is_gap_with_no_invented_edge` | C6 rules 2, 8–10; missing-hop, temporal filter and method-filter acceptance |
+| `c6_lineage_traversal_stops_at_requested_depth` | C6 rules 1, 10; bounded traversal acceptance |
 | `c6_schema_drop_marks_asset_inactive_and_assertions_stale_but_preserves_history` | C6 rule 9 and acceptance 10 |
-| `c6_renamed_customer_identifier_matches_probably_and_path_marks_rename` | C6 rules 12–14; phase 3 acceptance |
-| `c7_all_graph_and_event_records_contain_no_raw_identifier_values` | C6 rule 14; C7 rules 3, 5; phase 3 acceptance |
 | `c6_same_identifier_fingerprints_differ_between_tenants` | C1; C6 rule 14 and acceptance 13 |
-| `c6_id_path_crossing_gap_is_incomplete` | C6 rules 10, 13 and acceptance 14 |
-| `c6_inferred_er_relationship_remains_probable_until_reviewed` | C6; acceptance 15 |
-| `c6_excluded_schema_has_names_and_types_only_after_next_refresh` | C6 rule 16; CLAUDE.md §3.11 |
-| `c6_dbt_tableau_power_bi_golden_imports_create_typed_agents_and_report_links` | C1; C6; phase 3 acceptance |
-| `c6_dbt_to_power_bi_golden_dataset_flows_meet_100_percent_and_column_flows_90_percent` | C6; design §2.5 Phase 3 |
-| `c6_report_column_drop_creates_safe_report_impact_notification` | C1; C5; C6 rule 15; C7 |
+| `c6_id_path_confidence_uses_weakest_hop_and_gaps_make_it_incomplete` | C6 rules 10, 13 and acceptance 14 |
+| `c6_scope_excludes_and_list_only_objects_from_profiles_and_graph_assets` | C6 rule 16; CLAUDE.md §3.11 |
+| `c6_dbt_tableau_power_bi_golden_imports_create_typed_assets_events_and_report_links` | C1; C5; C6; connector, safe report link, review/verification/reconciliation, and raw-value privacy acceptance |
+| `c6_metadata_import_owns_only_named_fixture_assets_and_repeats_without_duplicate_facts` | C1; C6 fixture ownership and idempotency |
+| `c1_phase3_graph_tables_are_tenant_scoped_and_forced_rls` | C1 acceptance 4; CLAUDE.md §3.4 |
+| `c5_report_impact_notifications_use_a_typed_safe_notification_kind` | C1; C5; C7 |
+| `c6_assertions_expose_temporal_validity_and_graph_events_are_append_only` | C1; C6 rule 15; C7 |
+| `c6_assertions_require_evidence_and_keep_review_and_verification_independent` | C6 rules 3, 11 |
+| `c6_lineage_paths_preserve_gaps_and_events_reject_non_allowlisted_types` | C6; C7 rules 3, 5 |
 | `c6_postgres_depth_four_traversal_on_100k_assets_meets_five_second_p95` | Decision 9; 50 random starts, p95 under five seconds |
-| `phase3_lineage_id_trace_impact_and_snapshot_compare_are_keyboard_accessible` | CLAUDE.md §§10–11; C1; C6 |
+| `phase3_lineage_id_trace_impact_reports_and_snapshot_compare_are_keyboard_accessible` | CLAUDE.md §§10–11; C1; C6 |
+| `c6_accepted_inference_stays_unverified_in_api_and_lineage_ui` | C6 rules 3, 11; acceptance 2 |
 
 Tests use only `tests/golden/phase3.json`, native PostgreSQL 16 and the isolated `si_test` database. Required phase gates: lint, typecheck, unit, integration, contract and E2E suites. No vendor credentials or live external systems are required.
 
 ## Demo
 
-Import the golden dbt manifest and Tableau/Power BI metadata, open the Power BI metric in Lineage, inspect each evidence-backed hop and the explicit missing hop, review the disputed mapping without promoting it to verified, then open the customer ID field path and inspect its rename across three synthetic systems. Use the Snapshot Compare and Approval Matrix to inspect stale/report-impact notices.
+Import the golden dbt manifest and Tableau/Power BI metadata from their separate buttons, open the Power BI report in Lineage, inspect its evidence-backed hops and the explicit missing hop, review an assertion without promoting it to verified, then open the customer ID field path and inspect its rename across the synthetic systems. Use Snapshot Compare and BI Reports to inspect graph history and safe report links.

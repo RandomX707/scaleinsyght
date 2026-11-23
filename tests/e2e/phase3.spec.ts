@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test';
 
+test.describe.configure({ mode: 'serial' });
+
 test('phase3_lineage_id_trace_impact_reports_and_snapshot_compare_are_keyboard_accessible', async ({ page }) => {
   await page.goto('/login');
   await page.getByLabel('Email').fill('analyst@north.example');
@@ -7,6 +9,8 @@ test('phase3_lineage_id_trace_impact_reports_and_snapshot_compare_are_keyboard_a
   await page.getByRole('button', { name: 'Sign in' }).click();
   await page.getByRole('link', { name: /Lineage/ }).click();
   await expect(page.getByRole('heading', { name: 'Lineage workspace' })).toBeVisible();
+  await page.getByRole('button', { name: 'Import synthetic Power BI reports' }).click();
+  await expect(page.getByRole('status')).toContainText('Synthetic lineage imported');
   await page.getByRole('button', { name: 'Import synthetic dbt manifest' }).click();
   await expect(page.getByRole('status')).toContainText('Synthetic lineage imported');
   await page.getByLabel('Graph asset').selectOption({ label: 'dbt.customer_mart · dataset' });
@@ -32,9 +36,12 @@ test('c6_accepted_inference_stays_unverified_in_api_and_lineage_ui',async({page}
   await page.getByLabel('Password').fill('golden-local-only');
   await page.getByRole('button',{name:'Sign in'}).click();
   await page.getByRole('link',{name:/Lineage/}).click();
+  await page.getByRole('button',{name:'Import synthetic Power BI reports'}).click();
+  await expect(page.getByRole('status')).toContainText('Synthetic lineage imported');
   await page.getByRole('button',{name:'Import synthetic dbt manifest'}).click();
   await expect(page.getByRole('status')).toContainText('Synthetic lineage imported');
-  await page.getByLabel('Graph asset').selectOption({label:'dbt.customer_mart · dataset'});
+  const latestDbtAsset=page.getByLabel('Graph asset').locator('option').filter({hasText:'dbt.customer_mart · dataset'}).last();
+  await page.getByLabel('Graph asset').selectOption((await latestDbtAsset.getAttribute('value'))!);
   const accept=page.getByRole('button',{name:'Accept assertion'}).first();
   await expect(accept).toBeVisible();
   await accept.click();

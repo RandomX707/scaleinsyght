@@ -30,7 +30,9 @@ describe('c6 lineage and identifier schema contracts', () => {
       const b = await client.query<{asset_id:string}>("INSERT INTO graph.assets(tenant_id,source_id,asset_type,qualified_name,fingerprint) VALUES($1,$2,'dataset','synthetic.target',decode(repeat('02',32),'hex')) RETURNING asset_id",[tenantId,connection.connectionId]);
       const c = await client.query<{asset_id:string}>("INSERT INTO graph.assets(tenant_id,source_id,asset_type,qualified_name,fingerprint) VALUES($1,$2,'dataset','synthetic.origin',decode(repeat('03',32),'hex')) RETURNING asset_id",[tenantId,connection.connectionId]);
       const edge = await client.query<{relationship_id:string}>("INSERT INTO graph.relationships(tenant_id,family,relationship_type,from_asset_id,to_asset_id,granularity) VALUES($1,'data_flow','DERIVES_FROM',$2,$3,'dataset') RETURNING relationship_id",[tenantId,a.rows[0]!.asset_id,b.rows[0]!.asset_id]);
-      await client.query("INSERT INTO graph.relationships(tenant_id,family,relationship_type,from_asset_id,to_asset_id,granularity) VALUES($1,'data_flow','DERIVES_FROM',$2,$3,'dataset')",[tenantId,c.rows[0]!.asset_id,a.rows[0]!.asset_id]);
+      const priorEdge=await client.query<{relationship_id:string}>("INSERT INTO graph.relationships(tenant_id,family,relationship_type,from_asset_id,to_asset_id,granularity) VALUES($1,'data_flow','DERIVES_FROM',$2,$3,'dataset') RETURNING relationship_id",[tenantId,c.rows[0]!.asset_id,a.rows[0]!.asset_id]);
+      const priorEvidence=await client.query<{evidence_id:string}>("INSERT INTO graph.evidence(tenant_id,evidence_type,safe_metadata) VALUES($1,'sql_parse','{}') RETURNING evidence_id",[tenantId]);
+      await client.query("INSERT INTO graph.assertions(tenant_id,relationship_id,evidence_method,evidence_ids,collector_version) VALUES($1,$2,'parsed',ARRAY[$3::uuid],'phase3-fixture')",[tenantId,priorEdge.rows[0]!.relationship_id,priorEvidence.rows[0]!.evidence_id]);
       const evidence = await client.query<{evidence_id:string}>("INSERT INTO graph.evidence(tenant_id,evidence_type,safe_metadata) VALUES($1,'manifest','{}') RETURNING evidence_id",[tenantId]);
       await client.query("INSERT INTO graph.assertions(tenant_id,relationship_id,evidence_method,evidence_ids,collector_version) VALUES($1,$2,'declared',ARRAY[$3::uuid],'phase3-fixture')",[tenantId,edge.rows[0]!.relationship_id,evidence.rows[0]!.evidence_id]);
       await client.query("INSERT INTO graph.gaps(tenant_id,between_asset_ids,reason) VALUES($1,ARRAY[$2::uuid,$3::uuid],'synthetic manifest omits field mapping')",[tenantId,b.rows[0]!.asset_id,crypto.randomUUID()]);
@@ -49,6 +51,10 @@ describe('c6 lineage and identifier schema contracts', () => {
     const beforeCapture=await queryLineage(appPool,{tenantId,assetId:ids.source,direction:'downstream',asOf:new Date('2000-01-01T00:00:00.000Z')});
     expect(beforeCapture.observable).toBe(false);
     expect(beforeCapture.assertions).toHaveLength(0);
+    expect(beforeCapture.edges).toHaveLength(0);
+    expect(beforeCapture.asset_ids).toEqual([ids.source]);
+    const declaredOnly=await queryLineage(appPool,{tenantId,assetId:ids.target,direction:'both',methods:['declared']});
+    expect(declaredOnly.asset_ids).not.toContain(ids.origin);
   });
 
   it('c6_lineage_traversal_stops_at_requested_depth',async()=>{
@@ -64,7 +70,9 @@ describe('c6 lineage and identifier schema contracts', () => {
         const result=await client.query<{asset_id:string}>("INSERT INTO graph.assets(tenant_id,source_id,asset_type,qualified_name,fingerprint) VALUES($1,$2,'dataset',$3,decode(repeat('01',32),'hex')) RETURNING asset_id",[tenantId,connection.connectionId,name]);
         assets.push(result.rows[0]!.asset_id);
       }
-      await client.query("INSERT INTO graph.relationships(tenant_id,family,relationship_type,from_asset_id,to_asset_id,granularity) VALUES($1,'data_flow','DERIVES_FROM',$2,$3,'dataset'),($1,'data_flow','DERIVES_FROM',$3,$4,'dataset')",[tenantId,assets[0],assets[1],assets[2]]);
+      const relationships=await client.query<{relationship_id:string}>("INSERT INTO graph.relationships(tenant_id,family,relationship_type,from_asset_id,to_asset_id,granularity) VALUES($1,'data_flow','DERIVES_FROM',$2,$3,'dataset'),($1,'data_flow','DERIVES_FROM',$3,$4,'dataset') RETURNING relationship_id",[tenantId,assets[0],assets[1],assets[2]]);
+      const evidence=await client.query<{evidence_id:string}>("INSERT INTO graph.evidence(tenant_id,evidence_type,safe_metadata) VALUES($1,'manifest','{}') RETURNING evidence_id",[tenantId]);
+      for(const relationship of relationships.rows)await client.query("INSERT INTO graph.assertions(tenant_id,relationship_id,evidence_method,evidence_ids,collector_version) VALUES($1,$2,'declared',ARRAY[$3::uuid],'phase3-depth-test')",[tenantId,relationship.relationship_id,evidence.rows[0]!.evidence_id]);
       return assets;
     });
     const result=await queryLineage(appPool,{tenantId,assetId:ids[0]!,direction:'downstream',maxDepth:1});

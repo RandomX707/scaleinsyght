@@ -9,6 +9,10 @@ describe('phase 3 graph semantics',()=>{
   expect(GraphAssertionSchema.safeParse({...assertion,evidence_ids:[]}).success).toBe(false);
   const accepted=reviewAssertion(assertion,'accepted');
   expect(accepted.review_status).toBe('accepted');expect(accepted.verification).toBe('unverified');
+ });
+
+ it('c6_transformation_change_stales_review_and_clears_verification',()=>{
+  const accepted=reviewAssertion(assertion,'accepted');
   const stale=invalidateAssertionForTransformationChange({...accepted,verification:'run_verified'});
   expect(stale.review_status).toBe('stale');expect(stale.verification).toBe('unverified');
  });
@@ -18,7 +22,7 @@ describe('phase 3 graph semantics',()=>{
   expect(path.confidence).toBe(0.71);expect(path.complete).toBe(false);expect(path.steps[1]?.change).toBe('renamed');expect(path.gapIds).toEqual(['gap-1']);
  });
 
- it('c6_keyed_identifier_fingerprints_are_stable_within_tenant_and_distinct_across_tenants',()=>{
+ it('c6_same_identifier_fingerprints_differ_between_tenants',()=>{
   const masterKey=Buffer.alloc(32,7);const value='synthetic-id-never-persisted';
   const north=fingerprintIdentifier(masterKey,'tenant-north',value);const south=fingerprintIdentifier(masterKey,'tenant-south',value);
   expect(fingerprintIdentifier(masterKey,'tenant-north',value)).toBe(north);expect(south).not.toBe(north);expect(north).toMatch(/^[a-f0-9]{64}$/);

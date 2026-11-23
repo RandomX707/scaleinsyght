@@ -101,6 +101,37 @@ describe('contract 6 profiler persistence and graph', () => {
     expect((await getNotifications(app, tenantId, userId)).find((item) => item.notificationId === notification.notificationId)?.readAt).not.toBeNull();
   });
 
+  it('c6_schema_drop_marks_asset_inactive_and_assertions_stale_but_preserves_history',async()=>{
+    const tenantId=`profile-schema-drop-${crypto.randomUUID()}`;
+    const userId=await createTenant(tenantId);
+    const connectionId=await connectionFor(tenantId,userId);
+    const connector=createGoldenConnector('golden-postgres');
+    await runGoldenProfile(app,{tenantId,connectionId,connector,jobType:'discovery'});
+    const droppedName='X_Golden.Table_002';
+    await withTenant(migrate,tenantId,async(client)=>{
+      const assets=await client.query<{asset_id:string;qualified_name:string}>("SELECT asset_id,qualified_name FROM graph.assets WHERE tenant_id=$1 AND asset_type='dataset' AND qualified_name=ANY($2::text[])",[tenantId,['X_Golden.Table_001',droppedName]]);
+      const from=assets.rows.find((asset)=>asset.qualified_name==='X_Golden.Table_001')!.asset_id;
+      const to=assets.rows.find((asset)=>asset.qualified_name===droppedName)!.asset_id;
+      const relationship=await client.query<{relationship_id:string}>("INSERT INTO graph.relationships(tenant_id,family,relationship_type,from_asset_id,to_asset_id,granularity) VALUES($1,'structural','REFERENCES',$2,$3,'dataset') RETURNING relationship_id",[tenantId,from,to]);
+      const evidence=await client.query<{evidence_id:string}>("INSERT INTO graph.evidence(tenant_id,evidence_type,safe_metadata) VALUES($1,'declared_foreign_key','{\"source\":\"synthetic\"}') RETURNING evidence_id",[tenantId]);
+      await client.query("INSERT INTO graph.assertions(tenant_id,relationship_id,evidence_method,evidence_ids,collector_version) VALUES($1,$2,'declared',ARRAY[$3::uuid],'phase3-schema-drop-test')",[tenantId,relationship.rows[0]!.relationship_id,evidence.rows[0]!.evidence_id]);
+    });
+    const droppedConnector=Object.create(connector) as typeof connector;
+    droppedConnector.discover=async(input:Parameters<typeof connector.discover>[0])=>{
+      const result=await connector.discover(input);
+      const present=(item:{qualifiedName:string})=>item.qualifiedName!==droppedName;
+      return {...result,objects:result.objects.filter(present),unchangedObjects:result.unchangedObjects.filter(present),coverage:{...result.coverage,listed:result.coverage.listed-1,accessible:result.coverage.accessible-1}};
+    };
+    await runGoldenProfile(app,{tenantId,connectionId,connector:droppedConnector,jobType:'discovery'});
+    const history=await withTenant(migrate,tenantId,async(client)=>client.query<{active:boolean;versions:number;stale_assertions:number}> (
+      `SELECT a.active,(SELECT count(*)::int FROM graph.asset_versions v WHERE v.tenant_id=a.tenant_id AND v.asset_id=a.asset_id) versions,
+       (SELECT count(*)::int FROM graph.assertions assertion JOIN graph.relationships r USING(tenant_id,relationship_id)
+         WHERE assertion.tenant_id=a.tenant_id AND assertion.review_status='stale' AND a.asset_id IN (r.from_asset_id,r.to_asset_id)) stale_assertions
+       FROM graph.assets a WHERE a.tenant_id=$1 AND a.qualified_name=$2 AND a.asset_type='dataset'`,[tenantId,droppedName]));
+    expect(history.rows[0]).toMatchObject({active:false,versions:1});
+    expect(history.rows[0]!.stale_assertions).toBeGreaterThan(0);
+  });
+
   it('c6_scope_excludes_and_list_only_objects_from_profiles_and_graph_assets', async () => {
     const tenantId = `profile-scope-${crypto.randomUUID()}`;
     const userId = await createTenant(tenantId);

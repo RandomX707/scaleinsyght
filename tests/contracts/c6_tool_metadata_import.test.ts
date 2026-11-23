@@ -4,6 +4,7 @@ import { Pool } from 'pg';
 import { withTenant } from '@scaleinsyght/db';
 import { buildServer, hashPassword } from '@scaleinsyght/api/server';
 import { fingerprintIdentifier } from '@scaleinsyght/graph';
+import { activateConnection } from '@scaleinsyght/registry';
 
 config({ path: '.env' });
 function testUrl(key: 'DATABASE_URL'|'DATABASE_URL_MIGRATE'): string {
@@ -21,6 +22,15 @@ describe('c6 synthetic metadata import',()=>{
       await client.query('INSERT INTO core.tenants(tenant_id,name) VALUES($1,$1)',[tenantId]);
       await client.query("INSERT INTO core.users(tenant_id,email,password_hash) VALUES($1,$2,$3)",[tenantId,`${tenantId}@synthetic.example`,hashPassword('synthetic-password')]);
     });
+    const principal=await withTenant(migrate,tenantId,async(client)=>(await client.query<{user_id:string}>('SELECT user_id FROM core.users WHERE tenant_id=$1',[tenantId])).rows[0]!.user_id);
+    const sqlConnection=await activateConnection(app,{tenantId,principalId:principal,connectorType:'sql_server',sourceRef:'golden-sqlserver'});
+    const snowflakeConnection=await activateConnection(app,{tenantId,principalId:principal,connectorType:'snowflake',sourceRef:'golden-snowflake'});
+    await withTenant(migrate,tenantId,async(client)=>{
+      for(const [connectionId,name] of [
+        [sqlConnection.connectionId,'SyntheticSQL.Customer'],[sqlConnection.connectionId,'SyntheticSQL.Customer.customer_id'],
+        [snowflakeConnection.connectionId,'SyntheticSnowflake.DIM_CUSTOMER'],[snowflakeConnection.connectionId,'SyntheticSnowflake.DIM_CUSTOMER.customer_key'],
+      ])await client.query("INSERT INTO graph.assets(tenant_id,source_id,asset_type,qualified_name,fingerprint) VALUES($1,$2,$3,$4,decode(md5($4),'hex'))",[tenantId,connectionId,name.split('.').length>2?'field':'dataset',name]);
+    });
     const server=await buildServer({pool:app,sessionSecret:'s'.repeat(64),goldenAccounts:[{tenantId,email:`${tenantId}@synthetic.example`}]});
     try{
       const login=await server.inject({method:'POST',url:'/api/auth/login',payload:{email:`${tenantId}@synthetic.example`,password:'synthetic-password'}});
@@ -33,6 +43,13 @@ describe('c6 synthetic metadata import',()=>{
       expect(imported.statusCode).toBe(200);
       expect((imported.json() as {assets:number}).assets).toBeGreaterThan(0);
       expect((await server.inject({method:'POST',url:`/api/metadata/import/${connectionId}`,headers:{cookie},payload:{fixtureKey:'dbt-manifest'}})).statusCode).toBe(200);
+      for(const [sourceId,fixtureKey] of [['golden-tableau','tableau-reports'],['golden-powerbi','power-bi-reports']] as const){
+        const otherDraft=await server.inject({method:'POST',url:'/api/metadata/connections',headers:{cookie},payload:{sourceId}});
+        expect(otherDraft.statusCode).toBe(201);
+        const otherConnection=(otherDraft.json() as {connectionId:string}).connectionId;
+        expect((await server.inject({method:'POST',url:`/api/metadata/connections/${otherConnection}/activate`,headers:{cookie}})).statusCode).toBe(200);
+        expect((await server.inject({method:'POST',url:`/api/metadata/import/${otherConnection}`,headers:{cookie},payload:{fixtureKey}})).statusCode).toBe(200);
+      }
       const notices=await server.inject({method:'GET',url:'/api/notifications',headers:{cookie}});
       expect((notices.json() as {notifications:Array<{type:string}>}).notifications.map((item)=>item.type)).toContain('report_impact');
       const reports=await server.inject({method:'GET',url:'/api/reports',headers:{cookie}});
@@ -121,7 +138,7 @@ describe('c6 synthetic metadata import',()=>{
        (SELECT count(*)::int FROM core.notifications WHERE tenant_id=$1 AND notification_type='report_impact') impacts,
        (SELECT count(*)::int FROM graph.id_path_steps WHERE tenant_id=$1) id_path_steps`,[tenantId]);
     });
-    expect(persisted.rows[0]).toMatchObject({datasets:expect.any(Number),reports:expect.any(Number),flows:expect.any(Number),assertions:expect.any(Number),events:2});
+    expect(persisted.rows[0]).toMatchObject({datasets:expect.any(Number),reports:expect.any(Number),flows:expect.any(Number),assertions:expect.any(Number),events:4});
     expect(persisted.rows[0]!.datasets).toBeGreaterThan(0);
     expect(persisted.rows[0]!.reports).toBeGreaterThan(0);
     expect(persisted.rows[0]!.id_fields).toBe(3);
