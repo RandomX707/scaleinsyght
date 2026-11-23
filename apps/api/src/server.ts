@@ -10,9 +10,12 @@ import { applyPersonalContext, createAnalyticPlan, startAnalyticRun, submitFeedb
 import { eventsAfter } from '@scaleinsyght/runner';
 import { AnalyticPlanSchema, hashPlan } from '@scaleinsyght/contracts';
 import { compareGraphSnapshots, getIdentifierPath, getImpactRadius, importGoldenMetadata, listGraphAssertions, listGraphAssets, listGraphSnapshots, listIdentifierFields, listReports, queryLineage, reconcileAssertion, reviewGraphAssertion, traceIdentifier, verifyAssertionFromRun } from '@scaleinsyght/graph';
+import { createGoldenHubAdapters, getGoldenHubFixtures, type FlowSpecDelivery, type SemanticsAdapter } from '@scaleinsyght/hub-adapters';
+import { ClaimSchema, EvidenceRefSchema } from '@scaleinsyght/contracts';
+import { authorise } from '@scaleinsyght/policy';
 
 export interface GoldenAccount { tenantId: string; email: string; }
-export interface ServerOptions { pool: Pool; sessionSecret: string; goldenAccounts: GoldenAccount[]; artifactStore?: EncryptedArtifactStore; }
+export interface ServerOptions { pool: Pool; sessionSecret: string; goldenAccounts: GoldenAccount[]; artifactStore?: EncryptedArtifactStore; hubAdapters?: { semantics: SemanticsAdapter; dataStudio: { product: 'data_studio'; version: number; connected: boolean; capabilities: readonly string[]; deliverFlowSpec(key: string, spec: FlowSpecDelivery): Promise<unknown>; lookupFlowSpec(key: string): Promise<unknown>; } }; }
 const sessionLifetimeMs = 8 * 60 * 60 * 1000;
 export function hashPassword(password: string, salt = randomBytes(16).toString('hex')): string {
   return `${salt}:${scryptSync(password,salt,64).toString('hex')}`;
@@ -28,8 +31,81 @@ function sign(value:string,secret:string):string{return createHmac('sha256',secr
 export async function buildServer(options:ServerOptions):Promise<FastifyInstance>{
   if(options.sessionSecret.length<32)throw new Error('SESSION_SECRET must contain at least 32 characters');
   const app=Fastify({logger:false,bodyLimit:25*1024*1024});
+  const hubAdapters=options.hubAdapters??createGoldenHubAdapters(getGoldenHubFixtures());
   app.addContentTypeParser('application/octet-stream',{parseAs:'buffer'},(_request,payload,done)=>done(null,payload));
   app.get('/api/health',async()=>({status:'ok'}));
+  app.get('/api/hub/adapters',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const adapters=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{product:string;connected:boolean;version:number;capabilities:string[];updated_at:Date}>(
+      `SELECT a.product,a.connected,a.current_version AS version,v.capabilities,a.updated_at FROM hub.adapters a JOIN hub.adapter_versions v ON v.tenant_id=a.tenant_id AND v.product=a.product AND v.version=a.current_version WHERE a.tenant_id=$1 ORDER BY a.product`,[current.tenantId]));
+    return reply.send({adapters:adapters.rows.map(({updated_at,...adapter})=>({...adapter,updatedAt:updated_at.toISOString()}))});
+  });
+  app.get('/api/semantics/metrics',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const result=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{metric_id:string;name:string;description:string;dimensions:string[];unit:string;certified:boolean;adapter_version:number}>(
+      `SELECT m.metric_id,m.name,m.description,m.dimensions,m.unit,m.certified,m.adapter_version FROM hub.certified_metrics m
+       JOIN hub.adapters a ON a.tenant_id=m.tenant_id AND a.product=m.adapter_product AND a.connected AND a.current_version=m.adapter_version
+       WHERE m.tenant_id=$1 ORDER BY m.name`,[current.tenantId]));
+    return reply.send({metrics:result.rows.map((metric)=>({metricId:metric.metric_id,name:metric.name,description:metric.description,dimensions:metric.dimensions,unit:metric.unit,certified:metric.certified,adapterVersion:metric.adapter_version}))});
+  });
+  app.post<{Params:{metricId:string}}>('/api/semantics/metrics/:metricId/query',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    if(!/^[a-z][a-z0-9_]{0,99}$/.test(request.params.metricId))return reply.code(400).send({error:'invalid_metric_id'});
+    const metric=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{metric_id:string;adapter_id:string;adapter_version:number;name:string;unit:string;source_asset:string;adapter_connected:boolean;adapter_current_version:number}>(
+      `SELECT m.metric_id,a.adapter_id,m.adapter_version,m.name,m.unit,m.source_asset,a.connected AS adapter_connected,a.current_version AS adapter_current_version
+       FROM hub.certified_metrics m JOIN hub.adapters a ON a.tenant_id=m.tenant_id AND a.product=m.adapter_product
+       WHERE m.tenant_id=$1 AND m.metric_id=$2 AND m.certified`,[current.tenantId,request.params.metricId]));
+    const selected=metric.rows[0];if(!selected)return reply.code(404).send({error:'certified_metric_not_found'});
+    if(!selected.adapter_connected||!hubAdapters.semantics.connected)return reply.code(503).send({error:'hub_adapter_disconnected'});
+    if(selected.adapter_current_version!==selected.adapter_version||selected.adapter_current_version!==hubAdapters.semantics.version)return reply.code(409).send({error:'semantic_adapter_version_changed'});
+    const decision=await authorise(options.pool,{principal:{tenant_id:current.tenantId,principal_id:current.userId,kind:'user',roles:[],groups:[],attributes:{}},capability_id:'semantics.metric.read',resources:[selected.metric_id],purpose:'certified_metric_query',environment:'synthetic_golden'});
+    if(decision.outcome!=='allow')return reply.code(403).send({error:'metric_not_authorized'});
+    let answerResult;
+    try{answerResult=await hubAdapters.semantics.queryCertifiedMetric(selected.metric_id);}
+    catch(error){if(error instanceof Error&&error.message==='hub_adapter_disconnected')return reply.code(503).send({error:error.message});if(error instanceof Error&&error.message==='unknown_certified_metric')return reply.code(404).send({error:'certified_metric_not_found'});throw error;}
+    const runId=randomUUID();const claimId=randomUUID();const evidenceId=randomUUID();
+    const evidence=EvidenceRefSchema.parse({evidence_id:evidenceId,kind:'api_call',source_id:selected.adapter_id,asset_ids:[],locator:`hub://semantics/metrics/${selected.metric_id}`,content_hash:answerResult.evidence.contentHash,captured_at:new Date().toISOString(),collector_version:`semantics-v${answerResult.adapterVersion}`,redacted_summary:`Certified synthetic metric ${selected.metric_id} returned by Semantics`});
+    const claim=ClaimSchema.parse({claim_id:claimId,kind:'metric',statement:`Certified metric ${answerResult.name}: ${answerResult.value} ${answerResult.unit}`,evidence_ids:[evidence.evidence_id]});
+    const answer={metric:answerResult.metricId,bySource:[{sourceId:selected.adapter_id,connectorType:'semantics',value:answerResult.value}],claims:[claim],evidence:[evidence],trust:{groupCount:1,sourceCount:1,joins:['group']},metricDefinition:{name:answerResult.name,unit:answerResult.unit,certified:answerResult.certified,adapter:'semantics',adapterVersion:answerResult.adapterVersion}};
+    try{
+      const committed=await withTenant(options.pool,current.tenantId,async(client)=>{
+        const currentMetric=await client.query<{connected:boolean;current_version:number;adapter_version:number;entitled:boolean;capability_enabled:boolean}>(
+          `SELECT a.connected,a.current_version,m.adapter_version,
+             EXISTS(SELECT 1 FROM core.entitlements e WHERE e.tenant_id=$1 AND e.principal_id=$2 AND e.capability_id='semantics.metric.read' AND e.allowed AND (e.resource_id IS NULL OR e.resource_id=m.metric_id)) AS entitled,
+             EXISTS(SELECT 1 FROM registry.capabilities c WHERE c.tenant_id=$1 AND c.capability_id='semantics.metric.read' AND c.effect_class='READ' AND c.enabled AND c.active_version=1) AS capability_enabled
+           FROM hub.certified_metrics m JOIN hub.adapters a ON a.tenant_id=m.tenant_id AND a.product=m.adapter_product WHERE m.tenant_id=$1 AND m.metric_id=$3 FOR SHARE OF a,m`,[current.tenantId,current.userId,selected.metric_id]);
+        const row=currentMetric.rows[0];if(!row||!row.connected||row.current_version!==row.adapter_version)throw new Error('semantic_adapter_version_changed');
+        if(!row.capability_enabled||!row.entitled){
+          await client.query(`INSERT INTO runs.authz_decisions(tenant_id,principal_id,capability_id,outcome,policy_version,reasons)
+            VALUES($1,$2,'semantics.metric.read','deny','phase4-v1','["authorization_revoked_before_execution"]')`,[current.tenantId,current.userId]);
+          return false;
+        }
+        await client.query(`INSERT INTO runs.runs(tenant_id,run_id,principal_id,state) VALUES($1,$2,$3,'CREATED')`,[current.tenantId,runId,current.userId]);
+        const authz=await client.query<{decision_id:string}>(`INSERT INTO runs.authz_decisions(tenant_id,run_id,principal_id,capability_id,outcome,policy_version,reasons)
+          VALUES($1,$2,$3,'semantics.metric.read','allow','phase4-v1','["certified_metric_entitled"]') RETURNING decision_id`,[current.tenantId,runId,current.userId]);
+        let sequence=0;
+        const event=async(type:string,payload:Record<string,unknown>,decisionId?:string)=>{
+          sequence+=1;await client.query(`INSERT INTO runs.events(tenant_id,run_id,sequence,event_type,decision_id,safe_payload) VALUES($1,$2,$3,$4,$5,$6::jsonb)`,[current.tenantId,runId,sequence,type,decisionId??authz.rows[0]!.decision_id,JSON.stringify(payload)]);
+        };
+        await event('run_created',{state:'CREATED',state_version:0});
+        for(const [state,type] of [['PLANNING','run_state_changed'],['PLAN_VALIDATED','plan_validated'],['RUNNING','run_state_changed']] as const){
+          const next=await client.query<{state_version:number}>(`UPDATE runs.runs SET state=$3,state_version=state_version+1,updated_at=clock_timestamp() WHERE tenant_id=$1 AND run_id=$2 RETURNING state_version`,[current.tenantId,runId,state]);
+          await event(type,{state,state_version:next.rows[0]!.state_version,count:1,capability_id:'semantics.metric.read',capability_version:1});
+        }
+        await client.query(`INSERT INTO hub.metric_results(tenant_id,run_id,metric_id,adapter_version,result_value,unit,evidence_metadata)
+          VALUES($1,$2,$3,$4,$5,$6,$7::jsonb)`,[current.tenantId,runId,selected.metric_id,answerResult.adapterVersion,answerResult.value,answerResult.unit,JSON.stringify(evidence)]);
+        await client.query(`INSERT INTO runs.analytic_answers(tenant_id,run_id,status,answer) VALUES($1,$2,'COMPLETED',$3::jsonb)`,[current.tenantId,runId,JSON.stringify(answer)]);
+        await event('evidence_added',{result_ref:`golden://semantics/${runId}/${selected.metric_id}`,result_classification:'AGGREGATE',capability_id:'semantics.metric.read',capability_version:1});
+        for(const state of ['FINALISING','COMPLETED'] as const){
+          const next=await client.query<{state_version:number}>(`UPDATE runs.runs SET state=$3,state_version=state_version+1,updated_at=clock_timestamp() WHERE tenant_id=$1 AND run_id=$2 RETURNING state_version`,[current.tenantId,runId,state]);
+          await event(state==='COMPLETED'?'run_terminal':'run_state_changed',{state,state_version:next.rows[0]!.state_version});
+        }
+        return true;
+      });
+      if(!committed)return reply.code(403).send({error:'metric_not_authorized'});
+    }catch(error){const code=error instanceof Error?error.message:'certified_metric_query_failed';if(code==='metric_not_authorized')return reply.code(403).send({error:code});if(code==='semantic_adapter_version_changed')return reply.code(409).send({error:code});throw error;}
+    return reply.code(201).send({runId,state:'COMPLETED',trustRoute:'certified_metric',answer});
+  });
   app.get('/api/metadata/sources',async(request,reply)=>{
     if(!await authenticatedSession(request))return reply.code(401).send({error:'unauthorized'});
     return reply.send({sources:[
@@ -242,8 +318,8 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
   });
   app.get<{Params:{runId:string}}>('/api/runs/:runId',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
-    const result=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{run_id:string;state:string;state_version:number;plan:Record<string,unknown>;plan_hash:string;answer:Record<string,unknown>|null}>(
-      `SELECT r.run_id,r.state,r.state_version,p.plan,p.plan_hash,a.answer FROM runs.runs r JOIN runs.analytic_plans p USING(tenant_id,run_id)
+    const result=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{run_id:string;state:string;state_version:number;plan:Record<string,unknown>|null;plan_hash:string|null;answer:Record<string,unknown>|null}>(
+      `SELECT r.run_id,r.state,r.state_version,p.plan,p.plan_hash,a.answer FROM runs.runs r LEFT JOIN runs.analytic_plans p USING(tenant_id,run_id)
        LEFT JOIN runs.analytic_answers a USING(tenant_id,run_id)
        WHERE r.tenant_id=$1 AND r.principal_id=$2 AND r.run_id=$3`,[current.tenantId,current.userId,request.params.runId]));
     if(!result.rowCount)return reply.code(404).send({error:'run_not_found'});

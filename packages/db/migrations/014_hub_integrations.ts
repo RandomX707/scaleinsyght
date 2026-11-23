@@ -6,11 +6,13 @@ export async function up(pgm: MigrationBuilder): Promise<void> {
 
     CREATE TABLE hub.adapters (
       tenant_id text NOT NULL REFERENCES core.tenants(tenant_id),
+      adapter_id uuid NOT NULL DEFAULT gen_random_uuid(),
       product text NOT NULL CHECK(product IN ('data_studio','semantics')),
       connected boolean NOT NULL DEFAULT false,
       current_version integer NOT NULL CHECK(current_version>0),
       updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-      PRIMARY KEY(tenant_id,product)
+      PRIMARY KEY(tenant_id,product),
+      UNIQUE(tenant_id,adapter_id)
     );
     CREATE TABLE hub.adapter_versions (
       tenant_id text NOT NULL,

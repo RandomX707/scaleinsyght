@@ -90,7 +90,11 @@ export function createGoldenHubAdapters(
     get connected() { return enabled.has('semantics'); },
     listCertifiedMetrics: () => fixture.metrics
       .filter((metric) => metric.certified)
-      .map(({ value: _value, fixtureKey: _fixtureKey, ...metric }) => structuredClone(metric)),
+      .map((metric) => structuredClone({
+        id: metric.id, name: metric.name, description: metric.description,
+        dimensions: metric.dimensions, unit: metric.unit, certified: metric.certified,
+        sourceAsset: metric.sourceAsset,
+      })),
     async queryCertifiedMetric(metricId) {
       if (!enabled.has('semantics')) throw new Error('hub_adapter_disconnected');
       const metric = fixture.metrics.find((item) => item.id === metricId && item.certified);
