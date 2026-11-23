@@ -1,10 +1,12 @@
 import React, { type ButtonHTMLAttributes, type HTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react';
 import './components.css';
 import logoUrl from './assets/insyght-logo.png';
+import poweredByUrl from './assets/scalehealthtech-logo.png';
 
 export { prototypeTokens } from './tokens.js';
 
 export function Logo({ className = '' }: { className?: string }) { return <img className={`ui-logo ${className}`.trim()} src={logoUrl} alt="INSYGHT" />; }
+export function PoweredBy() { return <div className="ui-powered-by"><span>Powered by</span><img src={poweredByUrl} alt="ScaleHealthTech" /></div>; }
 
 export function PageHeader({ title, description, actions }: { title: string; description?: string; actions?: ReactNode }) {
   return <header className="ui-page-header"><div><h1>{title}</h1>{description && <p>{description}</p>}</div>{actions && <div>{actions}</div>}</header>;
