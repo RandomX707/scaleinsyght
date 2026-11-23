@@ -6,6 +6,7 @@
     "./server": "./src/server.ts"
   },
   "scripts": {
+    "start": "tsx src/main.ts",
     "dev": "tsx watch src/main.ts"
   },
   "dependencies": {

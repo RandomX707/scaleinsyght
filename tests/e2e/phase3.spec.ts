@@ -4,7 +4,7 @@ async function signIn(page: import('@playwright/test').Page,email:string){
   await page.goto('/login');
   await page.getByLabel('Email').fill(email);
   await page.getByLabel('Password').fill('golden-local-only');
-  await page.getByRole('button',{name:'Sign in'}).click();
+  await page.getByRole('button',{name:'Sign in',exact:true}).click();
 }
 
 async function selectAssetAndWaitForLineage(page:import('@playwright/test').Page,qualifiedName:string){

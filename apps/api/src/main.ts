@@ -18,5 +18,5 @@ if(!artifactMasterKey)throw new Error('ARTIFACT_MASTER_KEY is required; set it i
 const artifactStore=new EncryptedArtifactStore(resolve(process.env.ARTIFACT_VOLUME_PATH??'.local/artifacts'),Buffer.from(artifactMasterKey,'base64'));
 const server=await buildServer({pool,sessionSecret:process.env.SESSION_SECRET??'',goldenAccounts:[...golden.users,...phase3E2e.users,...phase4E2e.users,...phase5E2e.users,...phase6E2e.users].map(user=>({tenantId:user.tenantId,email:user.email})),artifactStore});
 const port=Number(process.env.API_PORT??3000);
-await server.listen({host:'127.0.0.1',port});
+await server.listen({host:process.env.API_HOST??'127.0.0.1',port});
 for(const signal of ['SIGINT','SIGTERM'] as const)process.on(signal,async()=>{await server.close();await pool.end();process.exit(0);});

@@ -1,0 +1,131 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the deployment environment}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  db-setup:
+    build:
+      context: .
+      target: db-tools
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the deployment environment}
+      DATABASE_URL_ADMIN: postgresql://postgres:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the deployment environment}@postgres:5432/postgres
+      DATABASE_URL: postgresql://si_app:${SI_APP_PASSWORD:?Set SI_APP_PASSWORD in the deployment environment}@postgres:5432/scale_insyght
+      DATABASE_URL_WORKER: postgresql://si_worker:${SI_WORKER_PASSWORD:?Set SI_WORKER_PASSWORD in the deployment environment}@postgres:5432/scale_insyght
+      DATABASE_URL_MIGRATE: postgresql://si_migrate:${SI_MIGRATE_PASSWORD:?Set SI_MIGRATE_PASSWORD in the deployment environment}@postgres:5432/scale_insyght
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  db-migrate:
+    build:
+      context: .
+      target: db-tools
+    command: ["pnpm","db:migrate"]
+    environment:
+      DATABASE_URL_MIGRATE: postgresql://si_migrate:${SI_MIGRATE_PASSWORD:?Set SI_MIGRATE_PASSWORD in the deployment environment}@postgres:5432/scale_insyght
+    depends_on:
+      db-setup:
+        condition: service_completed_successfully
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      target: api
+    environment:
+      API_HOST: 0.0.0.0
+      DATABASE_URL: postgresql://si_app:${SI_APP_PASSWORD:?Set SI_APP_PASSWORD in the deployment environment}@postgres:5432/scale_insyght
+      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in the deployment environment}
+      ARTIFACT_MASTER_KEY: ${ARTIFACT_MASTER_KEY:?Set ARTIFACT_MASTER_KEY in the deployment environment}
+      ARTIFACT_VOLUME_PATH: /app/.local/artifacts
+      OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI:-}
+    volumes:
+      - artifact_data:/app/.local/artifacts
+    ports:
+      - "127.0.0.1:3000:3000"
+    healthcheck:
+      test: ["CMD","node","-e","fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
+
+  worker:
+    build:
+      context: .
+      target: worker
+    environment:
+      WORKER_HEALTH_HOST: 0.0.0.0
+      DATABASE_URL_WORKER: postgresql://si_worker:${SI_WORKER_PASSWORD:?Set SI_WORKER_PASSWORD in the deployment environment}@postgres:5432/scale_insyght
+    healthcheck:
+      test: ["CMD","node","-e","fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
+
+  web:
+    build:
+      context: .
+      target: web
+    environment:
+      API_PROXY_TARGET: http://api:3000
+    ports:
+      - "127.0.0.1:4173:4173"
+    healthcheck:
+      test: ["CMD","node","-e","fetch('http://127.0.0.1:4173').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    depends_on:
+      api:
+        condition: service_healthy
+
+  sqlparse:
+    build:
+      context: .
+      dockerfile: services/sqlparse/Dockerfile
+    expose:
+      - "8011"
+    healthcheck:
+      test: ["CMD","python","-c","import urllib.request; urllib.request.urlopen('http://127.0.0.1:8011/openapi.json', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  customer-gateway:
+    profiles: ["private-gateway"]
+    build:
+      context: .
+      target: gateway
+    environment:
+      CONTROL_PLANE_URL: ${CONTROL_PLANE_URL:?Set CONTROL_PLANE_URL in the deployment environment}
+      GATEWAY_CREDENTIAL: ${GATEWAY_CREDENTIAL:?Enroll this gateway and set GATEWAY_CREDENTIAL}
+      GATEWAY_SOURCE_ID: ${GATEWAY_SOURCE_ID:?Set GATEWAY_SOURCE_ID to the enrolled source}
+      DATABASE_URL_SAMPLE_SOURCE: ${DATABASE_URL_SAMPLE_SOURCE:?Set a read-only private source connection}
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  artifact_data:

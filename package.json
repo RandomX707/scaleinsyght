@@ -15,6 +15,7 @@
     "eval:golden": "vitest run tests/unit/analytic-plan.test.ts tests/contracts/c3_gateway_security.test.ts",
     "backup:drill": "tsx scripts/backup-drill.ts",
     "test:load": "tsx scripts/test-load.ts",
+    "gateway:start": "tsx scripts/customer-gateway.ts",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:migrate:test": "tsx scripts/migrate.ts --test",
     "db:seed:golden": "tsx scripts/seed-golden.ts",

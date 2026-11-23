@@ -25,6 +25,15 @@ jobs:
       DATABASE_URL_ADMIN: postgresql://postgres:postgres@127.0.0.1:5432/postgres
       ARTIFACT_MASTER_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
       ARTIFACT_VOLUME_PATH: .local/artifacts
+      POSTGRES_PASSWORD: ci-compose-superuser
+      SI_APP_PASSWORD: ci-compose-app
+      SI_WORKER_PASSWORD: ci-compose-worker
+      SI_MIGRATE_PASSWORD: ci-compose-migrate
+      SESSION_SECRET: ci-compose-session-secret-with-more-than-thirty-two-bytes
+      CONTROL_PLANE_URL: https://control.synthetic.invalid
+      GATEWAY_CREDENTIAL: synthetic-ci-gateway-credential-only
+      GATEWAY_SOURCE_ID: 00000000-0000-4000-8000-000000000001
+      DATABASE_URL_SAMPLE_SOURCE: postgresql://readonly:synthetic@127.0.0.1:5432/si_sample_source
     steps:
       - uses: actions/checkout@v4
         with:
@@ -59,3 +68,12 @@ jobs:
       - run: pnpm test:contracts
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test:e2e
+      - name: Build deployment images and check Compose config
+        run: |
+          docker compose config --quiet
+          docker compose build api worker web sqlparse customer-gateway
+      - name: Cold start deployment reference stack
+        run: docker compose up -d --wait api web worker sqlparse
+      - name: Stop deployment reference stack
+        if: always()
+        run: docker compose down --volumes --remove-orphans

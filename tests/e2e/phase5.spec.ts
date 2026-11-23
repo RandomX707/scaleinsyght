@@ -23,7 +23,7 @@ async function createTenant(tenantId:string,withReviewer=false){
  await withTenant(setup,tenantId,async(db)=>db.query("INSERT INTO core.entitlements(tenant_id,principal_id,capability_id,resource_id) VALUES($1,$2,'analytic.read',$3)",[tenantId,ownerId,source.connectionId]));
  return{tenantId,ownerEmail,reviewerEmail,sourceId:source.connectionId};
 }
-async function signIn(page:Page,email:string){await page.goto('/login');await page.getByLabel('Email').fill(email);await page.getByLabel('Password').fill('golden-local-only');const login=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/auth/login');await page.getByRole('button',{name:'Sign in'}).click();expect((await login).status()).toBe(200);await page.waitForURL(url=>url.pathname==='/');}
+async function signIn(page:Page,email:string){await page.goto('/login');await page.getByLabel('Email').fill(email);await page.getByLabel('Password').fill('golden-local-only');const login=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/auth/login');await page.getByRole('button',{name:'Sign in',exact:true}).click();expect((await login).status()).toBe(200);await page.waitForURL(url=>url.pathname==='/');}
 async function signOut(page:Page){await page.getByRole('button',{name:'Workspace profile'}).click();await page.getByRole('menuitem',{name:'Sign out'}).click();await page.waitForURL(url=>url.pathname==='/login');}
 async function openWorkspace(page:Page){const toggle=page.getByRole('button',{name:/WORKSPACE/});if(await toggle.getAttribute('aria-expanded')!=='true')await toggle.click();}
 

@@ -24,7 +24,7 @@ describe('customer gateway protocol', () => {
     expect(() => validateGatewayResult({ ...valid, aggregates: Array.from({ length: 1001 }, () => valid.aggregates[0]) })).toThrow('gateway_result_invalid');
   });
 
-  it('uses outbound polling without opening an inbound listener', async () => {
+  it('c5_customer_gateway_polls_outbound_without_inbound_listener', async () => {
     const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ request: null }), { status: 200 }));
     const client = createOutboundClient({ baseUrl: 'https://control.example', credential: 'secret', fetcher });
     await expect(client.poll()).resolves.toEqual({ request: null });
