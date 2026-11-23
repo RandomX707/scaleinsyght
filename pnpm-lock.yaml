@@ -184,6 +184,9 @@ importers:
       '@scaleinsyght/artifacts':
         specifier: workspace:*
         version: link:packages/artifacts
+      '@scaleinsyght/auth-oidc':
+        specifier: workspace:*
+        version: link:packages/auth-oidc
       '@scaleinsyght/classification':
         specifier: workspace:*
         version: link:packages/classification
@@ -287,6 +290,9 @@ importers:
       '@scaleinsyght/artifacts':
         specifier: workspace:*
         version: link:../../packages/artifacts
+      '@scaleinsyght/auth-oidc':
+        specifier: workspace:*
+        version: link:../../packages/auth-oidc
       '@scaleinsyght/connectors':
         specifier: workspace:*
         version: link:../../packages/connectors
@@ -368,6 +374,12 @@ importers:
         version: link:../db
 
   packages/artifacts: {}
+
+  packages/auth-oidc:
+    dependencies:
+      jose:
+        specifier: 6.2.18
+        version: 6.2.18
 
   packages/classification: {}
 
@@ -1893,6 +1905,9 @@ packages:
   jiti@2.7.0:
     resolution: {integrity: sha512-AC/7JofJvZGrrneWNaEnJeOLUx+JlGt7tNa0wZiRPT4MY1wmfKjt2+6O2p2uz2+skll8OZZmJMNqeke7kKbNgQ==}
     hasBin: true
+
+  jose@6.2.18:
+    resolution: {integrity: sha512-doV4thUwgkrycJH4yLeqwTGIIZphHl+pk7CPReuMIhYhncmgzdko85MaCG4YQFTxqMFr1/oEH32tZuKKovcDEg==}
 
   js-tokens@4.0.0:
     resolution: {integrity: sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ==}
@@ -4301,6 +4316,8 @@ snapshots:
   isexe@2.0.0: {}
 
   jiti@2.7.0: {}
+
+  jose@6.2.18: {}
 
   js-tokens@4.0.0: {}
 

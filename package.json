@@ -29,6 +29,7 @@
   },
   "dependencies": {
     "@scaleinsyght/analytic": "workspace:*",
+    "@scaleinsyght/auth-oidc": "workspace:*",
     "@scaleinsyght/api": "workspace:*",
     "@scaleinsyght/artifacts": "workspace:*",
     "@scaleinsyght/classification": "workspace:*",

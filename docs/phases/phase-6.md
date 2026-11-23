@@ -20,8 +20,8 @@
 | `POST /api/gateways/poll` | The authenticated gateway polls for the next tenant-bound, already-authorized read request; an empty queue is a successful empty response | 1, 3, 5 |
 | `POST /api/gateways/results/:requestId` | Gateway returns only the validated bounded result envelope for the claimed request; replay is idempotent and stale claims are rejected | 1, 3, 5, 7 |
 | Existing connection test/discover/profile/analytic routes | Support a private source routed through the customer-side gateway, plus generic read-only lake and CRM connector types | 1, 2, 3, 6, 7 |
-| `GET /api/auth/oidc/:provider/start` and `GET /api/auth/oidc/:provider/callback` | Authorization-code with PKCE, verified issuer/audience/nonce/state, and tenant-bound identity mapping; password login remains available | 1 |
-| `POST /api/tenant/sso` | Tenant administrator configures an allowed OIDC issuer, client ID, and secret reference; raw client secrets are never stored in the database | 1 |
+| `GET /api/auth/oidc/:tenantId/start` and `GET /api/auth/oidc/callback` | Authorization-code with PKCE, verified issuer/audience/nonce/state, and tenant-bound identity mapping; password login remains available | 1 |
+| `GET/POST /api/tenant/sso` | Tenant administrator reads/configures an allowed OIDC issuer, client ID, and secret reference; raw client secrets are never stored in the database | 1 |
 | `pnpm eval:golden` | Runs the deterministic golden answer suite and adversarial prompt/plan/request cases locally and in CI | 1, 3, 4, 7 |
 | `pnpm backup:drill` / `pnpm restore:drill` | Native `pg_dump`/`pg_restore` workflow validates a timestamped synthetic backup and records measured recovery point/time | 1, 5, 7 |
 | `pnpm test:load` | Exercises concurrent synthetic runs and measures time to first progress event; no production load target is contacted | 1, 5 |
@@ -36,7 +36,8 @@ All new tenant-owned tables include `tenant_id`, `FORCE ROW LEVEL SECURITY`, and
 | `gateway.clients` | Tenant, gateway id, credential hash, last-seen time, revoked timestamp; credential material is returned once and never persisted in plaintext | 1, 5, 7 |
 | `gateway.requests` | Tenant, request id, source connection, validated plan reference, state, lease/fencing token, bounded result reference, safe failure code, timestamps; no raw result rows or secrets | 1, 3, 5, 7 |
 | `core.oidc_providers` | Tenant, issuer, client id, secret reference, allowed domains, enabled state; no secret value | 1 |
-| `core.external_identities` | Tenant, issuer, subject, local user id, unique issuer/subject mapping | 1 |
+| `core.external_identities` | Tenant, issuer, keyed subject hash, local user id, unique issuer/subject mapping; raw OIDC subjects are not stored | 1, 7 |
+| `core.oidc_login_states` | Hashed one-use state, provider id, expiry and consumption timestamp; verifier and nonce are held only in a short-lived signed HttpOnly cookie | 1 |
 | Backup artifacts | Encrypted backup files and signed metadata live outside tenant tables in the configured deployment volume; keys and backup contents are never in logs | 1, 5, 7 |
 
 Lake and CRM metadata use existing connection, graph, profile, and event tables; no connector stores customer row samples. All test inputs come from synthetic fixtures.
@@ -54,6 +55,10 @@ Lake and CRM metadata use existing connection, graph, profile, and event tables;
 - **Connector setup:** generic lake/CRM read-only connection forms use secret references and display no saved credential values. Scope and read-only warnings match existing SQL connectors.
 - **Controls / SSO:** tenant administrator can configure an OIDC issuer, client id, secret reference, and allowed email domains; UI states that password login remains available as recovery.
 - No evaluation, backup, restore, or load-test screens are added; those are operator CLI workflows. No Docker workflow is added to local development UI.
+
+## OIDC configuration
+
+`OIDC_REDIRECT_URI` is the exact HTTPS callback registered at the tenant's OIDC provider. `client_secret_ref` names an environment/secret-manager variable read only by the API; the value is never accepted in a route body, returned to the browser, or written to PostgreSQL. Password login remains available if OIDC is unavailable.
 
 ## Acceptance tests
 

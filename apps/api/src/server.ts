@@ -14,9 +14,10 @@ import { createGoldenHubAdapters, getGoldenHubFixtures, type FlowSpecDelivery, t
 import { nextScheduleInstant, renderEvidencePack, safeEvidencePack, type ExportFormat, type SafeEvidencePack } from '@scaleinsyght/reports';
 import { ClaimSchema, EvidenceRefSchema } from '@scaleinsyght/contracts';
 import { authorise } from '@scaleinsyght/policy';
+import { createOidcAuthorizationRequest, verifyOidcIdToken } from '@scaleinsyght/auth-oidc';
 
 export interface GoldenAccount { tenantId: string; email: string; }
-export interface ServerOptions { pool: Pool; sessionSecret: string; goldenAccounts: GoldenAccount[]; artifactStore?: EncryptedArtifactStore; hubAdapters?: { semantics: SemanticsAdapter; dataStudio: { product: 'data_studio'; version: number; connected: boolean; capabilities: readonly string[]; deliverFlowSpec(key: string, spec: FlowSpecDelivery): Promise<unknown>; lookupFlowSpec(key: string): Promise<unknown>; } }; }
+export interface ServerOptions { pool: Pool; sessionSecret: string; goldenAccounts: GoldenAccount[]; artifactStore?: EncryptedArtifactStore; oidcFetch?: typeof fetch; hubAdapters?: { semantics: SemanticsAdapter; dataStudio: { product: 'data_studio'; version: number; connected: boolean; capabilities: readonly string[]; deliverFlowSpec(key: string, spec: FlowSpecDelivery): Promise<unknown>; lookupFlowSpec(key: string): Promise<unknown>; } }; }
 const sessionLifetimeMs = 8 * 60 * 60 * 1000;
 export function hashPassword(password: string, salt = randomBytes(16).toString('hex')): string {
   return `${salt}:${scryptSync(password,salt,64).toString('hex')}`;
@@ -27,11 +28,29 @@ function verifyPassword(password:string,encoded:string):boolean{
   return expected.length===actual.length && timingSafeEqual(actual,expected);
 }
 function digest(value:string):Buffer{return createHash('sha256').update(value).digest();}
+function oidcSubjectHash(tenantId:string,issuer:string,subject:string,secret:string):Buffer{return createHmac('sha256',secret).update('scale-insyght:oidc-subject:v1\0').update(tenantId).update('\0').update(issuer).update('\0').update(subject).digest();}
 function sign(value:string,secret:string):string{return createHmac('sha256',secret).update(value).digest('base64url');}
+function secureEqual(left:string,right:string):boolean{const a=Buffer.from(left);const b=Buffer.from(right);return a.length===b.length&&timingSafeEqual(a,b);}
+function cookieValue(header:string|undefined,name:string):string|null{
+  if(!header)return null;return header.split(';').map(part=>part.trim()).find(part=>part.startsWith(`${name}=`))?.slice(name.length+1)??null;
+}
+async function oidcDocument(fetcher:typeof fetch,url:string):Promise<Record<string,unknown>>{
+  const response=await fetcher(url,{headers:{accept:'application/json'},signal:AbortSignal.timeout(5000)});
+  if(!response.ok)throw new Error('oidc_provider_unavailable');
+  const length=Number(response.headers.get('content-length')??0);if(length>1_048_576)throw new Error('oidc_provider_response_too_large');
+  const text=await response.text();if(Buffer.byteLength(text,'utf8')>1_048_576)throw new Error('oidc_provider_response_too_large');
+  const value=JSON.parse(text) as unknown;if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('oidc_provider_response_invalid');
+  return value as Record<string,unknown>;
+}
+function oidcEndpoint(value:unknown):string{
+  if(typeof value!=='string')throw new Error('oidc_provider_response_invalid');
+  const url=new URL(value);if(url.protocol!=='https:')throw new Error('oidc_https_required');return url.toString();
+}
 
 export async function buildServer(options:ServerOptions):Promise<FastifyInstance>{
   if(options.sessionSecret.length<32)throw new Error('SESSION_SECRET must contain at least 32 characters');
   const app=Fastify({logger:false,bodyLimit:25*1024*1024});
+  const oidcFetch=options.oidcFetch??fetch;
   const postgresConnectors=new Map<string,ReadOnlyConnector>();
   const connectorFor=(sourceId:string):ReadOnlyConnector=>{
     if(sourceId!=='local-hospital')return createGoldenConnector(sourceId);
@@ -390,6 +409,106 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     });
     return valid?current:null;
   }
+  app.get('/api/tenant/sso',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const result=await withTenant(options.pool,current.tenantId,client=>client.query<{issuer:string;client_id:string;client_secret_ref:string;allowed_email_domains:string[];enabled:boolean}>(
+      'SELECT issuer,client_id,client_secret_ref,allowed_email_domains,enabled FROM core.oidc_providers WHERE tenant_id=$1',[current.tenantId]));
+    const row=result.rows[0];return reply.send({provider:row?{issuer:row.issuer,clientId:row.client_id,clientSecretRef:row.client_secret_ref,allowedEmailDomains:row.allowed_email_domains,enabled:row.enabled}:null});
+  });
+  app.post<{Body:{issuer?:unknown;clientId?:unknown;clientSecretRef?:unknown;allowedEmailDomains?:unknown;enabled?:unknown}}>('/api/tenant/sso',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const admin=await withTenant(options.pool,current.tenantId,client=>client.query(
+      "SELECT 1 FROM core.entitlements WHERE tenant_id=$1 AND principal_id=$2 AND capability_id='tenant.sso.configure' AND allowed AND resource_id IS NULL LIMIT 1",[current.tenantId,current.userId]));
+    if(!admin.rowCount)return reply.code(403).send({error:'tenant_admin_required'});
+    const body=request.body;
+    if(typeof body.issuer!=='string'||typeof body.clientId!=='string'||typeof body.clientSecretRef!=='string'||!Array.isArray(body.allowedEmailDomains)||body.allowedEmailDomains.some(domain=>typeof domain!=='string')||(body.enabled!==undefined&&typeof body.enabled!=='boolean'))return reply.code(400).send({error:'invalid_sso_configuration'});
+    let issuer:string;try{const parsed=new URL(body.issuer);if(parsed.protocol!=='https:'||parsed.search||parsed.hash)throw new Error();issuer=parsed.toString();}catch{return reply.code(400).send({error:'invalid_sso_issuer'});}
+    const clientId=body.clientId.trim(),secretRef=body.clientSecretRef.trim();
+    const domains=(body.allowedEmailDomains as string[]).map(domain=>domain.trim().toLowerCase());
+    if(!clientId||clientId.length>255||!/^[A-Z][A-Z0-9_]{2,127}$/.test(secretRef)||domains.length<1||domains.length>20||domains.some(domain=>!/^[a-z0-9.-]+\.[a-z]{2,63}$/.test(domain)))return reply.code(400).send({error:'invalid_sso_configuration'});
+    const enabled=body.enabled!==false;
+    await withTenant(options.pool,current.tenantId,async(client)=>{
+      await client.query(`INSERT INTO core.oidc_providers(tenant_id,issuer,client_id,client_secret_ref,allowed_email_domains,enabled)
+        VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(tenant_id) DO UPDATE SET issuer=EXCLUDED.issuer,client_id=EXCLUDED.client_id,client_secret_ref=EXCLUDED.client_secret_ref,allowed_email_domains=EXCLUDED.allowed_email_domains,enabled=EXCLUDED.enabled,updated_at=clock_timestamp()`,
+      [current.tenantId,issuer,clientId,secretRef,domains,enabled]);
+      await client.query("INSERT INTO core.activity_events(tenant_id,event_type,principal_id,sso_provider_id) SELECT $1,'sso_provider_configured',$2,provider_id FROM core.oidc_providers WHERE tenant_id=$1",[current.tenantId,current.userId]);
+    });
+    return reply.send({enabled,issuer,clientId,clientSecretRef:secretRef,allowedEmailDomains:domains});
+  });
+  app.get<{Params:{tenantId:string}}>('/api/auth/oidc/:tenantId/start',async(request,reply)=>{
+    const tenantId=request.params.tenantId;
+    if(!/^[a-zA-Z0-9_-]{3,128}$/.test(tenantId))return reply.code(404).send({error:'oidc_provider_not_found'});
+    const result=await withTenant(options.pool,tenantId,client=>client.query<{provider_id:string;issuer:string;client_id:string;enabled:boolean}>(
+      'SELECT provider_id,issuer,client_id,enabled FROM core.oidc_providers WHERE tenant_id=$1',[tenantId]));
+    const provider=result.rows[0];if(!provider?.enabled)return reply.code(404).send({error:'oidc_provider_not_found'});
+    const redirectUri=process.env.OIDC_REDIRECT_URI;if(!redirectUri)return reply.code(503).send({error:'oidc_redirect_uri_required'});
+    try{
+      const discoveryUrl=`${provider.issuer.replace(/\/$/,'')}/.well-known/openid-configuration`;
+      const discovery=await oidcDocument(oidcFetch,discoveryUrl);
+      if(discovery.issuer!==provider.issuer)return reply.code(503).send({error:'oidc_provider_unavailable'});
+      const authorizationEndpoint=oidcEndpoint(discovery.authorization_endpoint);
+      const requestData=createOidcAuthorizationRequest({authorizationEndpoint,clientId:provider.client_id,redirectUri});
+      const expiresAt=Date.now()+5*60_000;
+      const statePayload=Buffer.from(JSON.stringify({tenantId,providerId:provider.provider_id,state:requestData.state,nonce:requestData.nonce,codeVerifier:requestData.codeVerifier,expiresAt})).toString('base64url');
+      const cookie=`si_oidc=${statePayload}.${sign(statePayload,options.sessionSecret)}; HttpOnly; SameSite=Lax; Path=/api/auth/oidc; Max-Age=300; Secure`;
+      await withTenant(options.pool,tenantId,client=>client.query('INSERT INTO core.oidc_login_states(tenant_id,state_hash,provider_id,expires_at) VALUES($1,$2,$3,to_timestamp($4/1000.0))',[tenantId,digest(requestData.state),provider.provider_id,expiresAt]));
+      return reply.header('set-cookie',cookie).redirect(requestData.authorizationUrl,302);
+    }catch{return reply.code(503).send({error:'oidc_provider_unavailable'});}
+  });
+  app.get<{Querystring:{code?:string;state?:string;error?:string}}>('/api/auth/oidc/callback',async(request,reply)=>{
+    const rawCookie=cookieValue(request.headers.cookie,'si_oidc');
+    if(!rawCookie||request.query.error||!request.query.code||!request.query.state||request.query.code.length>4096||request.query.state.length>256)return reply.code(400).send({error:'oidc_callback_invalid'});
+    const [encoded,signature]=rawCookie.split('.');if(!encoded||!signature||!secureEqual(sign(encoded,options.sessionSecret),signature))return reply.code(400).send({error:'oidc_callback_invalid'});
+    let state:{tenantId:string;providerId:string;state:string;nonce:string;codeVerifier:string;expiresAt:number};
+    try{state=JSON.parse(Buffer.from(encoded,'base64url').toString('utf8')) as typeof state;}catch{return reply.code(400).send({error:'oidc_callback_invalid'});}
+    if(!state.tenantId||!state.providerId||!state.state||!state.nonce||!state.codeVerifier||state.expiresAt<=Date.now()||!secureEqual(state.state,request.query.state))return reply.code(400).send({error:'oidc_callback_invalid'});
+    const claim=await withTenant(options.pool,state.tenantId,client=>client.query<{provider_id:string}>(
+      'UPDATE core.oidc_login_states SET consumed_at=clock_timestamp() WHERE tenant_id=$1 AND state_hash=$2 AND provider_id=$3 AND consumed_at IS NULL AND expires_at>clock_timestamp() RETURNING provider_id',[state.tenantId,digest(state.state),state.providerId]));
+    if(!claim.rowCount)return reply.code(400).send({error:'oidc_callback_invalid'});
+    try{
+      const providerResult=await withTenant(options.pool,state.tenantId,client=>client.query<{issuer:string;client_id:string;client_secret_ref:string;allowed_email_domains:string[];enabled:boolean}>(
+        'SELECT issuer,client_id,client_secret_ref,allowed_email_domains,enabled FROM core.oidc_providers WHERE tenant_id=$1 AND provider_id=$2',[state.tenantId,state.providerId]));
+      const provider=providerResult.rows[0];if(!provider?.enabled)throw new Error('oidc_provider_not_found');
+      const redirectUri=process.env.OIDC_REDIRECT_URI;if(!redirectUri)throw new Error('oidc_redirect_uri_required');
+      const discovery=await oidcDocument(oidcFetch,`${provider.issuer.replace(/\/$/,'')}/.well-known/openid-configuration`);
+      if(discovery.issuer!==provider.issuer)throw new Error('oidc_provider_unavailable');
+      const tokenEndpoint=oidcEndpoint(discovery.token_endpoint),jwksUri=oidcEndpoint(discovery.jwks_uri);
+      const clientSecret=process.env[provider.client_secret_ref];if(!clientSecret)throw new Error('oidc_client_secret_unavailable');
+      const tokenBody=new URLSearchParams({grant_type:'authorization_code',code:request.query.code,redirect_uri:redirectUri,client_id:provider.client_id,code_verifier:state.codeVerifier});
+      const tokenResponse=await oidcFetch(tokenEndpoint,{method:'POST',headers:{authorization:`Basic ${Buffer.from(`${provider.client_id}:${clientSecret}`).toString('base64')}`,'content-type':'application/x-www-form-urlencoded',accept:'application/json'},body:tokenBody,signal:AbortSignal.timeout(5000)});
+      if(!tokenResponse.ok)throw new Error('oidc_token_exchange_failed');
+      const tokenJson=await oidcDocument(async()=>tokenResponse,tokenEndpoint);
+      if(typeof tokenJson.id_token!=='string')throw new Error('oidc_id_token_missing');
+      const jwks=await oidcDocument(oidcFetch,jwksUri);
+      if(!Array.isArray(jwks.keys))throw new Error('oidc_jwks_invalid');
+      const claims=await verifyOidcIdToken(tokenJson.id_token,{issuer:provider.issuer,audience:provider.client_id,nonce:state.nonce,jwks: jwks as unknown as Parameters<typeof verifyOidcIdToken>[1]['jwks']});
+      if(typeof claims.sub!=='string'||!claims.sub||typeof claims.email!=='string'||claims.email_verified!==true)throw new Error('oidc_email_unverified');
+      const email=claims.email.trim().toLowerCase(),domain=email.split('@').at(-1)??'';
+      if(!provider.allowed_email_domains.includes(domain))throw new Error('oidc_email_domain_denied');
+      const subjectHash=oidcSubjectHash(state.tenantId,provider.issuer,claims.sub,options.sessionSecret);
+      const user=await withTenant(options.pool,state.tenantId,async(client)=>{
+        const existingIdentity=await client.query<{user_id:string}>('SELECT user_id FROM core.external_identities WHERE tenant_id=$1 AND issuer=$2 AND subject_hash=$3',[state.tenantId,provider.issuer,subjectHash]);
+        if(existingIdentity.rows[0])return existingIdentity.rows[0];
+        const existingUser=await client.query<{user_id:string}>('SELECT user_id FROM core.users WHERE tenant_id=$1 AND lower(email)=lower($2) AND is_active',[state.tenantId,email]);
+        const matched=existingUser.rows[0];if(!matched)throw new Error('oidc_identity_not_provisioned');
+        await client.query('INSERT INTO core.external_identities(tenant_id,issuer,subject_hash,user_id) VALUES($1,$2,$3,$4)',[state.tenantId,provider.issuer,subjectHash,matched.user_id]);return matched;
+      });
+      const token=randomBytes(32).toString('base64url'),sessionId=randomUUID();
+      await withTenant(options.pool,state.tenantId,async(client)=>{
+        await client.query("INSERT INTO core.sessions(tenant_id,session_id,user_id,token_hash,expires_at) VALUES($1,$2,$3,$4,clock_timestamp()+interval '8 hours')",[state.tenantId,sessionId,user.user_id,digest(token)]);
+        await client.query("INSERT INTO core.activity_events(tenant_id,event_type,principal_id,sso_provider_id) VALUES($1,'sso_login_succeeded',$2,$3)",[state.tenantId,user.user_id,state.providerId]);
+      });
+      const payload=Buffer.from(JSON.stringify({tenantId:state.tenantId,userId:user.user_id,sessionId,token})).toString('base64url');
+      const sessionCookie=`si_session=${payload}.${sign(payload,options.sessionSecret)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${sessionLifetimeMs/1000}; Secure`;
+      reply.header('set-cookie',[sessionCookie,'si_oidc=; HttpOnly; SameSite=Lax; Path=/api/auth/oidc; Max-Age=0; Secure']);
+      return reply.redirect('/',302);
+    }catch(error){
+      const message=error instanceof Error?error.message:'';
+      const safeCode=/^[a-z0-9_]{1,64}$/.test(message)?message:'oidc_login_failed';
+      await withTenant(options.pool,state.tenantId,client=>client.query("INSERT INTO core.activity_events(tenant_id,event_type,sso_provider_id,safe_error_code) VALUES($1,'sso_login_failed',$2,$3)",[state.tenantId,state.providerId,safeCode]));
+      return reply.code(401).send({error:'oidc_login_failed'});
+    }
+  });
   app.post('/api/auth/logout',async(request,reply)=>{
     const current=await session(request);if(current)await withTenant(options.pool,current.tenantId,async(client)=>{
       await client.query('UPDATE core.sessions SET revoked_at=clock_timestamp() WHERE session_id=$1 AND user_id=$2',[current.sessionId,current.userId]);
