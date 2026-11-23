@@ -1,12 +1,12 @@
 # Phase 5 — Saved questions and reports
 
-**Status:** approved by agent, pending review.
+**Status:** completed; later scheduling behavior is extended by Phase 5b.
 
 ## Outcome and scope
 
 Deliver the Phase 5 outcome in system design §2.5: a person can reuse an accepted question as the starting point for a related investigation, and export an evidence pack whose figures exactly match its completed run. Add governed report definitions and scheduled runs of already approved governed agents. Exports contain only the aggregate answer, cited evidence and safe plan metadata; they never serialize raw source rows, restricted fields, credentials or identifier values.
 
-All demo journeys use `tests/golden/` and native PostgreSQL. Scheduling uses the existing worker process and PostgreSQL queue; no new service or external account is introduced. Decisions 33 and 34 in `docs/decisions.md` record the reversible defaults for daily UTC schedules and personal lexical saved-question matching.
+All demo journeys use `tests/golden/` and native PostgreSQL. Scheduling uses the existing worker process and PostgreSQL queue; no new service or external account is introduced. Decision 34 remains lexical similarity over the signed-in person's saved questions. Decision 33 has since been decided by Yashaswi: Phase 5b extends the original daily UTC-only implementation to tenant-local daily/weekly schedules with UTC storage.
 
 ## Routes
 
@@ -20,7 +20,7 @@ All demo journeys use `tests/golden/` and native PostgreSQL. Scheduling uses the
 | `POST /api/me/reports` | Create a draft report bound to an approved governed definition version and output format | 1, 3, 5 |
 | `POST /api/me/reports/:reportId/run` | Execute the pinned approved version and persist a report snapshot | 1, 3, 4, 5 |
 | `GET /api/me/reports/:reportId/exports/:format` | Export a persisted report snapshot as PDF, XLSX or PPTX | 1, 4, 7 |
-| `POST /api/me/schedules` | Create or update a daily UTC schedule for an approved governed definition version | 1, 3, 5 |
+| `POST /api/me/schedules` | Create or update the original daily schedule; Phase 5b extends this route to tenant-local daily/weekly schedules | 1, 3, 5 |
 | `DELETE /api/me/schedules/:scheduleId` | Disable a schedule; never deletes run or report history | 1, 5 |
 
 All routes require a verified session. Writes are tenant scoped and owner scoped where personal. The saved-question start route reauthorizes sources and validates the pinned plan rather than trusting browser state. Report and schedule routes bind to an exact immutable governed version; every scheduled execution rechecks approval, entitlement, source state and READ-only capability before creating a run.

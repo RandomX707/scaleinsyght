@@ -1,6 +1,6 @@
 # Phase 5 report — Saved questions and reports
 
-**Assumptions — pending Yashaswi:** Decision 33 uses one daily schedule at a tenant-selected UTC time, backed by durable PostgreSQL schedule slots and the existing worker. Decision 34 suggests related questions using lexical similarity over only the signed-in person's own saved questions. Both remain reversible and are listed in [decisions.md](../decisions.md).
+**Decisions — Yashaswi, 23 Nov 2026:** Decision 33 is extended in Phase 5b to tenant-local daily and weekly schedules stored as UTC instants, with tenant time zone default `Asia/Kolkata`. Decision 34 uses lexical similarity over only the signed-in person's own saved questions.
 
 ## Built
 
@@ -37,4 +37,4 @@ The graph benchmark used the same 100,000-asset golden seed and the same RLS-ena
 
 - No real data, credentials, external systems, hosted models or additional infrastructure were used.
 - Scheduled report processing uses the existing PostgreSQL worker. A revoked schedule slot keeps only a safe reason code; it does not include question text or answer values.
-- Local report scheduling is daily at a UTC time. Other cadences remain outside this phase.
+- The original Phase 5 implementation supported daily UTC schedules; Phase 5b owns the tenant-local daily/weekly extension and its verification.
