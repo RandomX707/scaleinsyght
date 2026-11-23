@@ -4,7 +4,6 @@
 
 ## Assumptions (pending Yashaswi)
 
-- **Decision 9:** keep the metadata graph on PostgreSQL unless a depth-4 traversal across 100,000 assets exceeds 5 seconds at p95.
 - **Decision 11:** only a run event naming the specific input and output verifies that flow; reconciliation remains a separate verification value.
 - **Decision 16:** store identifier field metadata, formats, SAME_AS matches and tenant-keyed fingerprints; never store raw identifier values.
 - **Decision 17:** build field paths in profiler mode; inspect a specific value only on an explicit, authenticated request, transiently and without persistence or logs.
@@ -16,6 +15,8 @@
 Trace a synthetic Power BI metric through Snowflake and dbt to SQL Server, showing evidence at every known hop, one honest missing hop and one disputed mapping. Trace a renamed customer identifier across three systems without retaining the identifier value. Add dbt, Tableau and Power BI metadata connectors and report links using fixtures from `tests/golden/phase3.json`. **Contracts:** C1, C2, C4, C5, C6, C7; CLAUDE.md §§3.4–3.7, 3.11, 5, 7, 10–11; design §§1.6, 2.5 Phase 3, Part 3 C6–C7.
 
 No contract changes, graph database, external vendor connection or credential is in scope. PostgreSQL is the graph store unless the named benchmark fails its target. All tenant graph tables retain history; records are marked inactive/stale, never deleted.
+
+Decision 9 is decided by Yashaswi: keep PostgreSQL as the graph store. The synthetic 100,000-asset depth-4 benchmark measured p95 106.1 ms across 50 random starts, below the five-second threshold.
 
 ## Routes
 
@@ -81,6 +82,7 @@ Controls are keyboard reachable, labeled and visibly focused (CLAUDE.md §§10�
 | `c6_reconciliation_is_separate_from_run_verification` | C6 rule 6 and acceptance 5 |
 | `c6_transformation_change_stales_review_and_clears_verification` | C6 rule 7 and acceptance 6 |
 | `c6_golden_missing_hop_is_gap_with_no_invented_edge` | C6 rules 9–10; phase 3 acceptance |
+| `c6_lineage_traversal_stops_at_requested_depth` | C6 rules 1, 10; bounded depth-4 traversal acceptance |
 | `c6_conflicting_mapping_is_disputed_with_both_evidence_items` | C6; phase 3 acceptance |
 | `c6_history_query_before_capture_returns_not_observable` | C6 rule 8 and acceptance 9 |
 | `c6_schema_drop_marks_asset_inactive_and_assertions_stale_but_preserves_history` | C6 rule 9 and acceptance 10 |
@@ -93,7 +95,7 @@ Controls are keyboard reachable, labeled and visibly focused (CLAUDE.md §§10�
 | `c6_dbt_tableau_power_bi_golden_imports_create_typed_agents_and_report_links` | C1; C6; phase 3 acceptance |
 | `c6_dbt_to_power_bi_golden_dataset_flows_meet_100_percent_and_column_flows_90_percent` | C6; design §2.5 Phase 3 |
 | `c6_report_column_drop_creates_safe_report_impact_notification` | C1; C5; C6 rule 15; C7 |
-| `c6_postgres_depth_four_traversal_on_100k_assets_meets_five_second_p95` | Decision 9 recommended benchmark |
+| `c6_postgres_depth_four_traversal_on_100k_assets_meets_five_second_p95` | Decision 9; 50 random starts, p95 under five seconds |
 | `phase3_lineage_id_trace_impact_and_snapshot_compare_are_keyboard_accessible` | CLAUDE.md §§10–11; C1; C6 |
 
 Tests use only `tests/golden/phase3.json`, native PostgreSQL 16 and the isolated `si_test` database. Required phase gates: lint, typecheck, unit, integration, contract and E2E suites. No vendor credentials or live external systems are required.
