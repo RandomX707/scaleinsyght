@@ -15,7 +15,7 @@ import { nextScheduleInstant, renderEvidencePack, safeEvidencePack, type ExportF
 import { ClaimSchema, EvidenceRefSchema } from '@scaleinsyght/contracts';
 import { authorise } from '@scaleinsyght/policy';
 import { createOidcAuthorizationRequest, verifyOidcIdToken } from '@scaleinsyght/auth-oidc';
-import { createEnrollment, hashGatewaySecret, validateGatewayResult } from '@scaleinsyght/customer-gateway';
+import { createEnrollment, hashGatewaySecret, validateGatewayPlan, validateGatewayResult } from '@scaleinsyght/customer-gateway';
 
 export interface GoldenAccount { tenantId: string; email: string; }
 export interface ServerOptions { pool: Pool; sessionSecret: string; goldenAccounts: GoldenAccount[]; artifactStore?: EncryptedArtifactStore; oidcFetch?: typeof fetch; hubAdapters?: { semantics: SemanticsAdapter; dataStudio: { product: 'data_studio'; version: number; connected: boolean; capabilities: readonly string[]; deliverFlowSpec(key: string, spec: FlowSpecDelivery): Promise<unknown>; lookupFlowSpec(key: string): Promise<unknown>; } }; }
@@ -116,14 +116,13 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
   app.post('/api/gateways/requests',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const body=request.body as {gatewayId?:unknown;plan?:unknown};const gatewayId=String(body?.gatewayId??'');
-    const plan=AnalyticPlanSchema.safeParse(body?.plan);if(!plan.success)return reply.code(400).send({error:'analytic_plan_invalid'});
-    const planHash=await hashPlan({...plan.data,plan_hash:''});if(planHash!==plan.data.plan_hash)return reply.code(400).send({error:'analytic_plan_hash_invalid'});
-    const sourceId=plan.data.scope.source_ids[0]!;
+    let validatedPlan;try{validatedPlan=await validateGatewayPlan(body?.plan);}catch{return reply.code(400).send({error:'gateway_plan_rejected'});}
+    const sourceId=validatedPlan.scope.source_ids[0]!;
     const queued=await withTenant(options.pool,current.tenantId,async(client)=>{
       const gateway=await client.query<{source_connection_id:string}>('SELECT source_connection_id FROM gateway.clients WHERE tenant_id=$1 AND gateway_id=$2 AND revoked_at IS NULL',[current.tenantId,gatewayId]);
-      if(!gateway.rowCount||gateway.rows[0]!.source_connection_id!==sourceId||plan.data.scope.source_ids.length!==1)return null;
+      if(!gateway.rowCount||gateway.rows[0]!.source_connection_id!==sourceId)return null;
       const entitlement=await client.query("SELECT 1 FROM core.entitlements WHERE tenant_id=$1 AND principal_id=$2 AND capability_id='analytic.read' AND allowed AND (resource_id IS NULL OR resource_id=$3) LIMIT 1",[current.tenantId,current.userId,sourceId]);if(!entitlement.rowCount)return null;
-      const result=await client.query<{request_id:string}>('INSERT INTO gateway.requests(tenant_id,gateway_id,source_connection_id,plan) VALUES($1,$2,$3,$4::jsonb) RETURNING request_id',[current.tenantId,gatewayId,sourceId,JSON.stringify(plan.data)]);return result.rows[0];
+      const result=await client.query<{request_id:string}>('INSERT INTO gateway.requests(tenant_id,gateway_id,source_connection_id,plan) VALUES($1,$2,$3,$4::jsonb) RETURNING request_id',[current.tenantId,gatewayId,sourceId,JSON.stringify(validatedPlan)]);return result.rows[0];
     });
     if(!queued)return reply.code(403).send({error:'gateway_source_not_authorized'});return reply.code(202).send({requestId:queued.request_id,state:'queued'});
   });

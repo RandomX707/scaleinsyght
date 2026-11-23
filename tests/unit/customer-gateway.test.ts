@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createEnrollment, claimRequest, validateGatewayResult, createOutboundClient } from '@scaleinsyght/customer-gateway';
+import { createAnalyticPlan } from '@scaleinsyght/analytic';
+import { randomUUID } from 'node:crypto';
 
 describe('customer gateway protocol', () => {
   it('creates one-use enrollment values as hashes only', async () => {
@@ -32,7 +34,8 @@ describe('customer gateway protocol', () => {
   });
 
   it('validates a read plan and returns only the aggregate envelope over outbound HTTPS', async () => {
-    const plan = { plan_id:'00000000-0000-4000-8000-000000000001',run_id:'00000000-0000-4000-8000-000000000002',version:1,plan_hash:'a'.repeat(64),question:'Count synthetic rows',scope:{source_ids:['00000000-0000-4000-8000-000000000003'],as_of:'2026-01-01T00:00:00Z'},steps:[{step_id:'00000000-0000-4000-8000-000000000004',capability_id:'analytic.read',capability_version:1,agent_id:'00000000-0000-4000-8000-000000000005',source_id:'00000000-0000-4000-8000-000000000003',via_collating_agent_id:'00000000-0000-4000-8000-000000000006',group_version:1,inputs:{question_hash:'a'.repeat(64)},depends_on:[],effect_class:'READ',timeout_s:60,retry:{max:0,backoff:'none'},idempotency_key:'synthetic'}],combine:[{level:'group',collating_agent_id:'00000000-0000-4000-8000-000000000006',inputs:['00000000-0000-4000-8000-000000000004'],join_keys:[],output_schema:{type:'object'}}],budgets:{max_parallel:1,max_runtime_s:60,max_tokens:0,max_source_queries:1}};
+    const sourceId=randomUUID();
+    const plan=await createAnalyticPlan({question:'Count synthetic rows',runId:randomUUID(),sources:[{sourceId,agentId:randomUUID(),groupId:randomUUID(),groupVersion:1}]});
     const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({request:{requestId:'request-a',fencingToken:'fence',plan}}),{status:200})).mockResolvedValueOnce(new Response(JSON.stringify({status:'completed'}),{status:200}));
     const client = createOutboundClient({baseUrl:'https://control.example',credential:'synthetic-credential',fetcher});
     const execute = vi.fn().mockResolvedValue([{metric:'row_count',value:8}]);

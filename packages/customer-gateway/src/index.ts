@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { AnalyticPlanSchema } from '@scaleinsyght/contracts';
+import { AnalyticPlanSchema, hashPlan, type AnalyticPlan } from '@scaleinsyght/contracts';
 
 const digest = (value: string): string => createHash('sha256').update(value).digest('hex');
 
@@ -22,6 +22,18 @@ export function claimRequest(input: { requestId: string; tenantId: string; now: 
 }
 
 export interface GatewayResult { requestId: string; fencingToken: string; aggregates: Array<{ metric: string; value: number; unit?: string }> }
+
+export async function validateGatewayPlan(value: unknown): Promise<AnalyticPlan> {
+  const parsed=AnalyticPlanSchema.safeParse(value);
+  if(!parsed.success)throw new Error('gateway_plan_rejected');
+  const plan=parsed.data;
+  if(plan.scope.source_ids.length!==1||plan.steps.length>plan.budgets.max_source_queries||plan.steps.some((step)=>step.effect_class!=='READ'||!plan.scope.source_ids.includes(step.source_id)||Object.keys(step.inputs).length!==1||!/^[a-f0-9]{64}$/.test(String(step.inputs.question_hash))))throw new Error('gateway_plan_rejected');
+  const steps=new Map(plan.steps.map(step=>[step.step_id,step]));const active=new Set<string>();const done=new Set<string>();
+  const visit=(id:string)=>{if(active.has(id))throw new Error('gateway_plan_rejected');if(done.has(id))return;const step=steps.get(id);if(!step)throw new Error('gateway_plan_rejected');active.add(id);for(const dependency of step.depends_on)visit(dependency);active.delete(id);done.add(id);};
+  for(const id of steps.keys())visit(id);
+  if(await hashPlan({...plan,plan_hash:''})!==plan.plan_hash)throw new Error('gateway_plan_rejected');
+  return plan;
+}
 
 export function validateGatewayResult(value: unknown): GatewayResult {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('gateway_result_invalid');
@@ -49,8 +61,7 @@ export function createOutboundClient(input: { baseUrl: string; credential: strin
     async processNext(execute: (plan: ReturnType<typeof AnalyticPlanSchema.parse>) => Promise<GatewayResult['aggregates']>) {
       const polled = await this.poll() as { request: null | { requestId: string; fencingToken: string; plan: unknown } };
       if (!polled.request) return { status: 'empty' as const };
-      const plan = AnalyticPlanSchema.parse(polled.request.plan);
-      if (plan.steps.some((step) => step.effect_class !== 'READ' || 'sql' in step.inputs)) throw new Error('gateway_plan_rejected');
+      const plan = await validateGatewayPlan(polled.request.plan);
       const aggregates = await execute(plan);
       const result = validateGatewayResult({ requestId: polled.request.requestId, fencingToken: polled.request.fencingToken, aggregates });
       const response = await fetcher(new URL(`/api/gateways/results/${encodeURIComponent(result.requestId)}`, base), { method: 'POST', headers: { authorization: `Bearer ${input.credential}`, 'content-type': 'application/json' }, body: JSON.stringify(result), signal: AbortSignal.timeout(30_000) });

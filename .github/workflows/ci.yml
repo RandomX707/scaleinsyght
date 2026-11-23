@@ -49,6 +49,7 @@ jobs:
       - run: pnpm db:setup
       - run: pnpm lint
       - run: pnpm typecheck
+      - run: pnpm eval:golden
       - run: pnpm test
       - run: pnpm test:sqlparse
       - run: pnpm db:migrate
