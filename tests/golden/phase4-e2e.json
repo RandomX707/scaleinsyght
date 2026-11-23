@@ -7,6 +7,8 @@
     { "id": "40000000-0000-4000-8000-000000000001", "tenantId": "phase4-e2e-disconnected", "email": "owner@phase4-e2e-disconnected.synthetic.example" },
     { "id": "40000000-0000-4000-8000-000000000002", "tenantId": "phase4-e2e-disconnected", "email": "reviewer@phase4-e2e-disconnected.synthetic.example" },
     { "id": "40000000-0000-4000-8000-000000000003", "tenantId": "phase4-e2e-journey", "email": "owner@phase4-e2e-journey.synthetic.example" },
-    { "id": "40000000-0000-4000-8000-000000000004", "tenantId": "phase4-e2e-journey", "email": "reviewer@phase4-e2e-journey.synthetic.example" }
+    { "id": "40000000-0000-4000-8000-000000000004", "tenantId": "phase4-e2e-journey", "email": "reviewer@phase4-e2e-journey.synthetic.example" },
+    { "id": "40000000-0000-4000-8000-000000000005", "tenantId": "phase4-hub-golden", "email": "owner@phase4-hub-golden.synthetic.example" },
+    { "id": "40000000-0000-4000-8000-000000000006", "tenantId": "phase4-hub-golden", "email": "reviewer@phase4-hub-golden.synthetic.example" }
   ]
 }

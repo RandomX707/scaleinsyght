@@ -29,7 +29,7 @@ async function signIn(page:Page,email:string){await page.goto('/login');await pa
 async function signOut(page:Page){await page.getByRole('button',{name:'Workspace profile'}).click();await page.getByRole('menuitem',{name:'Sign out'}).click();}
 
 test('c4_hub_empty_state_is_scoped_to_a_new_tenant_without_connected_adapters',async({page})=>{
- const {accounts}=await createTenant(false);await signIn(page,accounts.owner);await page.getByRole('link',{name:'Hub integrations'}).click();await expect(page.getByRole('heading',{name:'Hub integrations'})).toBeVisible();await expect(page.getByText('No adapters are configured.')).toBeVisible();await expect(page.getByText('No certified metrics are available while Semantics is disconnected.')).toBeVisible();
+ const {accounts}=await createTenant(true);await signIn(page,accounts.owner);await page.getByRole('link',{name:'Hub integrations'}).click();await expect(page.getByRole('heading',{name:'Hub integrations'})).toBeVisible();await page.getByRole('button',{name:'Disconnect semantics'}).click();await expect(page.getByText('No certified metrics are available while Semantics is disconnected.')).toBeVisible();await page.getByRole('button',{name:'Disconnect data studio'}).click();await expect(page.getByText('data studio · Disconnected · version 1')).toBeVisible();const lineage=await page.evaluate(async()=>fetch('/api/lineage/assets').then(response=>response.status));expect(lineage).toBe(200);
 });
 
 test('c4_and_c8_certified_metric_and_two_member_flowspec_handoff',async({page})=>{

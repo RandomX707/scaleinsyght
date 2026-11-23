@@ -17,7 +17,7 @@ Status values: **decided**, **open** (with the phase it is needed by), or **assu
 | 9 | Graph store | decided | Keep PostgreSQL as the graph store. On the synthetic 100,000-asset graph, 50 random depth-4 traversals measured p50 103.7 ms, p95 104.7 ms and max 107.6 ms; no graph infrastructure is needed. | Yashaswi, 23 Nov 2026 |
 | 10 | Retention and file storage | decided | Each tenant's uploaded workbooks are stored on a dedicated encrypted local volume and deleted when their connector is removed. Retention periods for other records will be set later. | Yashaswi, 23 Nov 2026 |
 | 11 | What counts as lineage verification | assumed, pending Yashaswi | A run event naming the specific input and output marks that exact flow run_verified; reconciliation is recorded separately as reconciled | Agent assumption, 23 Nov 2026 |
-| 12 | Hub product interface order | open (phase 4) | Data Studio and Semantics first | |
+| 12 | Hub product interface order | assumed, pending Yashaswi | Data Studio and Semantics first; BI inventory stays read-only, while Data Lake and Weave remain disconnected | Agent assumption, 23 Nov 2026 |
 | 13 | Audit before copying INSYGHT code | decided | Security and licence review per module at the recorded commits | Yashaswi, 23 Nov 2026 |
 | 14 | Portfolio wording | open (before external use) | See design | |
 | 15 | Numeric acceptance thresholds | decided | Provisional; replace with measured baselines after phase 1 | Yashaswi, 23 Nov 2026 |

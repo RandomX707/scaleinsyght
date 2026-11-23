@@ -21,6 +21,7 @@ All routes require an authenticated tenant session, enforce C1 authorization and
 | Route | Behavior | Contract |
 |---|---|---|
 | `GET /api/hub/adapters` | List tenant-visible adapter product, version, connection state and supported operations; report only safe metadata. | C1 rules 1–4; C2; C7 rules 1, 3 |
+| `POST /api/hub/adapters/:product/connect` and `/disconnect` | Change the selected local golden adapter state for this tenant; no vendor credentials or endpoint are used. | C1 rules 1–4; C2; C7 |
 | `GET /api/semantics/metrics` | List certified metrics from connected Semantics adapter versions, with dimensions, certification state and safe source references. | C1; C2; C4; C7 rules 1, 3 |
 | `POST /api/semantics/metrics/:metricId/query` | Start a durable read-only run pinned to metric and adapter versions; return the certified value and evidence only after the adapter confirms it. | C1 rules 2–4; C3; C4 rules 1–5; C5; C7 |
 | `GET /api/flowspecs` and `GET /api/flowspecs/:id` | List tenant FlowSpec versions and safe status, approval, source snapshot and hand-off outcome. | C1; C5; C8 rules 1, 6–7 |
@@ -50,7 +51,7 @@ Register every new tenant table in the C1 catalogue and test forced RLS, cross-t
 
 ## Events
 
-Append-only safe events: `hub_adapter_connected`, `hub_adapter_disconnected`, `certified_metric_queried`, `flowspec_drafted`, `flowspec_versioned`, `flowspec_approval_requested`, `flowspec_approved`, `flowspec_rejected`, `handoff_grant_consumed`, `handoff_intent_recorded`, `handoff_confirmed`, `handoff_outcome_unknown`, `handoff_reconciled`. Payloads include IDs, versions, hashes, status, safe counts and idempotency-key references only. They exclude metric result rows, compiled SQL, FlowSpec payload copies, credentials and raw connector responses. Approval/grant state, outbox intent and event commit atomically. **Contracts:** C1; C4–C5; C7–C8.
+Append-only `runs.events` include metric run lifecycle (`run_created`, state changes, `evidence_added`, `run_terminal`) and handoff lifecycle (`handoff_intent_created`, `run_terminal`). Payloads include IDs, versions, hashes and safe statuses only. They exclude metric result rows, compiled SQL, FlowSpec payload copies, credentials and raw connector responses. FlowSpec drafting, approval and grant status are retained in tenant-scoped immutable version and approval records. The handoff grant consumption, outbox intent and `handoff_intent_created` event commit atomically. **Contracts:** C1; C4–C5; C7–C8.
 
 ## UI
 
@@ -58,7 +59,7 @@ Append-only safe events: `hub_adapter_connected`, `hub_adapter_disconnected`, `c
 |---|---|---|
 | Hub Integrations (`/hub`) | Show Data Studio and Semantics adapter state/version and safe capabilities; allow connecting/disconnecting the local golden adapters. Show certified metrics and let the user query one, rendering the exact returned value, certification badge and evidence. | C1; C2; C4; C7; CLAUDE.md §§10–11 |
 | FlowSpec detail (`/flowspecs/:id`) | Show typed mapping, source snapshot, version/hash, draft/approval/hand-off status. Editing creates a new version. Request approval and hand-off are separate actions. | C1; C3; C5; C8 rules 1–4, 7–8 |
-| Approval matrix (`/approval-matrix`) | Add FlowSpecs awaiting approval with requester, exact version/hash, targets, expiry and safe diff. An eligible second member can approve or reject; approval shows the single-use grant state. | C1; C5; C8 rules 1–2, 5 |
+| Approval matrix (`/approval-matrix`) | Add FlowSpecs awaiting approval with exact version/hash and expiry. An eligible second member can approve; approval issues the single-use grant. | C1; C5; C8 rules 1–2, 5 |
 | Hand-off status | Show pending, confirmed, unknown and reconciled distinctly. Only confirmed receiver state is labelled accepted; an unknown response offers status reconciliation, not retry delivery. | C1; C5; C8 rules 3–4, 7 |
 
 All controls are keyboard reachable, labeled and visibly focused. Disconnected adapters show an actionable empty state; no Phase 1–3 screen depends on a Hub adapter. **Contracts:** C1; C4–C5; C7–C8; CLAUDE.md §§10–11.
@@ -69,22 +70,25 @@ All controls are keyboard reachable, labeled and visibly focused. Disconnected a
 |---|---|
 | `c1_hub_adapters_and_metrics_are_tenant_scoped_with_forced_rls` | C1 rules 1–4 and acceptance 4; all new tables catalogue-covered |
 | `c2_hub_adapters_are_versioned_and_disconnection_preserves_history` | C2 versioning and append-only history; design §1.8 |
-| `c1_hub_routes_expose_only_authorized_adapter_capabilities` | C1 rules 2–4; C2 allow-list and version pinning |
 | `c4_certified_metric_uses_semantics_value_and_cites_adapter_evidence` | C4 rules 1–5; design §2.5 Phase 4 certified metric equality |
 | `c5_certified_metric_run_persists_safe_events_and_resumes_without_duplicates` | C4 rule 5; C5 rules 1–8; C7 |
+| `c1_semantics_metric_query_rechecks_entitlement_before_execution` | C1 authorization recheck and stored denial |
+| `c7_disconnected_semantics_adapter_does_not_fallback_to_exploratory_sql` | C7 disconnected behavior and no trust-route fallback |
+| `phase1_to_phase3_api_routes_remain_available_when_semantics_is_disconnected` | Design §2.5 Phase 4 disconnected-adapter regression criterion |
 | `c8_flowspec_hash_binds_version_snapshots_policy_and_expiry` | C8 rule 1; changing any bound field requires new approval |
-| `c8_handoff_without_valid_grant_is_refused_without_delivery` | C8 rules 1–2; design §2.5 Phase 4 unapproved/expired/consumed hand-off blocked |
-| `c8_flowspec_requester_cannot_self_approve` | C1 authorization; C8 rule 5 and Decision 32 assumption |
-| `c8_single_use_grant_race_delivers_exactly_once` | C5 fencing; C8 rules 2–3; design §2.5 Phase 4 concurrent executors |
-| `c8_crash_after_grant_claim_reuses_key_and_delivers_once` | C5 lease/fencing; C8 rule 3; design §1.4 and Contract 8 acceptance |
-| `c8_dropped_receiver_response_reconciles_by_key_without_duplicate_flowspec` | C5 outbox recovery; C8 rules 3–4; design §2.5 Phase 4 lost response |
+| `c8_requester_cannot_self_approve` | C1 authorization; C8 rule 5 and Decision 32 assumption |
 | `c8_changed_flowspec_after_approval_requires_new_approval` | C8 rule 1; design §2.5 Phase 4 mapping change invalidates approval |
-| `c8_handoff_ui_shows_accepted_only_after_receiver_confirmation` | C8 rule 7; CLAUDE.md §§10–11 |
-| `phase4_hub_metrics_and_flowspec_approval_are_keyboard_accessible` | CLAUDE.md §§10–11; C1; C4; C8 |
-| `phase4_phase1_to_phase3_workflows_pass_with_all_hub_adapters_disconnected` | Design §2.5 Phase 4 disconnected-adapter regression criterion |
+| `c8_rejects_mutating_or_unsupported_steps` | C8 bounded typed FlowSpec; no mutation/deploy/release behavior |
+| `c8_handoff_without_valid_grant_is_refused_without_delivery` | C8 rules 1–2; design §2.5 Phase 4 unapproved/expired/consumed hand-off blocked |
+| `c8_confirmed_handoff_reuses_the_same_receiver_record_and_outbox` | C5 outbox durability; C8 idempotency and receiver confirmation |
+| `c8_single_use_grant_race_delivers_exactly_once` | C5 fencing; C8 rules 2–3; design §2.5 Phase 4 concurrent executors |
+| `c8_crash_after_grant_claim_reuses_key_and_delivers_once` | C5 outbox recovery; C8 rule 3; design §1.4 and Contract 8 acceptance |
+| `c8_dropped_receiver_response_reconciles_by_key_without_duplicate_flowspec` | C5 outbox recovery; C8 rules 3–4; design §2.5 Phase 4 lost response |
+| `c4_hub_empty_state_is_scoped_to_a_new_tenant_without_connected_adapters` | C1 tenant isolation; C7 disconnected state and Phase 3 route availability |
+| `c4_and_c8_certified_metric_and_two_member_flowspec_handoff` | C4 certified evidence; C8 second-member approval, changed-version approval and confirmed-only acceptance |
 
 Use synthetic fixtures in `tests/golden/phase4.json`, real PostgreSQL 16 and only `si_test` for database suites. Required phase gates: lint, typecheck, unit, sqlparse, integration, contract and E2E. No test is skipped when an adapter is disconnected; deterministic fixtures cover the adapter contract without external services.
 
 ## Demo
 
-Seed and sign in with the Phase 4 synthetic tenant. Connect the local Semantics adapter, query its certified `active_customers` metric, and compare the displayed value with its adapter evidence. Connect Data Studio, draft a FlowSpec from a synthetic source mapping, approve it as the second tenant member, then hand it off. Show the confirmed receiver status. Repeat with a changed mapping and a simulated dropped response: the old approval is refused, while the approved version reconciles by the same key and exists once in Data Studio. Disconnect both adapters and verify existing connectors, analytics and lineage remain available.
+Run `pnpm db:seed:golden`, then sign in as `owner@phase4-hub-golden.synthetic.example` or `reviewer@phase4-hub-golden.synthetic.example` with the local golden password `golden-local-only`. Query the certified `active_customers` metric and inspect its adapter evidence. Create a FlowSpec as the owner, sign in as the reviewer to approve its exact version, then return as the owner to send it to Data Studio. Change the version and repeat approval before sending it. The E2E contract simulates a dropped receiver response and verifies reconciliation by the same key with one receiver record. Disconnect both adapters and verify existing connections, analytics and lineage remain available.

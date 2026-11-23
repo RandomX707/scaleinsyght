@@ -35,6 +35,10 @@ try{
     ON CONFLICT(tenant_id,metric_id) DO UPDATE SET adapter_version=EXCLUDED.adapter_version,name=EXCLUDED.name,description=EXCLUDED.description,dimensions=EXCLUDED.dimensions,unit=EXCLUDED.unit,certified=EXCLUDED.certified,fixture_key=EXCLUDED.fixture_key,source_asset=EXCLUDED.source_asset`,
     [phase4.tenant.id,metric.id,semantics.version,metric.name,metric.description,JSON.stringify(metric.dimensions),metric.unit,metric.certified,metric.fixtureKey,metric.sourceAsset]);
   }
+  await client.query("INSERT INTO registry.capabilities(tenant_id,capability_id,active_version,effect_class,effect_safety,enabled) VALUES($1,'semantics.metric.read',1,'READ','not_applicable',true) ON CONFLICT(tenant_id,capability_id) DO UPDATE SET enabled=true",[phase4.tenant.id]);
+  await client.query("INSERT INTO registry.capability_versions(tenant_id,capability_id,version,input_schema,output_schema) VALUES($1,'semantics.metric.read',1,'{}','{}') ON CONFLICT DO NOTHING",[phase4.tenant.id]);
+  const owner=phase4E2e.users.find(user=>user.tenantId===phase4.tenant.id&&user.email.startsWith('owner@'));
+  if(owner){const principal=await client.query<{user_id:string}>('SELECT user_id FROM core.users WHERE tenant_id=$1 AND email=$2',[phase4.tenant.id,owner.email]);if(principal.rows[0])await client.query("INSERT INTO core.entitlements(tenant_id,principal_id,capability_id,resource_id) SELECT $1,$2,'semantics.metric.read',$3 WHERE NOT EXISTS(SELECT 1 FROM core.entitlements WHERE tenant_id=$1 AND principal_id=$2 AND capability_id='semantics.metric.read' AND resource_id=$3)",[phase4.tenant.id,principal.rows[0].user_id,phase4.metrics[0]?.id]);}
  });
  console.log(`Seeded ${golden.tenants.length+phase3E2e.tenants.length+phase4E2e.tenants.length+1} synthetic tenants and ${golden.users.length+phase3E2e.users.length+phase4E2e.users.length} synthetic users.`);
 }catch(error){console.error('Golden seed failed; confirm migrations have run and DATABASE_URL_MIGRATE points to the Scale Insyght database.');throw error;}finally{await pool.end();}

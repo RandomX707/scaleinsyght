@@ -37,7 +37,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
   app.get('/api/flowspecs',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const result=await withTenant(options.pool,current.tenantId,async(client)=>client.query(
-      `SELECT f.flowspec_id AS "flowspecId",f.owner_id AS "ownerId",f.latest_version AS "latestVersion",v.subject_hash AS "subjectHash",a.status AS "approvalStatus"
+      `SELECT f.flowspec_id AS "flowspecId",f.owner_id AS "ownerId",f.latest_version AS "latestVersion",v.subject_hash AS "subjectHash",a.status AS "approvalStatus",a.expires_at AS "expiresAt"
        FROM hub.flowspecs f LEFT JOIN hub.flowspec_versions v ON v.tenant_id=f.tenant_id AND v.flowspec_id=f.flowspec_id AND v.version=f.latest_version
        LEFT JOIN hub.flowspec_approvals a ON a.tenant_id=v.tenant_id AND a.flowspec_id=v.flowspec_id AND a.version=v.version AND a.subject_hash=v.subject_hash
        WHERE f.tenant_id=$1 ORDER BY f.created_at DESC`,[current.tenantId]));
@@ -59,8 +59,9 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
   app.get<{Params:{id:string}}>('/api/flowspecs/:id',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const result=await withTenant(options.pool,current.tenantId,async(client)=>client.query(
-      `SELECT f.flowspec_id AS "flowspecId",f.owner_id AS "ownerId",v.version,v.payload,v.subject_hash AS "subjectHash",v.source_snapshot_ids AS "sourceSnapshotIds",v.policy_version AS "policyVersion",a.status AS "approvalStatus",a.approved_by AS "approvedBy",a.expires_at AS "expiresAt"
+      `SELECT f.flowspec_id AS "flowspecId",f.owner_id AS "ownerId",v.version,v.payload,v.subject_hash AS "subjectHash",v.source_snapshot_ids AS "sourceSnapshotIds",v.policy_version AS "policyVersion",a.status AS "approvalStatus",a.approved_by AS "approvedBy",a.expires_at AS "expiresAt",h.handoff_id AS "handoffId",h.status AS "handoffStatus",h.receiver_ref AS "receiverRef"
        FROM hub.flowspecs f JOIN hub.flowspec_versions v USING(tenant_id,flowspec_id) LEFT JOIN hub.flowspec_approvals a USING(tenant_id,flowspec_id,version,subject_hash)
+       LEFT JOIN LATERAL (SELECT handoff_id,status,receiver_ref FROM hub.handoffs WHERE tenant_id=v.tenant_id AND flowspec_id=v.flowspec_id AND version=v.version ORDER BY created_at DESC LIMIT 1) h ON true
        WHERE f.tenant_id=$1 AND f.flowspec_id=$2 ORDER BY v.version`,[current.tenantId,request.params.id]));
     if(!result.rowCount)return reply.code(404).send({error:'flowspec_not_found'});return reply.send({versions:result.rows});
   });
@@ -95,11 +96,12 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
   });
   app.post<{Params:{id:string}}>('/api/flowspecs/:id/handoff',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
-    if(!hubAdapters.dataStudio.connected)return reply.code(503).send({error:'hub_adapter_disconnected'});
+    const studio=await withTenant(options.pool,current.tenantId,(client)=>client.query<{connected:boolean}>("SELECT connected FROM hub.adapters WHERE tenant_id=$1 AND product='data_studio'",[current.tenantId]));
+    if(!studio.rows[0]?.connected||!hubAdapters.dataStudio.connected)return reply.code(503).send({error:'hub_adapter_disconnected'});
     const version=Number((request.body as {version?:unknown})?.version);if(!Number.isInteger(version)||version<1)return reply.code(400).send({error:'invalid_version'});
     const delivery=await withTenant(options.pool,current.tenantId,async(client)=>{
       const existing=await client.query<{handoff_id:string;idempotency_key:string;payload_hash:string;status:string;receiver_ref:string|null}>('SELECT handoff_id,idempotency_key,payload_hash,status,receiver_ref FROM hub.handoffs WHERE tenant_id=$1 AND flowspec_id=$2 AND version=$3',[current.tenantId,request.params.id,version]);
-      if(existing.rows[0])return {kind:'existing' as const,row:existing.rows[0]};
+      if(existing.rows[0])return {kind:'existing' as const,row:existing.rows[0],...(existing.rows[0].status==='pending'||existing.rows[0].status==='unknown'?{delivery:{flowspecId:request.params.id,version,payloadHash:existing.rows[0].payload_hash}}:{})};
       const approved=await client.query<{payload:Record<string,unknown>;subject_hash:string;grant_id:string;idempotency_key:string;expires_at:Date;consumed_at:Date|null}>(
         `SELECT v.payload,v.subject_hash,g.grant_id,g.idempotency_key,g.expires_at,g.consumed_at FROM hub.flowspec_versions v
          JOIN hub.flowspec_approvals a USING(tenant_id,flowspec_id,version,subject_hash) JOIN hub.handoff_grants g USING(tenant_id,approval_id,flowspec_id,version,subject_hash)
@@ -108,10 +110,12 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
       if(row.expires_at.getTime()<=Date.now())return {kind:'expired' as const};
       if(row.consumed_at)return {kind:'consumed' as const};
       const runId=randomUUID();await client.query("INSERT INTO runs.runs(tenant_id,run_id,principal_id,state) VALUES($1,$2,$3,'RUNNING')",[current.tenantId,runId,current.userId]);
+      const decision=await client.query<{decision_id:string}>("INSERT INTO runs.authz_decisions(tenant_id,run_id,principal_id,capability_id,outcome,policy_version,reasons) VALUES($1,$2,$3,'flowspec.handoff','allow','phase4-v1','[\"approved_single_use_grant\"]') RETURNING decision_id",[current.tenantId,runId,current.userId]);
       const payloadHash=createHash('sha256').update(JSON.stringify(row.payload)).digest('hex');
       const outbox=await client.query<{message_id:string}>("INSERT INTO runs.outbox(tenant_id,run_id,destination,payload) VALUES($1,$2,'data_studio',$3::jsonb) RETURNING message_id",[current.tenantId,runId,JSON.stringify({flowspecId:request.params.id,version,payloadHash})]);
       const handoff=await client.query<{handoff_id:string}>('INSERT INTO hub.handoffs(tenant_id,grant_id,flowspec_id,version,run_id,outbox_message_id,idempotency_key,payload_hash,status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,\'pending\') RETURNING handoff_id',[current.tenantId,row.grant_id,request.params.id,version,runId,outbox.rows[0]!.message_id,row.idempotency_key,payloadHash]);
       await client.query('UPDATE hub.handoff_grants SET consumed_at=clock_timestamp() WHERE tenant_id=$1 AND grant_id=$2',[current.tenantId,row.grant_id]);
+      await client.query("INSERT INTO runs.events(tenant_id,run_id,sequence,event_type,decision_id,safe_payload) VALUES($1,$2,1,'handoff_intent_created',$3,$4::jsonb)",[current.tenantId,runId,decision.rows[0]!.decision_id,JSON.stringify({flowspec_id:request.params.id,version,status:'pending',payload_hash:payloadHash})]);
       return {kind:'created' as const,row:{handoff_id:handoff.rows[0]!.handoff_id,idempotency_key:row.idempotency_key,payload_hash:payloadHash,status:'pending',receiver_ref:null},delivery:{flowspecId:request.params.id,version,payloadHash}};
     });
     if(delivery.kind==='no_grant')return reply.code(403).send({error:'approved_unexpired_grant_required'});if(delivery.kind==='expired')return reply.code(409).send({error:'handoff_grant_expired'});if(delivery.kind==='consumed')return reply.code(409).send({error:'handoff_grant_consumed'});
@@ -120,10 +124,12 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const lookup=await hubAdapters.dataStudio.lookupFlowSpec(row.idempotency_key) as {status?:string;receiverRef?:string}|null;
     let receipt=lookup;
     if(!receipt&&delivery.kind==='created')receipt=await hubAdapters.dataStudio.deliverFlowSpec(row.idempotency_key,delivery.delivery) as {status?:string;receiverRef?:string};
+    if(!receipt&&delivery.kind==='existing'&&delivery.delivery)receipt=await hubAdapters.dataStudio.deliverFlowSpec(row.idempotency_key,delivery.delivery) as {status?:string;receiverRef?:string};
     if(!receipt)return reply.code(202).send({handoffId:row.handoff_id,status:'unknown',accepted:false});
     if(receipt.status!=='accepted')return reply.code(202).send({handoffId:row.handoff_id,status:'unknown',accepted:false});
     await withTenant(options.pool,current.tenantId,async(client)=>{
-      await client.query("UPDATE hub.handoffs SET status='confirmed',receiver_ref=$3,confirmed_at=clock_timestamp() WHERE tenant_id=$1 AND handoff_id=$2 AND status IN ('pending','unknown')",[current.tenantId,row.handoff_id,receipt!.receiverRef??`synthetic:${row.idempotency_key}`]);
+      const confirmed=await client.query<{run_id:string|null}>('UPDATE hub.handoffs SET status=\'confirmed\',receiver_ref=$3,confirmed_at=clock_timestamp() WHERE tenant_id=$1 AND handoff_id=$2 AND status IN (\'pending\',\'unknown\') RETURNING run_id',[current.tenantId,row.handoff_id,receipt!.receiverRef??`synthetic:${row.idempotency_key}`]);
+      if(confirmed.rows[0]?.run_id){const run=await client.query<{state_version:number}>("UPDATE runs.runs SET state='COMPLETED',state_version=state_version+1,updated_at=clock_timestamp() WHERE tenant_id=$1 AND run_id=$2 RETURNING state_version",[current.tenantId,confirmed.rows[0].run_id]);const decision=await client.query<{decision_id:string}>('SELECT decision_id FROM runs.authz_decisions WHERE tenant_id=$1 AND run_id=$2 ORDER BY created_at DESC LIMIT 1',[current.tenantId,confirmed.rows[0].run_id]);await client.query("INSERT INTO runs.events(tenant_id,run_id,sequence,event_type,decision_id,safe_payload) VALUES($1,$2,2,'run_terminal',$3,$4::jsonb)",[current.tenantId,confirmed.rows[0].run_id,decision.rows[0]!.decision_id,JSON.stringify({state:'COMPLETED',state_version:run.rows[0]!.state_version,receiver_status:'confirmed'})]);}
       await client.query("UPDATE runs.outbox SET sent_at=clock_timestamp() WHERE tenant_id=$1 AND message_id=(SELECT outbox_message_id FROM hub.handoffs WHERE tenant_id=$1 AND handoff_id=$2)",[current.tenantId,row.handoff_id]);
     });
     return reply.send({handoffId:row.handoff_id,status:'confirmed',accepted:true,receiverRef:receipt.receiverRef??`synthetic:${row.idempotency_key}`});
@@ -133,7 +139,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const found=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{handoff_id:string;idempotency_key:string;payload_hash:string;status:string;receiver_ref:string|null}>('SELECT handoff_id,idempotency_key,payload_hash,status,receiver_ref FROM hub.handoffs WHERE tenant_id=$1 AND flowspec_id=$2 AND handoff_id=$3',[current.tenantId,request.params.id,request.params.handoffId]));
     const row=found.rows[0];if(!row)return reply.code(404).send({error:'handoff_not_found'});if(row.status==='confirmed'||row.status==='reconciled')return reply.send({handoffId:row.handoff_id,status:row.status,accepted:true,receiverRef:row.receiver_ref});
     const receipt=await hubAdapters.dataStudio.lookupFlowSpec(row.idempotency_key) as {status?:string;receiverRef?:string}|null;
-    if(receipt?.status==='accepted'){await withTenant(options.pool,current.tenantId,(client)=>client.query("UPDATE hub.handoffs SET status='reconciled',receiver_ref=$3,confirmed_at=clock_timestamp() WHERE tenant_id=$1 AND handoff_id=$2 AND status IN ('pending','unknown')",[current.tenantId,row.handoff_id,receipt.receiverRef??`synthetic:${row.idempotency_key}`]));return reply.send({handoffId:row.handoff_id,status:'reconciled',accepted:true,receiverRef:receipt.receiverRef});}
+    if(receipt?.status==='accepted'){await withTenant(options.pool,current.tenantId,async(client)=>{const reconciled=await client.query<{run_id:string|null}>('UPDATE hub.handoffs SET status=\'reconciled\',receiver_ref=$3,confirmed_at=clock_timestamp() WHERE tenant_id=$1 AND handoff_id=$2 AND status IN (\'pending\',\'unknown\') RETURNING run_id',[current.tenantId,row.handoff_id,receipt.receiverRef??`synthetic:${row.idempotency_key}`]);if(reconciled.rows[0]?.run_id){const run=await client.query<{state_version:number}>("UPDATE runs.runs SET state='COMPLETED',state_version=state_version+1,updated_at=clock_timestamp() WHERE tenant_id=$1 AND run_id=$2 RETURNING state_version",[current.tenantId,reconciled.rows[0].run_id]);const decision=await client.query<{decision_id:string}>('SELECT decision_id FROM runs.authz_decisions WHERE tenant_id=$1 AND run_id=$2 ORDER BY created_at DESC LIMIT 1',[current.tenantId,reconciled.rows[0].run_id]);await client.query("INSERT INTO runs.events(tenant_id,run_id,sequence,event_type,decision_id,safe_payload) VALUES($1,$2,2,'run_terminal',$3,$4::jsonb)",[current.tenantId,reconciled.rows[0].run_id,decision.rows[0]!.decision_id,JSON.stringify({state:'COMPLETED',state_version:run.rows[0]!.state_version,receiver_status:'reconciled'})]);}});return reply.send({handoffId:row.handoff_id,status:'reconciled',accepted:true,receiverRef:receipt.receiverRef});}
     await withTenant(options.pool,current.tenantId,(client)=>client.query("UPDATE hub.handoffs SET status='unknown' WHERE tenant_id=$1 AND handoff_id=$2 AND status='pending'",[current.tenantId,row.handoff_id]));return reply.code(202).send({handoffId:row.handoff_id,status:'unknown',accepted:false});
   });
   app.get('/api/hub/adapters',async(request,reply)=>{
@@ -141,6 +147,18 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const adapters=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{product:string;connected:boolean;version:number;capabilities:string[];updated_at:Date}>(
       `SELECT a.product,a.connected,a.current_version AS version,v.capabilities,a.updated_at FROM hub.adapters a JOIN hub.adapter_versions v ON v.tenant_id=a.tenant_id AND v.product=a.product AND v.version=a.current_version WHERE a.tenant_id=$1 ORDER BY a.product`,[current.tenantId]));
     return reply.send({adapters:adapters.rows.map(({updated_at,...adapter})=>({...adapter,updatedAt:updated_at.toISOString()}))});
+  });
+  app.post<{Params:{product:string}}>('/api/hub/adapters/:product/connect',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    if(!['data_studio','semantics'].includes(request.params.product))return reply.code(404).send({error:'hub_adapter_not_found'});
+    const changed=await withTenant(options.pool,current.tenantId,async(client)=>client.query('UPDATE hub.adapters SET connected=true,updated_at=clock_timestamp() WHERE tenant_id=$1 AND product=$2 RETURNING product,connected,current_version AS version',[current.tenantId,request.params.product]));
+    if(!changed.rowCount)return reply.code(404).send({error:'hub_adapter_not_found'});return reply.send({adapter:changed.rows[0]});
+  });
+  app.post<{Params:{product:string}}>('/api/hub/adapters/:product/disconnect',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    if(!['data_studio','semantics'].includes(request.params.product))return reply.code(404).send({error:'hub_adapter_not_found'});
+    const changed=await withTenant(options.pool,current.tenantId,async(client)=>client.query('UPDATE hub.adapters SET connected=false,updated_at=clock_timestamp() WHERE tenant_id=$1 AND product=$2 RETURNING product,connected,current_version AS version',[current.tenantId,request.params.product]));
+    if(!changed.rowCount)return reply.code(404).send({error:'hub_adapter_not_found'});return reply.send({adapter:changed.rows[0]});
   });
   app.get('/api/semantics/metrics',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});

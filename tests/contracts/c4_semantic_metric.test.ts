@@ -113,4 +113,13 @@ describe('contract 4 certified metrics through Semantics', () => {
     expect(query.statusCode).toBe(503);
     expect(query.json()).toMatchObject({ error: 'hub_adapter_disconnected' });
   });
+
+  it('phase1_to_phase3_api_routes_remain_available_when_semantics_is_disconnected', async () => {
+    const [usage,connections,lineage]=await Promise.all([
+      server.inject({method:'GET',url:'/api/usage',headers:{cookie}}),
+      server.inject({method:'GET',url:'/api/connections',headers:{cookie}}),
+      server.inject({method:'GET',url:'/api/lineage/assets',headers:{cookie}}),
+    ]);
+    expect(usage.statusCode).toBe(200);expect(connections.statusCode).toBe(200);expect(lineage.statusCode).toBe(200);
+  });
 });
