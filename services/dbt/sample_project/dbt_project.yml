@@ -1,0 +1,6 @@
+name: scaleinsyght_sample_hospital
+version: '1.0.0'
+config-version: 2
+profile: scaleinsyght_sample_hospital
+model-paths: ['models']
+clean-targets: ['target', 'dbt_packages']

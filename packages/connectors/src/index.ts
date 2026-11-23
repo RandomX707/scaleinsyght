@@ -69,6 +69,8 @@ export interface ReadOnlyConnector {
   test(): Promise<{ ok: true; capabilities: ['discover', 'profile']; readOnly: true }>;
   discover(input: { mode: 'profile' | 'nightly'; scope?: ConnectorScope }): Promise<DiscoveryResult>;
   profile(assetKey: string, scope?: ConnectorScope, mode?: 'profile' | 'nightly'): Promise<ObjectProfile>;
+  structuralReferences?(): Promise<Array<{from:string;to:string;fromColumn:string;toColumn:string}>>;
+  close?(): Promise<void>;
 }
 
 const fixturePath = fileURLToPath(new URL('../../../tests/golden/phase1.json', import.meta.url));
@@ -189,6 +191,8 @@ export function createGoldenConnector(sourceId: string): ReadOnlyConnector {
   if (!source) throw new Error(`golden_source_not_found:${sourceId}`);
   return new GoldenConnector(source);
 }
+
+export { PostgresConnector, createPostgresConnector, type PostgresStructuralReference } from './postgres.js';
 
 export function listGoldenSources(): ReadonlyArray<Pick<GoldenSource, 'id' | 'type' | 'name'>> {
   return golden.sources.map(({ id, type, name }) => ({ id, type, name }));

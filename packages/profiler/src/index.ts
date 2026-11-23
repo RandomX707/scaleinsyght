@@ -143,7 +143,8 @@ export async function runGoldenProfile(
       }
     }
 
-    for (const reference of listGoldenStructuralReferences()) {
+    const structuralReferences=input.connector.structuralReferences?await input.connector.structuralReferences():listGoldenStructuralReferences();
+    for (const reference of structuralReferences) {
       const fromId = fieldAssets.get(`${reference.from}.${reference.fromColumn}`);
       const toId = fieldAssets.get(`${reference.to}.${reference.toColumn}`);
       if (!fromId || !toId) continue;
