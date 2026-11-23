@@ -33,7 +33,8 @@ New tenant-owned tables use `tenant_id`, `ENABLE ROW LEVEL SECURITY`, `FORCE ROW
 |---|---|---|
 | `reports.definitions` | Owner, name, governed definition id/version, format, active state; immutable version reference | 1, 3, 5 |
 | `reports.snapshots` | Run id, safe answer/evidence envelope, plan hash, exact figure payload hash, creation time; append-only | 1, 4, 5, 7 |
-| `reports.schedules` | Owner, governed id/version, UTC time, next/last slot, enabled; unique tenant/definition/version/slot prevents duplicate dispatch | 1, 3, 5 |
+| `reports.schedules` | Owner, governed id/version, UTC time, next/last slot, enabled | 1, 3, 5 |
+| `reports.schedule_slots` | Durable tenant/schedule/UTC-slot key, deterministic run id, pending/started/skipped state and safe revocation reason | 1, 3, 5 |
 | `reports.export_events` | Append-only safe export metadata: snapshot, format, artifact hash, actor and timestamp | 1, 4, 5, 7 |
 
 Saved question membership stays in the existing owner-only `registry.personal_memories.saved_plan_ids`; plans remain immutable in `runs.analytic_plans`. No result rows or raw identifiers enter personal memory or report snapshots.
@@ -60,14 +61,13 @@ No event contains answer rows, identifier values, credentials or unrestricted SQ
 
 | Named test case | Acceptance | Contract |
 |---|---|---|
-| `c1_saved_questions_are_private_and_deletable` | Only the run owner sees a saved question; deletion removes it from that person's list and cannot expose another tenant/person's plan | 1 |
-| `c3_saved_question_starts_from_revalidated_plan` | Similar-question reuse starts from the saved plan, generates a new run id and rechecks current source authorization and plan validity | 3, 5 |
-| `c4_evidence_pack_reproduces_completed_run_figures` | PDF, XLSX and PPTX exports contain the same aggregate figures and evidence references as the completed answer; stored hash matches the exported payload | 4 |
-| `c5_report_snapshot_is_append_only_and_run_is_durable` | Governed report snapshots refer to an immutable approved version; retry/recovery cannot duplicate a run slot or rewrite a snapshot | 5 |
-| `c7_exports_exclude_restricted_rows_and_identifiers` | Export scans find no raw result rows, restricted fields, credentials or identifier values | 7 |
+| `c1_saved_questions_are_private_deletable_and_revalidated_before_reuse` | Only the run owner sees a saved question; deletion removes it; reuse rechecks source authorization and starts a new run from the immutable plan | 1, 3, 5 |
+| `c4_evidence_pack_{pdf,xlsx,pptx}_reproduces_safe_run_figures` | Each format contains the completed run's aggregate figures and evidence references and creates an export audit row | 4 |
+| `c7_evidence_pack_rejects_identifier_values_in_cited_summaries` | Email, identifier-like values and credential-like values in claims, summaries or locators are rejected before rendering | 7 |
+| `c5_daily_schedule_claim_dispatches_at_most_once_per_utc_slot` | A pending slot survives retry with the same deterministic run id; run events are idempotent; revoked entitlement is recorded as a safe skipped slot | 3, 5 |
 | `c1_scheduled_report_checks_owner_and_tenant` | Schedule list, update and disable are isolated by tenant and owner | 1 |
-| `c3_scheduled_run_requires_current_approval_and_read_capability` | Due schedule is skipped with a safe reason when approval, entitlement, source state or READ capability is revoked | 3, 5 |
-| `c5_daily_schedule_dispatches_once_per_utc_slot` | Worker crash/retry dispatches at most one run for a schedule slot and appends safe lifecycle events | 5 |
 | `c4_report_export_requires_evidence_backed_snapshot` | Draft, failed or unsupported report exports are rejected; completed report output cites its run evidence | 4 |
+| `c1_saved_question_requires_accepted_answer_and_can_be_reused_or_removed` | Browser flow saves only useful feedback, reuses the plan, and removes it from the owner's list | 1, 3, 5 |
+| `c5_governed_report_exports_evidence_and_has_an_owner_scoped_daily_schedule` | Browser flow separates owner/reviewer approval, exports a completed snapshot, and creates/disables a UTC schedule | 1, 3, 4, 5, 7 |
 | `c6_graph_benchmark_stays_below_one_second_p95` | 50 random depth-four traversals on the 100k synthetic graph stay below 1 second p95, retaining Decision 9 | 6 |
 
