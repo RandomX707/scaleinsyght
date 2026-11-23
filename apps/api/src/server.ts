@@ -3,7 +3,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { withTenant, getUsage } from '@scaleinsyght/db';
 import { activateConnection, approveGovernedVersion, createConnectionDraft, createGovernedDraft, deletePersonalMemory, getApprovedGovernedVersion, getPersonalMemory, moveConnectionToGroup, putPersonalMemory, type ConnectorType, type PersonalMemoryData } from '@scaleinsyght/registry';
-import { createGoldenConnector, createPostgresConnector, listGoldenSources, type ReadOnlyConnector } from '@scaleinsyght/connectors';
+import { createCrmConnector, createGoldenConnector, createLakeConnector, createPostgresConnector, listGoldenSources, type ReadOnlyConnector } from '@scaleinsyght/connectors';
 import { EncryptedArtifactStore } from '@scaleinsyght/artifacts';
 import { getNotifications, markNotificationRead, readConnectionScope, readWorkbook, retireConnection, runGoldenProfile, saveConnectionScope, storeWorkbook } from '@scaleinsyght/profiler';
 import { applyPersonalContext, createAnalyticPlan, startAnalyticRun, submitFeedback, type StructuredAnswer } from '@scaleinsyght/analytic';
@@ -54,10 +54,18 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
   const oidcFetch=options.oidcFetch??fetch;
   const postgresConnectors=new Map<string,ReadOnlyConnector>();
   const connectorFor=(sourceId:string):ReadOnlyConnector=>{
+    if(sourceId==='synthetic-lake')return createLakeConnector();
+    if(sourceId==='synthetic-crm')return createCrmConnector();
     if(sourceId!=='local-hospital')return createGoldenConnector(sourceId);
     const url=process.env.DATABASE_URL_SAMPLE_SOURCE;if(!url)throw new Error('DATABASE_URL_SAMPLE_SOURCE is required for the local hospital source');
     let connector=postgresConnectors.get(url);if(!connector){connector=createPostgresConnector(url);postgresConnectors.set(url,connector);}return connector;
   };
+  const availableConnectorSources=()=>[
+    ...listGoldenSources(),
+    ...(process.env.DATABASE_URL_SAMPLE_SOURCE?[{id:'local-hospital',type:'postgres' as const,name:'Local synthetic hospital PostgreSQL'}]:[]),
+    {id:'synthetic-lake',type:'lake' as const,name:'Synthetic lake'},
+    {id:'synthetic-crm',type:'crm' as const,name:'Synthetic CRM'},
+  ];
   app.addHook('onClose',async()=>{await Promise.all([...postgresConnectors.values()].map(connector=>connector.close?.()));});
   const hubAdapters=options.hubAdapters??createGoldenHubAdapters(getGoldenHubFixtures());
   const gatewayAuth=async(request: { headers: Record<string, string | string[] | undefined> })=>{
@@ -908,7 +916,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
   });
   app.post<{Body:{sourceId?:string}}>('/api/connections',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
-    const source=[...listGoldenSources(),...(process.env.DATABASE_URL_SAMPLE_SOURCE?[{id:'local-hospital',type:'postgres' as const,name:'Local synthetic hospital PostgreSQL'}]:[])].find((item)=>item.id===request.body?.sourceId);
+    const source=availableConnectorSources().find((item)=>item.id===request.body?.sourceId);
     if(!source)return reply.code(400).send({error:'unknown_synthetic_source'});
     const draft=await createConnectionDraft(options.pool,{tenantId:current.tenantId,connectorType:source.type as ConnectorType,sourceRef:source.id});
     return reply.code(201).send({connectionId:draft.connectionId,status:'draft',connectorType:source.type,sourceName:source.name});
@@ -918,7 +926,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const draft=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{source_ref:string|null;connector_type:string;status:string}>(
       'SELECT source_ref,connector_type,status FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2',[current.tenantId,request.params.connectionId]));
     const row=draft.rows[0];if(!row||row.status!=='draft'||!row.source_ref)return reply.code(404).send({error:'connection_draft_not_found'});
-    const source=[...listGoldenSources(),...(row.source_ref==='local-hospital'?[{id:'local-hospital',type:'postgres' as const,name:'Local synthetic hospital PostgreSQL'}]:[])].find((item)=>item.id===row.source_ref);if(!source||source.type!==row.connector_type)return reply.code(400).send({error:'connection_source_mismatch'});
+    const source=availableConnectorSources().find((item)=>item.id===row.source_ref);if(!source||source.type!==row.connector_type)return reply.code(400).send({error:'connection_source_mismatch'});
     return reply.send(await connectorFor(source.id).test());
   });
   app.post<{Params:{connectionId:string};Body:{scope?:Array<{qualifiedName:string;objectType:string;scopeMode:'profile'|'list_only'|'exclude'}>}}>('/api/connections/:connectionId/activate',async(request,reply)=>{
@@ -926,7 +934,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const draft=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{source_ref:string|null;connector_type:string;status:string}>(
       'SELECT source_ref,connector_type,status FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2',[current.tenantId,request.params.connectionId]));
     const row=draft.rows[0];if(!row||row.status!=='draft'||!row.source_ref)return reply.code(404).send({error:'connection_draft_not_found'});
-    const source=[...listGoldenSources(),...(row.source_ref==='local-hospital'?[{id:'local-hospital',type:'postgres' as const,name:'Local synthetic hospital PostgreSQL'}]:[])].find((item)=>item.id===row.source_ref);if(!source||source.type!==row.connector_type)return reply.code(400).send({error:'connection_source_mismatch'});
+    const source=availableConnectorSources().find((item)=>item.id===row.source_ref);if(!source||source.type!==row.connector_type)return reply.code(400).send({error:'connection_source_mismatch'});
     const connector=connectorFor(source.id);const checked=await connector.test();if(!checked.ok)return reply.code(400).send({error:'connection_test_failed'});
     const scope=request.body?.scope??[];
     const activated=await activateConnection(options.pool,{tenantId:current.tenantId,principalId:current.userId,connectorType:source.type as ConnectorType,connectionId:request.params.connectionId,sourceRef:source.id,scope});

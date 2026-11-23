@@ -2,8 +2,9 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 export { getGoldenMetadataFixture, getGoldenPhase3Dataset } from './metadata.js';
+export { createLakeConnector, createCrmConnector } from './generic.js';
 
-export type SourceConnectorType = 'sql_server' | 'postgres' | 'snowflake' | 'excel';
+export type SourceConnectorType = 'sql_server' | 'postgres' | 'snowflake' | 'excel' | 'lake' | 'crm';
 export type AssetType = 'table' | 'view';
 export type ScopeMode = 'profile' | 'list_only' | 'exclude';
 
@@ -69,6 +70,7 @@ export interface ReadOnlyConnector {
   test(): Promise<{ ok: true; capabilities: ['discover', 'profile']; readOnly: true }>;
   discover(input: { mode: 'profile' | 'nightly'; scope?: ConnectorScope }): Promise<DiscoveryResult>;
   profile(assetKey: string, scope?: ConnectorScope, mode?: 'profile' | 'nightly'): Promise<ObjectProfile>;
+  queryAggregate?(assetKey: string, metric: 'count'): Promise<{ metric: 'count'; value: number }>;
   structuralReferences?(): Promise<Array<{from:string;to:string;fromColumn:string;toColumn:string}>>;
   close?(): Promise<void>;
 }

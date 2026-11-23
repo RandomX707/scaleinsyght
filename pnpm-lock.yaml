@@ -299,6 +299,9 @@ importers:
       '@scaleinsyght/connectors':
         specifier: workspace:*
         version: link:../../packages/connectors
+      '@scaleinsyght/customer-gateway':
+        specifier: workspace:*
+        version: link:../../packages/customer-gateway
       '@scaleinsyght/db':
         specifier: workspace:*
         version: link:../../packages/db
