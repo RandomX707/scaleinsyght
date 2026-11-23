@@ -3,15 +3,15 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { withTenant, getUsage } from '@scaleinsyght/db';
 import { activateConnection, approveGovernedVersion, createConnectionDraft, createGovernedDraft, deletePersonalMemory, getApprovedGovernedVersion, getPersonalMemory, moveConnectionToGroup, putPersonalMemory, type ConnectorType, type PersonalMemoryData } from '@scaleinsyght/registry';
-import { createGoldenConnector, listGoldenSources } from '@scaleinsyght/connectors';
+import { createGoldenConnector, createPostgresConnector, listGoldenSources, type ReadOnlyConnector } from '@scaleinsyght/connectors';
 import { EncryptedArtifactStore } from '@scaleinsyght/artifacts';
 import { getNotifications, markNotificationRead, readConnectionScope, readWorkbook, retireConnection, runGoldenProfile, saveConnectionScope, storeWorkbook } from '@scaleinsyght/profiler';
 import { applyPersonalContext, createAnalyticPlan, startAnalyticRun, submitFeedback, type StructuredAnswer } from '@scaleinsyght/analytic';
 import { eventsAfter } from '@scaleinsyght/runner';
 import { AnalyticPlanSchema, FlowSpecSchema, hashPlan } from '@scaleinsyght/contracts';
-import { compareGraphSnapshots, getIdentifierPath, getImpactRadius, importGoldenMetadata, listGraphAssertions, listGraphAssets, listGraphSnapshots, listIdentifierFields, listReports, queryLineage, reconcileAssertion, reviewGraphAssertion, traceIdentifier, verifyAssertionFromRun } from '@scaleinsyght/graph';
+import { compareGraphSnapshots, getIdentifierPath, getImpactRadius, importDbtManifest, importGoldenMetadata, listGraphAssertions, listGraphAssets, listGraphSnapshots, listIdentifierFields, listReports, queryLineage, reconcileAssertion, reviewGraphAssertion, traceIdentifier, verifyAssertionFromRun } from '@scaleinsyght/graph';
 import { createGoldenHubAdapters, getGoldenHubFixtures, type FlowSpecDelivery, type SemanticsAdapter } from '@scaleinsyght/hub-adapters';
-import { renderEvidencePack, safeEvidencePack, type ExportFormat, type SafeEvidencePack } from '@scaleinsyght/reports';
+import { nextScheduleInstant, renderEvidencePack, safeEvidencePack, type ExportFormat, type SafeEvidencePack } from '@scaleinsyght/reports';
 import { ClaimSchema, EvidenceRefSchema } from '@scaleinsyght/contracts';
 import { authorise } from '@scaleinsyght/policy';
 
@@ -32,6 +32,13 @@ function sign(value:string,secret:string):string{return createHmac('sha256',secr
 export async function buildServer(options:ServerOptions):Promise<FastifyInstance>{
   if(options.sessionSecret.length<32)throw new Error('SESSION_SECRET must contain at least 32 characters');
   const app=Fastify({logger:false,bodyLimit:25*1024*1024});
+  const postgresConnectors=new Map<string,ReadOnlyConnector>();
+  const connectorFor=(sourceId:string):ReadOnlyConnector=>{
+    if(sourceId!=='local-hospital')return createGoldenConnector(sourceId);
+    const url=process.env.DATABASE_URL_SAMPLE_SOURCE;if(!url)throw new Error('DATABASE_URL_SAMPLE_SOURCE is required for the local hospital source');
+    let connector=postgresConnectors.get(url);if(!connector){connector=createPostgresConnector(url);postgresConnectors.set(url,connector);}return connector;
+  };
+  app.addHook('onClose',async()=>{await Promise.all([...postgresConnectors.values()].map(connector=>connector.close?.()));});
   const hubAdapters=options.hubAdapters??createGoldenHubAdapters(getGoldenHubFixtures());
   app.addContentTypeParser('application/octet-stream',{parseAs:'buffer'},(_request,payload,done)=>done(null,payload));
   app.get('/api/health',async()=>({status:'ok'}));
@@ -231,13 +238,14 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     if(!await authenticatedSession(request))return reply.code(401).send({error:'unauthorized'});
     return reply.send({sources:[
       {id:'golden-dbt',type:'dbt',name:'Synthetic dbt manifest',fixtureKey:'dbt-manifest'},
+      ...(process.env.DATABASE_URL_SAMPLE_SOURCE?[{id:'local-dbt-manifest',type:'dbt',name:'Local generated dbt manifest',fixtureKey:null}]:[]),
       {id:'golden-tableau',type:'tableau',name:'Synthetic Tableau reports',fixtureKey:'tableau-reports'},
       {id:'golden-powerbi',type:'power_bi',name:'Synthetic Power BI reports',fixtureKey:'power-bi-reports'},
     ]});
   });
   app.post<{Body:{sourceId?:string}}>('/api/metadata/connections',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
-    const sources=[{id:'golden-dbt',type:'dbt' as const},{id:'golden-tableau',type:'tableau' as const},{id:'golden-powerbi',type:'power_bi' as const}];
+    const sources=[{id:'golden-dbt',type:'dbt' as const},{...(process.env.DATABASE_URL_SAMPLE_SOURCE?{id:'local-dbt-manifest',type:'dbt' as const}: {})},{id:'golden-tableau',type:'tableau' as const},{id:'golden-powerbi',type:'power_bi' as const}];
     const source=sources.find((item)=>item.id===request.body?.sourceId);if(!source)return reply.code(400).send({error:'unknown_synthetic_source'});
     const connection=await withTenant(options.pool,current.tenantId,async(client)=>{
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[JSON.stringify([current.tenantId,source.id])]);
@@ -258,18 +266,24 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const draft=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{source_ref:string|null;connector_type:string;status:string}>(
       'SELECT source_ref,connector_type,status FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2',[current.tenantId,request.params.connectionId]));
     const row=draft.rows[0];if(!row||!row.source_ref)return reply.code(404).send({error:'metadata_connection_not_found'});
-    const valid=(row.connector_type==='dbt'&&row.source_ref==='golden-dbt')||(row.connector_type==='tableau'&&row.source_ref==='golden-tableau')||(row.connector_type==='power_bi'&&row.source_ref==='golden-powerbi');
+    const valid=(row.connector_type==='dbt'&&(row.source_ref==='golden-dbt'||row.source_ref==='local-dbt-manifest'))||(row.connector_type==='tableau'&&row.source_ref==='golden-tableau')||(row.connector_type==='power_bi'&&row.source_ref==='golden-powerbi');
     if(!valid)return reply.code(400).send({error:'metadata_connection_mismatch'});
     if(row.status==='active')return reply.send({connectionId:request.params.connectionId,status:'active',connectorType:row.connector_type});
     if(row.status!=='draft')return reply.code(404).send({error:'metadata_connection_not_found'});
     const connection=await activateConnection(options.pool,{tenantId:current.tenantId,principalId:current.userId,connectorType:row.connector_type as ConnectorType,connectionId:request.params.connectionId,sourceRef:row.source_ref});
     return reply.send({connectionId:connection.connectionId,status:'active',connectorType:row.connector_type});
   });
-  app.post<{Params:{connectionId:string};Body:{fixtureKey?:string}}>('/api/metadata/import/:connectionId',async(request,reply)=>{
+  app.post<{Params:{connectionId:string};Body:{fixtureKey?:string;manifest?:unknown;sourceConnectionId?:string}}>('/api/metadata/import/:connectionId',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
-    if(typeof request.body?.fixtureKey!=='string')return reply.code(400).send({error:'invalid_golden_metadata_fixture'});
-    try{return reply.send(await importGoldenMetadata(options.pool,{tenantId:current.tenantId,principalId:current.userId,connectionId:request.params.connectionId,fixtureKey:request.body.fixtureKey}));}
-    catch(error){const code=error instanceof Error?error.message:'metadata_import_failed';if(code==='unknown_golden_metadata_fixture')return reply.code(400).send({error:'invalid_golden_metadata_fixture'});if(code==='metadata_connection_not_found')return reply.code(404).send({error:code});throw error;}
+    if(typeof request.body?.fixtureKey==='string'){
+      try{return reply.send(await importGoldenMetadata(options.pool,{tenantId:current.tenantId,principalId:current.userId,connectionId:request.params.connectionId,fixtureKey:request.body.fixtureKey}));}
+      catch(error){const code=error instanceof Error?error.message:'metadata_import_failed';if(code==='unknown_golden_metadata_fixture')return reply.code(400).send({error:'invalid_golden_metadata_fixture'});if(code==='metadata_connection_not_found')return reply.code(404).send({error:code});throw error;}
+    }
+    if(request.body?.manifest&&typeof request.body.sourceConnectionId==='string'){
+      try{return reply.send(await importDbtManifest(options.pool,{tenantId:current.tenantId,connectionId:request.params.connectionId,sourceConnectionId:request.body.sourceConnectionId,manifest:request.body.manifest}));}
+      catch(error){const code=error instanceof Error?error.message:'dbt_manifest_import_failed';if(code==='invalid_dbt_manifest')return reply.code(400).send({error:code});if(code==='dbt_connection_not_found')return reply.code(404).send({error:code});throw error;}
+    }
+    return reply.code(400).send({error:'dbt_manifest_or_fixture_required'});
   });
   app.get<{Querystring:{assetId?:string;direction?:'upstream'|'downstream'|'both';asOf?:string}}>('/api/lineage',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
@@ -386,6 +400,22 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const from=new Date();from.setUTCDate(1);from.setUTCHours(0,0,0,0);const to=new Date(from);to.setUTCMonth(to.getUTCMonth()+1);
     return reply.send(await getUsage(options.pool,current.tenantId,from,to));
+  });
+  app.get('/api/tenant/settings',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const result=await withTenant(options.pool,current.tenantId,client=>client.query<{allow_self_approval:boolean;time_zone:string}>('SELECT allow_self_approval,time_zone FROM core.tenants WHERE tenant_id=$1',[current.tenantId]));
+    const row=result.rows[0];if(!row)return reply.code(404).send({error:'tenant_not_found'});
+    return reply.send({allowSelfApproval:row.allow_self_approval,timeZone:row.time_zone});
+  });
+  app.put<{Body:{allowSelfApproval?:unknown;timeZone?:unknown}}>('/api/tenant/settings',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const {allowSelfApproval,timeZone}=request.body??{};
+    if(typeof allowSelfApproval!=='boolean'||typeof timeZone!=='string'||timeZone.length>100)return reply.code(400).send({error:'invalid_tenant_settings'});
+    try{new Intl.DateTimeFormat('en-US',{timeZone}).format();}catch{return reply.code(400).send({error:'invalid_tenant_time_zone'});}
+    const result=await withTenant(options.pool,current.tenantId,client=>client.query<{allow_self_approval:boolean;time_zone:string}>(
+      'UPDATE core.tenants SET allow_self_approval=$2,time_zone=$3 WHERE tenant_id=$1 RETURNING allow_self_approval,time_zone',[current.tenantId,allowSelfApproval,timeZone]));
+    if(!result.rowCount)return reply.code(404).send({error:'tenant_not_found'});
+    return reply.send({allowSelfApproval:result.rows[0]!.allow_self_approval,timeZone:result.rows[0]!.time_zone});
   });
   app.get('/api/me/agent',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
@@ -566,23 +596,25 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
   });
   app.get('/api/me/schedules',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
-    const rows=await withTenant(options.pool,current.tenantId,async(client)=>{await client.query("SELECT set_config('app.principal_id',$1,true)",[current.userId]);return client.query('SELECT schedule_id,report_id,utc_time,next_run_at,enabled FROM reports.schedules WHERE tenant_id=$1 AND owner_id=$2 ORDER BY created_at',[current.tenantId,current.userId]);});
-    return reply.send({schedules:rows.rows.map((row)=>({scheduleId:row.schedule_id,reportId:row.report_id,utcTime:String(row.utc_time).slice(0,5),nextRunAt:(row.next_run_at as Date).toISOString(),enabled:row.enabled}))});
+    const rows=await withTenant(options.pool,current.tenantId,async(client)=>{await client.query("SELECT set_config('app.principal_id',$1,true)",[current.userId]);return client.query<{schedule_id:string;report_id:string;local_time:string;cadence:string;local_weekday:number|null;tenant_time_zone:string;next_run_at:Date;enabled:boolean}>('SELECT schedule_id,report_id,local_time::text AS local_time,cadence,local_weekday,tenant_time_zone,next_run_at,enabled FROM reports.schedules WHERE tenant_id=$1 AND owner_id=$2 ORDER BY created_at',[current.tenantId,current.userId]);});
+    return reply.send({schedules:rows.rows.map((row)=>({scheduleId:row.schedule_id,reportId:row.report_id,localTime:row.local_time.slice(0,5),cadence:row.cadence,weekday:row.local_weekday,timeZone:row.tenant_time_zone,nextRunAt:row.next_run_at.toISOString(),enabled:row.enabled}))});
   });
-  app.post<{Body:{reportId?:string;utcTime?:string}}>('/api/me/schedules',async(request,reply)=>{
+  app.post<{Body:{reportId?:string;localTime?:string;cadence?:string;weekday?:number}}>('/api/me/schedules',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
-    const {reportId,utcTime}=request.body??{};if(typeof reportId!=='string'||typeof utcTime!=='string'||!/^([01]\d|2[0-3]):[0-5]\d$/.test(utcTime))return reply.code(400).send({error:'invalid_daily_schedule'});
+    const {reportId,localTime,cadence='daily',weekday}=request.body??{};if(typeof reportId!=='string'||typeof localTime!=='string'||!['daily','weekly'].includes(cadence)||!/^([01]\d|2[0-3]):[0-5]\d$/.test(localTime)||(cadence==='weekly'&&(!Number.isInteger(weekday)||weekday!<1||weekday!>7))||(cadence==='daily'&&weekday!==undefined))return reply.code(400).send({error:'invalid_schedule'});
     const row=await withTenant(options.pool,current.tenantId,async(client)=>{
       await client.query("SELECT set_config('app.principal_id',$1,true)",[current.userId]);
+      const tenant=await client.query<{time_zone:string}>('SELECT time_zone FROM core.tenants WHERE tenant_id=$1',[current.tenantId]);const timeZone=tenant.rows[0]?.time_zone;if(!timeZone)throw new Error('tenant_not_found');
+      let nextRunAt:Date;try{nextRunAt=nextScheduleInstant({after:new Date(),cadence:cadence as 'daily'|'weekly',timeZone,localTime,...(weekday===undefined?{}:{weekday})});}catch(error){if(error instanceof Error&&error.message==='schedule_local_time_does_not_exist')throw error;throw new Error('invalid_schedule');}
       return client.query<{schedule_id:string;next_run_at:Date}>(
-        `WITH owned AS(SELECT report_id FROM reports.definitions WHERE tenant_id=$1 AND report_id=$2 AND owner_id=$3),
-         next_slot AS(SELECT CASE WHEN ((clock_timestamp() AT TIME ZONE 'UTC')::date+$4::time) AT TIME ZONE 'UTC'>clock_timestamp() THEN ((clock_timestamp() AT TIME ZONE 'UTC')::date+$4::time) AT TIME ZONE 'UTC' ELSE (((clock_timestamp() AT TIME ZONE 'UTC')::date+1)+$4::time) AT TIME ZONE 'UTC' END AS due)
-         INSERT INTO reports.schedules(tenant_id,report_id,owner_id,utc_time,next_run_at) SELECT $1,o.report_id,$3,$4::time,n.due FROM owned o CROSS JOIN next_slot n
-         ON CONFLICT(tenant_id,report_id) DO UPDATE SET utc_time=EXCLUDED.utc_time,next_run_at=EXCLUDED.next_run_at,enabled=true
-         RETURNING schedule_id,next_run_at`,[current.tenantId,reportId,current.userId,utcTime]);
+        `WITH owned AS(SELECT report_id FROM reports.definitions WHERE tenant_id=$1 AND report_id=$2 AND owner_id=$3)
+         INSERT INTO reports.schedules(tenant_id,report_id,owner_id,local_time,next_run_at,cadence,tenant_time_zone,local_weekday) SELECT $1,o.report_id,$3,$4::time,$5::timestamptz,$6,$7,$8 FROM owned o
+         ON CONFLICT(tenant_id,report_id) DO UPDATE SET local_time=EXCLUDED.local_time,next_run_at=EXCLUDED.next_run_at,cadence=EXCLUDED.cadence,tenant_time_zone=EXCLUDED.tenant_time_zone,local_weekday=EXCLUDED.local_weekday,enabled=true
+         RETURNING schedule_id,next_run_at`,[current.tenantId,reportId,current.userId,localTime,nextRunAt,cadence,timeZone,weekday??null]);
     });
     if(!row.rowCount)return reply.code(404).send({error:'report_not_found'});
-    return reply.code(201).send({scheduleId:row.rows[0]!.schedule_id,reportId,utcTime,nextRunAt:row.rows[0]!.next_run_at.toISOString(),cadence:'daily'});
+    const timeZone=(await withTenant(options.pool,current.tenantId,client=>client.query<{time_zone:string}>('SELECT time_zone FROM core.tenants WHERE tenant_id=$1',[current.tenantId]))).rows[0]!.time_zone;
+    return reply.code(201).send({scheduleId:row.rows[0]!.schedule_id,reportId,localTime,cadence,weekday:weekday??null,timeZone,nextRunAt:row.rows[0]!.next_run_at.toISOString()});
   });
   app.delete<{Params:{scheduleId:string}}>('/api/me/schedules/:scheduleId',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
@@ -600,7 +632,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
 
   app.get('/api/sources',async(request,reply)=>{
     if(!await authenticatedSession(request))return reply.code(401).send({error:'unauthorized'});
-    return reply.send({sources:listGoldenSources()});
+    return reply.send({sources:[...listGoldenSources(),...(process.env.DATABASE_URL_SAMPLE_SOURCE?[{id:'local-hospital',type:'postgres' as const,name:'Local synthetic hospital PostgreSQL'}]:[])]});
   });
   app.get('/api/agents',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
@@ -673,7 +705,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
   });
   app.post<{Body:{sourceId?:string}}>('/api/connections',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
-    const source=listGoldenSources().find((item)=>item.id===request.body?.sourceId);
+    const source=[...listGoldenSources(),...(process.env.DATABASE_URL_SAMPLE_SOURCE?[{id:'local-hospital',type:'postgres' as const,name:'Local synthetic hospital PostgreSQL'}]:[])].find((item)=>item.id===request.body?.sourceId);
     if(!source)return reply.code(400).send({error:'unknown_synthetic_source'});
     const draft=await createConnectionDraft(options.pool,{tenantId:current.tenantId,connectorType:source.type as ConnectorType,sourceRef:source.id});
     return reply.code(201).send({connectionId:draft.connectionId,status:'draft',connectorType:source.type,sourceName:source.name});
@@ -683,16 +715,16 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const draft=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{source_ref:string|null;connector_type:string;status:string}>(
       'SELECT source_ref,connector_type,status FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2',[current.tenantId,request.params.connectionId]));
     const row=draft.rows[0];if(!row||row.status!=='draft'||!row.source_ref)return reply.code(404).send({error:'connection_draft_not_found'});
-    const source=listGoldenSources().find((item)=>item.id===row.source_ref);if(!source||source.type!==row.connector_type)return reply.code(400).send({error:'connection_source_mismatch'});
-    return reply.send(await createGoldenConnector(source.id).test());
+    const source=[...listGoldenSources(),...(row.source_ref==='local-hospital'?[{id:'local-hospital',type:'postgres' as const,name:'Local synthetic hospital PostgreSQL'}]:[])].find((item)=>item.id===row.source_ref);if(!source||source.type!==row.connector_type)return reply.code(400).send({error:'connection_source_mismatch'});
+    return reply.send(await connectorFor(source.id).test());
   });
   app.post<{Params:{connectionId:string};Body:{scope?:Array<{qualifiedName:string;objectType:string;scopeMode:'profile'|'list_only'|'exclude'}>}}>('/api/connections/:connectionId/activate',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const draft=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{source_ref:string|null;connector_type:string;status:string}>(
       'SELECT source_ref,connector_type,status FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2',[current.tenantId,request.params.connectionId]));
     const row=draft.rows[0];if(!row||row.status!=='draft'||!row.source_ref)return reply.code(404).send({error:'connection_draft_not_found'});
-    const source=listGoldenSources().find((item)=>item.id===row.source_ref);if(!source||source.type!==row.connector_type)return reply.code(400).send({error:'connection_source_mismatch'});
-    const checked=await createGoldenConnector(source.id).test();if(!checked.ok)return reply.code(400).send({error:'connection_test_failed'});
+    const source=[...listGoldenSources(),...(row.source_ref==='local-hospital'?[{id:'local-hospital',type:'postgres' as const,name:'Local synthetic hospital PostgreSQL'}]:[])].find((item)=>item.id===row.source_ref);if(!source||source.type!==row.connector_type)return reply.code(400).send({error:'connection_source_mismatch'});
+    const connector=connectorFor(source.id);const checked=await connector.test();if(!checked.ok)return reply.code(400).send({error:'connection_test_failed'});
     const scope=request.body?.scope??[];
     const activated=await activateConnection(options.pool,{tenantId:current.tenantId,principalId:current.userId,connectorType:source.type as ConnectorType,connectionId:request.params.connectionId,sourceRef:source.id,scope});
     await withTenant(options.pool,current.tenantId,async(client)=>{
@@ -701,7 +733,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
       const existing=await client.query("SELECT 1 FROM core.entitlements WHERE tenant_id=$1 AND principal_id=$2 AND capability_id='analytic.read' AND resource_id=$3 AND allowed",[current.tenantId,current.userId,activated.connectionId]);
       if(!existing.rowCount)await client.query("INSERT INTO core.entitlements(tenant_id,principal_id,capability_id,resource_id,allowed) VALUES($1,$2,'analytic.read',$3,true)",[current.tenantId,current.userId,activated.connectionId]);
     });
-    const profile=await runGoldenProfile(options.pool,{tenantId:current.tenantId,connectionId:activated.connectionId,connector:createGoldenConnector(source.id),jobType:'discovery'});
+    const profile=await runGoldenProfile(options.pool,{tenantId:current.tenantId,connectionId:activated.connectionId,connector,jobType:'discovery'});
     return reply.send({connectionId:activated.connectionId,agentId:activated.agentId,sourceName:source.name,profile});
   });
   app.post<{Params:{connectionId:string};Body:{jobType?:'profile'|'nightly'}}>('/api/connections/:connectionId/discover',async(request,reply)=>{
@@ -710,7 +742,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
       'SELECT source_ref,status FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2',[current.tenantId,request.params.connectionId]));
     const row=connection.rows[0];if(!row||row.status!=='active'||!row.source_ref)return reply.code(404).send({error:'active_connection_not_found'});
     if(request.body?.jobType&&!['profile','nightly'].includes(request.body.jobType))return reply.code(400).send({error:'invalid_job_type'});
-    const result=await runGoldenProfile(options.pool,{tenantId:current.tenantId,connectionId:request.params.connectionId,connector:createGoldenConnector(row.source_ref),jobType:request.body?.jobType??'profile'});
+    const result=await runGoldenProfile(options.pool,{tenantId:current.tenantId,connectionId:request.params.connectionId,connector:connectorFor(row.source_ref),jobType:request.body?.jobType??'profile'});
     return reply.send(result);
   });
   app.get<{Params:{connectionId:string}}>('/api/connections/:connectionId/profile',async(request,reply)=>{

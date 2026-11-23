@@ -202,6 +202,9 @@ importers:
       '@scaleinsyght/hub-adapters':
         specifier: workspace:*
         version: link:packages/hub-adapters
+      '@scaleinsyght/model-gateway':
+        specifier: workspace:*
+        version: link:packages/model-gateway
       '@scaleinsyght/policy':
         specifier: workspace:*
         version: link:packages/policy
@@ -402,6 +405,18 @@ importers:
         version: link:../db
 
   packages/hub-adapters: {}
+
+  packages/model-gateway:
+    dependencies:
+      '@scaleinsyght/classification':
+        specifier: workspace:*
+        version: link:../classification
+      '@scaleinsyght/db':
+        specifier: workspace:*
+        version: link:../db
+      pg:
+        specifier: ^8.16.3
+        version: 8.23.1
 
   packages/policy:
     dependencies:

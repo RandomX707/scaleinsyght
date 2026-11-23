@@ -1,0 +1,12 @@
+{
+  "name": "@scaleinsyght/model-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": {
+    "@scaleinsyght/classification": "workspace:*",
+    "@scaleinsyght/db": "workspace:*",
+    "pg": "^8.16.3"
+  }
+}

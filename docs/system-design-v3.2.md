@@ -508,7 +508,7 @@ This is a reading of the code. It is not a security audit, a licence review or a
 
 ### 2.5 Phases
 
-Release 1 has seven phases. Each ends with something a person can be shown and a set of pass-or-fail criteria. The numeric thresholds are proposals for approval under decision 15, not measurements.
+Release 1 has eight phases. Each ends with something a person can be shown and a set of pass-or-fail criteria. Phase 5b validates the approved synthetic baseline against local real PostgreSQL/dbt systems and an explicitly local OpenAI gateway run; it does not add vendor services or production credentials. The numeric thresholds are proposals for approval under decision 15, not measurements.
 
 **Phase 0: Foundation and contracts.** New repository scaffold, tenancy with row-level security, authentication, capability and agent registry, the durable runner and event log, model gateway, policy function, usage counting, and a contract test suite in continuous integration.
 
@@ -537,10 +537,12 @@ Release 1 has seven phases. Each ends with something a person can be shown and a
 
 **Phase 5: Saved questions and reports.** Saved questions for personal agents, evidence packs and governed reports with Excel, PowerPoint and PDF export, and scheduled runs of governed agents.
 
+**Phase 5b: Real connections.** Exercise the PostgreSQL connector against a local synthetic hospital database, import a locally generated dbt manifest, and optionally run analytic and lineage flows through the OpenAI-compatible gateway under the disclosure and per-tenant budget controls. Tableau and Power BI remain fixture-based. SQL Server and Snowflake remain unconfigured until their prerequisites are supplied.
+
 - *Outcome:* a saved question reused as the starting plan for a similar one, and an evidence pack exported from a run.
 - *Acceptance:* a question is saved only after its person accepts the answer. A similar question starts from the saved plan, and a person can delete a saved question. An exported pack reproduces the run's figures exactly.
 
-**Phase 6: Enterprise connectivity and hardening.** The customer-side gateway, lake-engine and CRM read connectors, Oracle, Db2 and SAP on demand, single sign-on, the evaluation suite, backup and restore, load and security testing.
+**Phase 6: Enterprise connectivity, hardening and deployment packaging.** The customer-side gateway, lake-engine and CRM read connectors, Oracle, Db2 and SAP on demand, single sign-on, the evaluation suite, backup and restore, load and security testing. Dockerfiles and Compose are added for deployment only; local development and tests continue to use native processes.
 
 - *Outcome:* a private-network source answered through the gateway, and a restore drill.
 - *Acceptance:* the gateway works with no inbound port open. The adversarial suite passes in full: prompt injection in metadata, SQL guard bypass, cross-tenant access, request forgery. A restore drill loses at most 15 minutes of data and completes within 4 hours. The first progress event of a run arrives within 3 seconds at the 95th percentile.

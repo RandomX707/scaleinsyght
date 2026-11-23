@@ -68,6 +68,17 @@ describe('contract 2 governed agent lifecycle', () => {
       expect(versions.rows).toHaveLength(2);expect(versions.rows[0]?.approver).toBeTruthy();expect(versions.rows[1]?.approver).toBeNull();
       const pins=await withTenant(migrate,tenantId,async(db)=>db.query<{governed_id:string;version:number}>('SELECT governed_id,version FROM runs.governed_run_pins WHERE tenant_id=$1 AND run_id=ANY($2::uuid[]) ORDER BY run_id',[tenantId,runIds]));
       expect(pins.rows).toHaveLength(2);expect(pins.rows.every((pin)=>pin.governed_id===governed.governedId&&pin.version===1)).toBe(true);
+      const defaults=await withTenant(migrate,tenantId,async(db)=>db.query<{allow_self_approval:boolean;time_zone:string}>('SELECT allow_self_approval,time_zone FROM core.tenants WHERE tenant_id=$1',[tenantId]));
+      expect(defaults.rows[0]).toEqual({allow_self_approval:false,time_zone:'Asia/Kolkata'});
+      expect((await server.inject({method:'GET',url:'/api/tenant/settings',headers:{cookie:ownerCookie}})).json()).toEqual({allowSelfApproval:false,timeZone:'Asia/Kolkata'});
+      const third=await server.inject({method:'POST',url:'/api/governed-agents',headers:{cookie:ownerCookie},payload:{governedId:governed.governedId,name:'Self approval test',question:'How many catalog objects are listed?',sourceIds:[source.connectionId]}});
+      expect(third.statusCode).toBe(201);expect((third.json() as {version:number}).version).toBe(3);
+      await withTenant(migrate,tenantId,async(db)=>db.query('UPDATE core.tenants SET allow_self_approval=true WHERE tenant_id=$1',[tenantId]));
+      expect((await server.inject({method:'PUT',url:'/api/tenant/settings',headers:{cookie:ownerCookie},payload:{allowSelfApproval:true,timeZone:'America/New_York'}})).json()).toEqual({allowSelfApproval:true,timeZone:'America/New_York'});
+      const allowedSelfApproval=await server.inject({method:'POST',url:`/api/governed-agents/${governed.governedId}/approve`,headers:{cookie:ownerCookie},payload:{version:3}});
+      expect(allowedSelfApproval.statusCode).toBe(200);
+      const selfAudit=await withTenant(migrate,tenantId,async(db)=>db.query<{event_type:string;principal_id:string}>('SELECT event_type,principal_id FROM registry.governed_events WHERE tenant_id=$1 AND governed_id=$2 AND version=3 ORDER BY created_at DESC LIMIT 1',[tenantId,governed.governedId]));
+      expect(selfAudit.rows[0]).toEqual({event_type:'self_approved',principal_id:ownerId});
     }finally{await server.close();}
   });
 });

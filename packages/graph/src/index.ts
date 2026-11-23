@@ -292,6 +292,52 @@ export async function importGoldenMetadata(pool: Pool, input: ImportGoldenMetada
   });
 }
 
+export async function importDbtManifest(pool:Pool,input:{tenantId:string;connectionId:string;sourceConnectionId:string;manifest:unknown}):Promise<{assets:number;flows:number}> {
+  if(!input.manifest||typeof input.manifest!=='object')throw new Error('invalid_dbt_manifest');
+  const manifest=input.manifest as {metadata?:{dbt_version?:unknown};nodes?:Record<string,Record<string,unknown>>;sources?:Record<string,Record<string,unknown>>};
+  if(!manifest.nodes||typeof manifest.nodes!=='object'||!manifest.sources||typeof manifest.sources!=='object')throw new Error('invalid_dbt_manifest');
+  const models=Object.entries(manifest.nodes).filter(([,node])=>node.resource_type==='model');
+  const sources=Object.entries(manifest.sources);
+  if(!models.length||models.length>10_000||sources.length>10_000)throw new Error('invalid_dbt_manifest');
+  const safeShape={dbt_version:String(manifest.metadata?.dbt_version??'unknown'),models:models.map(([id,node])=>({id,name:String(node.name),dependsOn:Array.isArray((node.depends_on as {nodes?:unknown[]}|undefined)?.nodes)?(node.depends_on as {nodes:unknown[]}).nodes.map(String).sort():[]})).sort((a,b)=>a.id.localeCompare(b.id))};
+  const manifestHash=createHash('sha256').update(JSON.stringify(safeShape)).digest('hex');
+  return withTenant(pool,input.tenantId,async(client)=>{
+    const connections=await client.query<{connection_id:string;connector_type:string;status:string;source_ref:string|null}>(
+      'SELECT connection_id,connector_type,status,source_ref FROM registry.connections WHERE tenant_id=$1 AND connection_id=ANY($2::uuid[])',[input.tenantId,[input.connectionId,input.sourceConnectionId]]);
+    const byId=new Map(connections.rows.map(row=>[row.connection_id,row]));const dbt=byId.get(input.connectionId);const postgres=byId.get(input.sourceConnectionId);
+    if(!dbt||dbt.status!=='active'||dbt.connector_type!=='dbt'||dbt.source_ref!=='local-dbt-manifest'||!postgres||postgres.status!=='active'||postgres.connector_type!=='postgres'||postgres.source_ref!=='local-hospital')throw new Error('dbt_connection_not_found');
+    const assetIds=new Map<string,string>();let assetCount=0;let flowCount=0;
+    for(const [uniqueId,source] of sources){
+      const schema=String(source.schema??'public');const identifier=String(source.identifier??source.name??'');if(!/^[A-Za-z0-9_]+$/.test(schema)||! /^[A-Za-z0-9_]+$/.test(identifier))continue;
+      const found=await client.query<{asset_id:string}>('SELECT asset_id FROM graph.assets WHERE tenant_id=$1 AND source_id=$2 AND qualified_name=$3 AND asset_type=\'dataset\' AND active',[input.tenantId,input.sourceConnectionId,`${schema}.${identifier}`]);
+      if(found.rows[0])assetIds.set(uniqueId,found.rows[0].asset_id);
+    }
+    for(const [uniqueId,node] of models){
+      const name=String(node.name??'');if(!/^[A-Za-z0-9_]+$/.test(name))continue;
+      const qualifiedName=`dbt.${name}`;const fingerprint=createHash('sha256').update(`${input.tenantId}\0${qualifiedName}`).digest();
+      const asset=await client.query<{asset_id:string}>('INSERT INTO graph.assets(tenant_id,source_id,asset_type,qualified_name,fingerprint) VALUES($1,$2,\'dataset\',$3,$4) ON CONFLICT(tenant_id,source_id,qualified_name) DO UPDATE SET active=true,last_seen_at=clock_timestamp() RETURNING asset_id',[input.tenantId,input.connectionId,qualifiedName,fingerprint]);
+      const assetId=asset.rows[0]!.asset_id;assetIds.set(uniqueId,assetId);assetCount++;
+      const structural={resource_type:'model',materialized:String((node.config as {materialized?:unknown}|undefined)?.materialized??'unknown')};
+      const latest=await client.query<{version:number}>('SELECT version FROM graph.asset_versions WHERE tenant_id=$1 AND asset_id=$2 ORDER BY version DESC LIMIT 1',[input.tenantId,assetId]);
+      if(!latest.rowCount)await client.query('INSERT INTO graph.asset_versions(tenant_id,asset_id,version,structural_attributes,statistics) VALUES($1,$2,1,$3::jsonb,\'{}\'::jsonb)',[input.tenantId,assetId,JSON.stringify(structural)]);
+    }
+    for(const [uniqueId,node] of models){
+      const modelId=assetIds.get(uniqueId);const dependencies=(node.depends_on as {nodes?:unknown[]}|undefined)?.nodes;
+      if(!modelId||!Array.isArray(dependencies))continue;
+      for(const dependency of dependencies){const upstreamId=assetIds.get(String(dependency));if(!upstreamId)continue;
+        const relationship=await client.query<{relationship_id:string}>('INSERT INTO graph.relationships(tenant_id,family,relationship_type,from_asset_id,to_asset_id,granularity) VALUES($1,\'data_flow\',\'DERIVES_FROM\',$2,$3,\'dataset\') ON CONFLICT(tenant_id,family,relationship_type,from_asset_id,to_asset_id,granularity) DO UPDATE SET relationship_type=EXCLUDED.relationship_type RETURNING relationship_id',[input.tenantId,modelId,upstreamId]);
+        const relationId=relationship.rows[0]!.relationship_id;
+        let evidenceId=(await client.query<{evidence_id:string}>("SELECT evidence_id FROM graph.evidence WHERE tenant_id=$1 AND evidence_type='manifest' AND safe_metadata->>'manifest_hash'=$2 AND safe_metadata->>'relationship_id'=$3 LIMIT 1",[input.tenantId,manifestHash,relationId])).rows[0]?.evidence_id;
+        if(!evidenceId)evidenceId=(await client.query<{evidence_id:string}>("INSERT INTO graph.evidence(tenant_id,evidence_type,safe_metadata) VALUES($1,'manifest',$2::jsonb) RETURNING evidence_id",[input.tenantId,JSON.stringify({manifest_hash:manifestHash,relationship_id:relationId,dbt_version:safeShape.dbt_version})])).rows[0]!.evidence_id;
+        const assertion=await client.query('SELECT 1 FROM graph.assertions WHERE tenant_id=$1 AND relationship_id=$2 AND evidence_method=\'declared\' AND collector_version=\'phase5b-dbt-manifest-v1\'', [input.tenantId,relationId]);
+        if(!assertion.rowCount)await client.query('INSERT INTO graph.assertions(tenant_id,relationship_id,evidence_method,evidence_ids,confidence_score,explanation,collector_version) VALUES($1,$2,\'declared\',ARRAY[$3::uuid],1,\'Dependency declared by local dbt manifest\',\'phase5b-dbt-manifest-v1\')',[input.tenantId,relationId,evidenceId]);
+        flowCount++;
+      }
+    }
+    return {assets:assetCount,flows:flowCount};
+  });
+}
+
 export async function reviewGraphAssertion(pool:Pool,input:{tenantId:string;principalId:string;assertionId:string;status:'accepted'|'disputed'|'rejected'}):Promise<GraphAssertion>{
   return withTenant(pool,input.tenantId,async(client)=>{
     const result=await client.query<GraphAssertion>(

@@ -143,7 +143,8 @@ export async function runGoldenProfile(
       }
     }
 
-    for (const reference of listGoldenStructuralReferences()) {
+    const structuralReferences=input.connector.structuralReferences?await input.connector.structuralReferences():listGoldenStructuralReferences();
+    for (const reference of structuralReferences) {
       const fromId = fieldAssets.get(`${reference.from}.${reference.fromColumn}`);
       const toId = fieldAssets.get(`${reference.to}.${reference.toColumn}`);
       if (!fromId || !toId) continue;
@@ -167,7 +168,7 @@ export async function runGoldenProfile(
         );
         await client.query(
           `INSERT INTO graph.assertions(tenant_id,relationship_id,evidence_method,evidence_ids,confidence_score,explanation,collector_version)
-           VALUES($1,$2,'declared',$3,1,'Synthetic declared key metadata','phase1-golden-v1')`,
+           VALUES($1,$2,'declared',$3,1,'Synthetic declared field metadata','phase1-golden-v1')`,
           [input.tenantId, relationship.rows[0]!.relationship_id, [evidence.rows[0]!.evidence_id]],
         );
       }

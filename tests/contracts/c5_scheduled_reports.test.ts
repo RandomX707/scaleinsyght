@@ -47,26 +47,34 @@ describe('contract 5 governed reports and schedule slots', () => {
       expect((await server.inject({ method: 'GET', url: '/api/me/reports', headers: { cookie: ownerCookie } })).json().reports).toHaveLength(1);
       expect((await server.inject({ method: 'GET', url: '/api/me/reports', headers: { cookie: reviewerCookie } })).json().reports).toHaveLength(0);
 
-      const scheduled = await server.inject({ method: 'POST', url: '/api/me/schedules', headers: { cookie: ownerCookie }, payload: { reportId, utcTime: '23:59' } });
+      const scheduled = await server.inject({ method: 'POST', url: '/api/me/schedules', headers: { cookie: ownerCookie }, payload: { reportId, localTime: '23:59' } });
       expect(scheduled.statusCode).toBe(201);
-      expect(scheduled.json()).toMatchObject({ reportId, utcTime: '23:59', cadence: 'daily' });
+      expect(scheduled.json()).toMatchObject({ reportId, localTime: '23:59', cadence: 'daily', timeZone: 'Asia/Kolkata' });
       const scheduleId = scheduled.json().scheduleId as string;
+      const weekly=await server.inject({method:'POST',url:'/api/me/schedules',headers:{cookie:ownerCookie},payload:{reportId,localTime:'07:15',cadence:'weekly',weekday:1}});
+      expect(weekly.statusCode).toBe(201);expect(weekly.json()).toMatchObject({reportId,localTime:'07:15',cadence:'weekly',weekday:1,timeZone:'Asia/Kolkata'});expect(weekly.json().scheduleId).toBe(scheduleId);
+      await withTenant(migrate,tenantId,async(db)=>{
+        await db.query("SELECT set_config('app.principal_id',$1,true)",[users.ownerId]);
+        const stored=await db.query<{local_time:string;cadence:string;local_weekday:number;tenant_time_zone:string}>('SELECT local_time::text AS local_time,cadence,local_weekday,tenant_time_zone FROM reports.schedules WHERE tenant_id=$1 AND schedule_id=$2',[tenantId,scheduleId]);
+        expect(stored.rows).toHaveLength(1);
+        expect(stored.rows[0]).toEqual({local_time:'07:15:00',cadence:'weekly',local_weekday:1,tenant_time_zone:'Asia/Kolkata'});
+      });
       expect((await server.inject({ method: 'GET', url: '/api/me/schedules', headers: { cookie: reviewerCookie } })).json().schedules).toHaveLength(0);
 
       await withTenant(migrate, tenantId, async (db) => {
         await db.query("SELECT set_config('app.principal_id',$1,true)", [users.ownerId]);
         await db.query('UPDATE reports.schedules SET next_run_at=clock_timestamp()-interval \'1 minute\' WHERE tenant_id=$1 AND schedule_id=$2', [tenantId, scheduleId]);
       });
-      const claim=await claimDueSchedule(worker);
+      const claim=await claimDueSchedule(worker,tenantId);
       expect(claim).toMatchObject({ tenantId, scheduleId, reportId, ownerId: users.ownerId });
-      const recovered=await claimDueSchedule(worker);
+      const recovered=await claimDueSchedule(worker,tenantId);
       expect(recovered).toMatchObject({scheduleId,dueSlot:claim!.dueSlot,runId:claim!.runId});
       const scheduledRun=await startScheduledReportRun(worker,claim!);
       expect(await startScheduledReportRun(worker,recovered!)).toEqual(scheduledRun);
       const scheduledEvents=await withTenant(migrate,tenantId,async(db)=>db.query<{count:number}>("SELECT count(*)::int AS count FROM runs.events WHERE tenant_id=$1 AND run_id=$2 AND event_type='scheduled_run_enqueued'",[tenantId,scheduledRun.runId]));
       expect(scheduledEvents.rows[0]!.count).toBe(1);
       await markScheduleSlotStarted(worker,recovered!);
-      expect(await claimDueSchedule(worker)).toBeNull();
+      expect(await claimDueSchedule(worker,tenantId)).toBeNull();
       await withTenant(migrate,tenantId,async(db)=>{
         await db.query("UPDATE runs.runs SET state='COMPLETED' WHERE tenant_id=$1 AND run_id=$2",[tenantId,scheduledRun.runId]);
         await db.query("INSERT INTO runs.analytic_answers(tenant_id,run_id,status,answer) VALUES($1,$2,'COMPLETED',$3::jsonb)",[tenantId,scheduledRun.runId,JSON.stringify({metric:'listed_count',bySource:[{sourceId:source.connectionId,connectorType:'postgres',value:12}],claims:[],evidence:[],trust:{groupCount:1,sourceCount:1,joins:['group']}})]);
@@ -82,7 +90,8 @@ describe('contract 5 governed reports and schedule slots', () => {
         return db.query<{ last_slot: Date; next_run_at: Date }>('SELECT last_slot,next_run_at FROM reports.schedules WHERE tenant_id=$1 AND schedule_id=$2', [tenantId, scheduleId]);
       });
       expect(slot.rows[0]!.last_slot).not.toBeNull();
-      expect(slot.rows[0]!.next_run_at.getTime() - slot.rows[0]!.last_slot.getTime()).toBe(24 * 60 * 60 * 1000);
+      expect(slot.rows[0]!.next_run_at.getTime() - slot.rows[0]!.last_slot.getTime()).toBeGreaterThan(6 * 24 * 60 * 60 * 1000);
+      expect(slot.rows[0]!.next_run_at.getTime() - slot.rows[0]!.last_slot.getTime()).toBeLessThan(8 * 24 * 60 * 60 * 1000);
 
       expect((await server.inject({ method: 'DELETE', url: `/api/me/schedules/${scheduleId}`, headers: { cookie: ownerCookie } })).json()).toEqual({ disabled: true });
       const disabled = await withTenant(migrate, tenantId, async (db) => {
@@ -90,18 +99,18 @@ describe('contract 5 governed reports and schedule slots', () => {
         return db.query<{ enabled: boolean }>('SELECT enabled FROM reports.schedules WHERE tenant_id=$1 AND schedule_id=$2', [tenantId, scheduleId]);
       });
       expect(disabled.rows[0]!.enabled).toBe(false);
-      const reenabled=await server.inject({method:'POST',url:'/api/me/schedules',headers:{cookie:ownerCookie},payload:{reportId,utcTime:'23:59'}});
+      const reenabled=await server.inject({method:'POST',url:'/api/me/schedules',headers:{cookie:ownerCookie},payload:{reportId,localTime:'23:59'}});
       expect(reenabled.statusCode).toBe(201);
       await withTenant(migrate,tenantId,async(db)=>{
         await db.query("SELECT set_config('app.principal_id',$1,true)",[users.ownerId]);
         await db.query('DELETE FROM core.entitlements WHERE tenant_id=$1 AND principal_id=$2 AND resource_id=$3',[tenantId,users.ownerId,source.connectionId]);
         await db.query("UPDATE reports.schedules SET next_run_at=clock_timestamp()-interval '1 minute' WHERE tenant_id=$1 AND schedule_id=$2",[tenantId,scheduleId]);
       });
-      const revokedSlot=await claimDueSchedule(worker);
+      const revokedSlot=await claimDueSchedule(worker,tenantId);
       expect(revokedSlot).toMatchObject({scheduleId,reportId});
       await expect(startScheduledReportRun(worker,revokedSlot!)).rejects.toThrow('principal_not_entitled');
       await markScheduleSlotSkipped(worker,revokedSlot!,'principal_not_entitled');
-      expect(await claimDueSchedule(worker)).toBeNull();
+      expect(await claimDueSchedule(worker,tenantId)).toBeNull();
       const skipped=await withTenant(migrate,tenantId,async(db)=>{await db.query("SELECT set_config('app.principal_id',$1,true)",[users.ownerId]);return db.query<{state:string;safe_reason:string}>('SELECT state,safe_reason FROM reports.schedule_slots WHERE tenant_id=$1 AND schedule_id=$2 AND run_id=$3',[tenantId,scheduleId,revokedSlot!.runId]);});
       expect(skipped.rows[0]).toEqual({state:'skipped',safe_reason:'principal_not_entitled'});
     } finally { await server.close(); }

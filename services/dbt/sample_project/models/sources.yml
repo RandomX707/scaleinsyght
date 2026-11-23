@@ -1,0 +1,10 @@
+version: 2
+sources:
+  - name: hospital
+    schema: public
+    tables:
+      - name: departments
+      - name: providers
+      - name: patients
+      - name: encounters
+      - name: orders
