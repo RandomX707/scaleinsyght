@@ -1,0 +1,32 @@
+{
+  "sources": [
+    { "id": "golden-sqlserver", "type": "sql_server", "name": "Synthetic SQL Server" },
+    { "id": "golden-snowflake", "type": "snowflake", "name": "Synthetic Snowflake" },
+    { "id": "golden-dbt", "type": "dbt", "name": "Synthetic dbt project" },
+    { "id": "golden-tableau", "type": "tableau", "name": "Synthetic Tableau site" },
+    { "id": "golden-powerbi", "type": "power_bi", "name": "Synthetic Power BI tenant" }
+  ],
+  "assets": [
+    { "name": "SyntheticSQL.Customer", "kind": "dataset" },
+    { "name": "SyntheticSQL.Customer.customer_id", "kind": "field" },
+    { "name": "SyntheticSnowflake.DIM_CUSTOMER", "kind": "dataset" },
+    { "name": "SyntheticSnowflake.DIM_CUSTOMER.customer_key", "kind": "field" },
+    { "name": "dbt.customer_mart", "kind": "dataset" },
+    { "name": "dbt.customer_mart.customer_key", "kind": "field" },
+    { "name": "Power BI.Customer Health", "kind": "report" },
+    { "name": "Power BI.Customer Health.Active Customers", "kind": "metric" },
+    { "name": "Tableau.Customer Summary", "kind": "report" }
+  ],
+  "flows": [
+    { "from": "SyntheticSQL.Customer", "to": "SyntheticSnowflake.DIM_CUSTOMER", "grain": "dataset", "method": "parsed", "confidence": 0.99 },
+    { "from": "SyntheticSQL.Customer.customer_id", "to": "SyntheticSnowflake.DIM_CUSTOMER.customer_key", "grain": "field", "method": "parsed", "confidence": 0.94, "change": "renamed" },
+    { "from": "SyntheticSnowflake.DIM_CUSTOMER", "to": "dbt.customer_mart", "grain": "dataset", "method": "declared", "confidence": 0.98 },
+    { "from": "dbt.customer_mart", "to": "Power BI.Customer Health", "grain": "report", "method": "declared", "confidence": 0.93 },
+    { "from": "Power BI.Customer Health", "to": "Power BI.Customer Health.Active Customers", "grain": "metric", "method": "declared", "confidence": 0.97 }
+  ],
+  "gaps": [{ "between": ["dbt.customer_mart.customer_key", "Power BI.Customer Health"], "reason": "No field-level mapping is present in the synthetic manifest" }],
+  "disputed": { "from": "SyntheticSnowflake.DIM_CUSTOMER.customer_key", "to": "dbt.customer_mart.customer_key", "evidence": ["dbt manifest mapping", "catalog expression differs"] },
+  "identifier": { "fields": ["customer_id", "customer_key", "customer_key"], "format_pattern": "opaque_customer_key", "raw_values_present": false },
+  "reportImpact": { "report": "Power BI.Customer Health", "changedAsset": "dbt.customer_mart.customer_key" },
+  "sqlFixtures": { "safe": "SELECT customer_id AS customer_key FROM synthetic_customer", "literalScrub": "SELECT 'SYNTHETIC_SECRET' AS customer_key FROM synthetic_customer" }
+}

@@ -30,12 +30,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
+      - run: python -m venv .venv
+      - run: .venv/bin/python -m pip install -r services/sqlparse/requirements.txt
       - run: pnpm db:setup
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
+      - run: pnpm test:sqlparse
       - run: pnpm db:migrate
       - run: pnpm test:integration
       - run: pnpm test:contracts

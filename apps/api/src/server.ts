@@ -9,6 +9,7 @@ import { getNotifications, markNotificationRead, readConnectionScope, readWorkbo
 import { applyPersonalContext, createAnalyticPlan, startAnalyticRun, submitFeedback, type StructuredAnswer } from '@scaleinsyght/analytic';
 import { eventsAfter } from '@scaleinsyght/runner';
 import { AnalyticPlanSchema, hashPlan } from '@scaleinsyght/contracts';
+import { compareGraphSnapshots, getIdentifierPath, getImpactRadius, importGoldenMetadata, listGraphAssertions, listGraphAssets, listGraphSnapshots, listIdentifierFields, listReports, queryLineage, reconcileAssertion, reviewGraphAssertion, traceIdentifier, verifyAssertionFromRun } from '@scaleinsyght/graph';
 
 export interface GoldenAccount { tenantId: string; email: string; }
 export interface ServerOptions { pool: Pool; sessionSecret: string; goldenAccounts: GoldenAccount[]; artifactStore?: EncryptedArtifactStore; }
@@ -29,6 +30,118 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
   const app=Fastify({logger:false,bodyLimit:25*1024*1024});
   app.addContentTypeParser('application/octet-stream',{parseAs:'buffer'},(_request,payload,done)=>done(null,payload));
   app.get('/api/health',async()=>({status:'ok'}));
+  app.get('/api/metadata/sources',async(request,reply)=>{
+    if(!await authenticatedSession(request))return reply.code(401).send({error:'unauthorized'});
+    return reply.send({sources:[
+      {id:'golden-dbt',type:'dbt',name:'Synthetic dbt manifest',fixtureKey:'dbt-manifest'},
+      {id:'golden-tableau',type:'tableau',name:'Synthetic Tableau reports',fixtureKey:'tableau-reports'},
+      {id:'golden-powerbi',type:'power_bi',name:'Synthetic Power BI reports',fixtureKey:'power-bi-reports'},
+    ]});
+  });
+  app.post<{Body:{sourceId?:string}}>('/api/metadata/connections',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const sources=[{id:'golden-dbt',type:'dbt' as const},{id:'golden-tableau',type:'tableau' as const},{id:'golden-powerbi',type:'power_bi' as const}];
+    const source=sources.find((item)=>item.id===request.body?.sourceId);if(!source)return reply.code(400).send({error:'unknown_synthetic_source'});
+    const connection=await withTenant(options.pool,current.tenantId,async(client)=>{
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[JSON.stringify([current.tenantId,source.id])]);
+      const existing=await client.query<{connection_id:string;status:'draft'|'active'}>(
+        `SELECT connection_id,status FROM registry.connections WHERE tenant_id=$1 AND connector_type=$2 AND source_ref=$3 AND status IN ('active','draft')
+         ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END,created_at DESC LIMIT 1 FOR UPDATE`,
+        [current.tenantId,source.type,source.id]);
+      if(existing.rows[0])return existing.rows[0];
+      const created=await client.query<{connection_id:string;status:'draft'}>(
+        `INSERT INTO registry.connections(tenant_id,connector_type,status,source_ref) VALUES($1,$2,'draft',$3) RETURNING connection_id,status`,
+        [current.tenantId,source.type,source.id]);
+      return created.rows[0]!;
+    });
+    return reply.code(201).send({connectionId:connection.connection_id,connectorType:source.type,status:connection.status});
+  });
+  app.post<{Params:{connectionId:string}}>('/api/metadata/connections/:connectionId/activate',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const draft=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{source_ref:string|null;connector_type:string;status:string}>(
+      'SELECT source_ref,connector_type,status FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2',[current.tenantId,request.params.connectionId]));
+    const row=draft.rows[0];if(!row||!row.source_ref)return reply.code(404).send({error:'metadata_connection_not_found'});
+    const valid=(row.connector_type==='dbt'&&row.source_ref==='golden-dbt')||(row.connector_type==='tableau'&&row.source_ref==='golden-tableau')||(row.connector_type==='power_bi'&&row.source_ref==='golden-powerbi');
+    if(!valid)return reply.code(400).send({error:'metadata_connection_mismatch'});
+    if(row.status==='active')return reply.send({connectionId:request.params.connectionId,status:'active',connectorType:row.connector_type});
+    if(row.status!=='draft')return reply.code(404).send({error:'metadata_connection_not_found'});
+    const connection=await activateConnection(options.pool,{tenantId:current.tenantId,principalId:current.userId,connectorType:row.connector_type as ConnectorType,connectionId:request.params.connectionId,sourceRef:row.source_ref});
+    return reply.send({connectionId:connection.connectionId,status:'active',connectorType:row.connector_type});
+  });
+  app.post<{Params:{connectionId:string};Body:{fixtureKey?:string}}>('/api/metadata/import/:connectionId',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    if(typeof request.body?.fixtureKey!=='string')return reply.code(400).send({error:'invalid_golden_metadata_fixture'});
+    try{return reply.send(await importGoldenMetadata(options.pool,{tenantId:current.tenantId,principalId:current.userId,connectionId:request.params.connectionId,fixtureKey:request.body.fixtureKey}));}
+    catch(error){const code=error instanceof Error?error.message:'metadata_import_failed';if(code==='unknown_golden_metadata_fixture')return reply.code(400).send({error:'invalid_golden_metadata_fixture'});if(code==='metadata_connection_not_found')return reply.code(404).send({error:code});throw error;}
+  });
+  app.get<{Querystring:{assetId?:string;direction?:'upstream'|'downstream'|'both';asOf?:string}}>('/api/lineage',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const {assetId,direction='both',asOf}=request.query;
+    if(!assetId||!['upstream','downstream','both'].includes(direction)|| (asOf!==undefined&&!Number.isFinite(Date.parse(asOf))))return reply.code(400).send({error:'invalid_lineage_query'});
+    return reply.send(await queryLineage(options.pool,{tenantId:current.tenantId,assetId,direction,...(asOf?{asOf:new Date(asOf)}:{})}));
+  });
+  app.get('/api/ids',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    return reply.send({fields:await listIdentifierFields(options.pool,current.tenantId)});
+  });
+  app.get('/api/reports',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    return reply.send({reports:await listReports(options.pool,current.tenantId)});
+  });
+  app.get('/api/lineage/assertions',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    return reply.send({assertions:await listGraphAssertions(options.pool,current.tenantId)});
+  });
+  app.get('/api/lineage/assets',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    return reply.send({assets:await listGraphAssets(options.pool,current.tenantId)});
+  });
+  app.get<{Params:{assetId:string}}>('/api/lineage/:assetId/impact',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    if(!/^[0-9a-f-]{36}$/i.test(request.params.assetId))return reply.code(400).send({error:'invalid_asset_id'});
+    return reply.send(await getImpactRadius(options.pool,{tenantId:current.tenantId,assetId:request.params.assetId}));
+  });
+  app.get('/api/lineage/snapshots',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    return reply.send({snapshots:await listGraphSnapshots(options.pool,current.tenantId)});
+  });
+  app.get<{Params:{from:string;to:string}}>('/api/lineage/snapshots/:from/compare/:to',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    if(!/^[0-9a-f-]{36}$/i.test(request.params.from)||!/^[0-9a-f-]{36}$/i.test(request.params.to))return reply.code(400).send({error:'invalid_snapshot_id'});
+    try{return reply.send(await compareGraphSnapshots(options.pool,{tenantId:current.tenantId,fromSnapshotId:request.params.from,toSnapshotId:request.params.to}));}
+    catch(error){if(error instanceof Error&&error.message==='snapshot_not_found')return reply.code(404).send({error:error.message});throw error;}
+  });
+  app.get<{Params:{assetId:string}}>('/api/ids/:assetId/path',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    if(!/^[0-9a-f-]{36}$/i.test(request.params.assetId))return reply.code(400).send({error:'invalid_asset_id'});
+    return reply.send(await getIdentifierPath(options.pool,{tenantId:current.tenantId,assetId:request.params.assetId}));
+  });
+  app.post<{Params:{assetId:string};Body:{value?:string}}>('/api/ids/:assetId/trace',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    if(!/^[0-9a-f-]{36}$/i.test(request.params.assetId)||typeof request.body?.value!=='string'||request.body.value.length<1||request.body.value.length>256)return reply.code(400).send({error:'invalid_identifier_request'});
+    const key=process.env.ARTIFACT_MASTER_KEY;
+    if(!key)return reply.code(503).send({error:'identifier_trace_unavailable'});
+    try{return reply.send({matches:await traceIdentifier(options.pool,{tenantId:current.tenantId,assetId:request.params.assetId,value:request.body.value,masterKey:Buffer.from(key,'base64')})});}
+    catch(error){if(error instanceof Error&&error.message==='invalid_identifier_input')return reply.code(503).send({error:'identifier_trace_unavailable'});throw error;}
+  });
+  app.post<{Params:{assertionId:string};Body:{status?:string}}>('/api/lineage/assertions/:assertionId/review',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    if(!['accepted','disputed','rejected'].includes(request.body?.status??''))return reply.code(400).send({error:'invalid_review_status'});
+    try{return reply.send(await reviewGraphAssertion(options.pool,{tenantId:current.tenantId,principalId:current.userId,assertionId:request.params.assertionId,status:request.body!.status as 'accepted'|'disputed'|'rejected'}));}
+    catch(error){if(error instanceof Error&&error.message==='assertion_not_found')return reply.code(404).send({error:error.message});throw error;}
+  });
+  app.post<{Params:{assertionId:string};Body:{runId?:string}}>('/api/lineage/assertions/:assertionId/verify',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    if(typeof request.body?.runId!=='string'||!/^[0-9a-f-]{36}$/i.test(request.body.runId))return reply.code(400).send({error:'invalid_run_id'});
+    try{return reply.send(await verifyAssertionFromRun(options.pool,{tenantId:current.tenantId,assertionId:request.params.assertionId,runId:request.body.runId}));}
+    catch(error){const code=error instanceof Error?error.message:'lineage_verification_failed';if(code==='assertion_not_found')return reply.code(404).send({error:code});if(code==='exact_successful_run_pair_not_found')return reply.code(409).send({error:code});throw error;}
+  });
+  app.post<{Params:{assertionId:string};Body:{evidenceId?:string}}>('/api/lineage/assertions/:assertionId/reconcile',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    if(typeof request.body?.evidenceId!=='string'||!/^[0-9a-f-]{36}$/i.test(request.body.evidenceId))return reply.code(400).send({error:'invalid_evidence_id'});
+    try{return reply.send(await reconcileAssertion(options.pool,{tenantId:current.tenantId,assertionId:request.params.assertionId,evidenceId:request.body.evidenceId}));}
+    catch(error){if(error instanceof Error&&error.message==='reconciliation_evidence_not_found')return reply.code(409).send({error:error.message});throw error;}
+  });
   app.post<{Body:{email?:string;password?:string}}>('/api/auth/login',async(request,reply)=>{
     const email=request.body?.email?.trim().toLowerCase();const password=request.body?.password;
     if(!email||!password)return reply.code(400).send({error:'invalid_credentials'});

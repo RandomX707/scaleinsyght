@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+export { getGoldenMetadataFixture, getGoldenPhase3Dataset } from './metadata.js';
 
 export type SourceConnectorType = 'sql_server' | 'postgres' | 'snowflake' | 'excel';
 export type AssetType = 'table' | 'view';

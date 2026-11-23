@@ -1,0 +1,19 @@
+{
+  "tenants": [
+    { "id": "phase0-e2e-login", "name": "Synthetic Phase 0 Login Test" },
+    { "id": "phase1-e2e-profile", "name": "Synthetic Phase 1 Profile Test" },
+    { "id": "phase1-e2e-search", "name": "Synthetic Phase 1 Search Test" },
+    { "id": "phase2-e2e-analytic", "name": "Synthetic Phase 2 Analytic Test" },
+    { "id": "phase3-e2e-lineage", "name": "Synthetic Phase 3 Lineage Test" },
+    { "id": "phase3-e2e-review", "name": "Synthetic Phase 3 Review Test" }
+  ],
+  "users": [
+    { "id": "phase0-e2e-login-user", "tenantId": "phase0-e2e-login", "email": "phase0-login@synthetic.example" },
+    { "id": "phase1-e2e-profile-user", "tenantId": "phase1-e2e-profile", "email": "phase1-profile@synthetic.example" },
+    { "id": "phase1-e2e-search-user", "tenantId": "phase1-e2e-search", "email": "phase1-search@synthetic.example" },
+    { "id": "phase2-e2e-owner", "tenantId": "phase2-e2e-analytic", "email": "phase2-owner@synthetic.example" },
+    { "id": "phase2-e2e-approver", "tenantId": "phase2-e2e-analytic", "email": "phase2-approver@synthetic.example" },
+    { "id": "phase3-e2e-lineage-user", "tenantId": "phase3-e2e-lineage", "email": "phase3-lineage@synthetic.example" },
+    { "id": "phase3-e2e-review-user", "tenantId": "phase3-e2e-review", "email": "phase3-review@synthetic.example" }
+  ]
+}

@@ -173,6 +173,31 @@ export async function runGoldenProfile(
       }
     }
 
+    const inventoryNames=new Set(objectStates.map((object)=>object.name));
+    const profiledNames=new Set(profiles.map(({object})=>object.qualifiedName));
+    const profiledFields=new Set(profiles.flatMap(({object,profile})=>profile.columns.map((column)=>`${object.qualifiedName}.${column.name}`)));
+    const existingAssets=await client.query<{asset_id:string;qualified_name:string;asset_type:'dataset'|'field'}>(
+      `SELECT asset_id,qualified_name,asset_type FROM graph.assets
+       WHERE tenant_id=$1 AND source_id=$2 AND active AND asset_type IN ('dataset','field')`,
+      [input.tenantId,input.connectionId]);
+    const datasets=existingAssets.rows.filter((asset)=>asset.asset_type==='dataset');
+    const staleAssetIds=new Set<string>();
+    for(const dataset of datasets)if(!inventoryNames.has(dataset.qualified_name))staleAssetIds.add(dataset.asset_id);
+    for(const field of existingAssets.rows.filter((asset)=>asset.asset_type==='field')){
+      const parent=datasets.filter((dataset)=>field.qualified_name.startsWith(`${dataset.qualified_name}.`)).sort((left,right)=>right.qualified_name.length-left.qualified_name.length)[0];
+      if(!parent)continue;
+      if(!inventoryNames.has(parent.qualified_name)||(profiledNames.has(parent.qualified_name)&&!profiledFields.has(field.qualified_name)))staleAssetIds.add(field.asset_id);
+    }
+    if(staleAssetIds.size){
+      const ids=[...staleAssetIds];
+      await client.query('UPDATE graph.assets SET active=false,last_seen_at=clock_timestamp() WHERE tenant_id=$1 AND asset_id=ANY($2::uuid[])',[input.tenantId,ids]);
+      await client.query(
+        `UPDATE graph.assertions a SET review_status='stale'
+         FROM graph.relationships r WHERE a.tenant_id=$1 AND a.relationship_id=r.relationship_id
+          AND r.tenant_id=a.tenant_id AND (r.from_asset_id=ANY($2::uuid[]) OR r.to_asset_id=ANY($2::uuid[]))`,
+        [input.tenantId,ids]);
+    }
+
     for (const row of objectStates) {
       const assetId = row.assetKey ? tableAssets.get(row.name) ?? null : null;
       await client.query(
