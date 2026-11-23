@@ -53,6 +53,6 @@ The generated local sample PostgreSQL source contains 42,132 fake rows and is ac
 
 The first full E2E run found ambiguous Playwright locators after adding gateway controls and a second status notice. Locators were narrowed to the exact intended source field and status message; the rerun passed all 11 tests without changing assertions or test coverage.
 
-The first PR workflow stopped before tests because the runner's Ubuntu repositories do not include `postgresql-client-16`. Switching to Ubuntu's generic client package then failed the backup drill's intentional PostgreSQL 16 client-version guard. CI now adds the official PostgreSQL apt repository and installs `postgresql-client-16`; the complete workflow rerun is pending.
+The first PR workflow stopped before tests because the runner's Ubuntu repositories do not include `postgresql-client-16`. Switching to Ubuntu's generic client package then failed the backup drill's intentional PostgreSQL 16 client-version guard. The official PostgreSQL repository installed version 16, but the runner's default `PATH` still selected its newer client. CI now adds `/usr/lib/postgresql/16/bin` to the Actions path after installation; the complete workflow rerun is pending.
 
 The Docker image build and cold-start acceptance gate is delegated to CI under the local no-Docker constraint. The CI workflow runs Compose validation, builds all five deployment targets, starts the reference services from a cold state, waits for health, and cleans up. Phase completion and merge remain contingent on that GitHub Actions check passing.
