@@ -1,7 +1,7 @@
 # Phase 6 Report — Enterprise connectivity, hardening and deployment
 
 **Branch:** `phase-6`  
-**Status:** implementation complete; PR #8 checks green, merge pending  
+**Status:** merged to `main` in PR #8
 **Decision:** 36 remains assumed, pending Yashaswi.
 
 ## Assumptions pending Yashaswi
