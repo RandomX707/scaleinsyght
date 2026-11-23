@@ -2,6 +2,11 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 describe('deployment Compose reference', () => {
+  it('ci_uses_the_generated_sample_source_url_instead_of_overriding_it', () => {
+    const workflow=readFileSync(new URL('../../.github/workflows/ci.yml',import.meta.url),'utf8');
+    expect(workflow).not.toMatch(/^\s+DATABASE_URL_SAMPLE_SOURCE:/m);
+  });
+
   it('phase6_reference_compose_starts_cold_without_publishing_gateway_ports', () => {
     const compose=readFileSync(new URL('../../compose.yaml',import.meta.url),'utf8');
     const gateway=compose.split('  customer-gateway:\n')[1];

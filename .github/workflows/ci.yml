@@ -33,7 +33,6 @@ jobs:
       CONTROL_PLANE_URL: https://control.synthetic.invalid
       GATEWAY_CREDENTIAL: synthetic-ci-gateway-credential-only
       GATEWAY_SOURCE_ID: 00000000-0000-4000-8000-000000000001
-      DATABASE_URL_SAMPLE_SOURCE: postgresql://si_sample:ci-sample-read-only@127.0.0.1:5432/si_sample_source
     steps:
       - uses: actions/checkout@v4
         with:
