@@ -25,8 +25,8 @@ async function createTenant(connected:boolean){
  });
  return {tenantId,accounts};
 }
-async function signIn(page:Page,email:string){await page.goto('/login');await page.getByLabel('Email').fill(email);await page.getByLabel('Password').fill('golden-local-only');const login=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/auth/login');await page.getByRole('button',{name:'Sign in'}).click();expect((await login).status()).toBe(200);await page.waitForURL(url=>url.pathname==='/');}
-async function signOut(page:Page){await page.getByRole('button',{name:'Workspace profile'}).click();await page.getByRole('menuitem',{name:'Sign out'}).click();}
+async function signIn(page:Page,email:string){if(new URL(page.url()).pathname!=='/login')await page.goto('/login');await page.getByLabel('Email').fill(email);await page.getByLabel('Password').fill('golden-local-only');const login=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/auth/login');await page.getByRole('button',{name:'Sign in'}).click();expect((await login).status()).toBe(200);await page.waitForURL(url=>url.pathname==='/');}
+async function signOut(page:Page){await page.getByRole('button',{name:'Workspace profile'}).click();await page.getByRole('menuitem',{name:'Sign out'}).click();await page.waitForURL(url=>url.pathname==='/login');}
 
 test('c4_hub_empty_state_is_scoped_to_a_new_tenant_without_connected_adapters',async({page})=>{
  const {accounts}=await createTenant(true);await signIn(page,accounts.owner);await page.getByRole('link',{name:'Hub integrations'}).click();await expect(page.getByRole('heading',{name:'Hub integrations'})).toBeVisible();await page.getByRole('button',{name:'Disconnect semantics'}).click();await expect(page.getByText('No certified metrics are available while Semantics is disconnected.')).toBeVisible();await page.getByRole('button',{name:'Disconnect data studio'}).click();await expect(page.getByText('data studio · Disconnected · version 1')).toBeVisible();const lineage=await page.evaluate(async()=>fetch('/api/lineage/assets').then(response=>response.status));expect(lineage).toBe(200);
