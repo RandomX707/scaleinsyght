@@ -387,6 +387,22 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const from=new Date();from.setUTCDate(1);from.setUTCHours(0,0,0,0);const to=new Date(from);to.setUTCMonth(to.getUTCMonth()+1);
     return reply.send(await getUsage(options.pool,current.tenantId,from,to));
   });
+  app.get('/api/tenant/settings',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const result=await withTenant(options.pool,current.tenantId,client=>client.query<{allow_self_approval:boolean;time_zone:string}>('SELECT allow_self_approval,time_zone FROM core.tenants WHERE tenant_id=$1',[current.tenantId]));
+    const row=result.rows[0];if(!row)return reply.code(404).send({error:'tenant_not_found'});
+    return reply.send({allowSelfApproval:row.allow_self_approval,timeZone:row.time_zone});
+  });
+  app.put<{Body:{allowSelfApproval?:unknown;timeZone?:unknown}}>('/api/tenant/settings',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const {allowSelfApproval,timeZone}=request.body??{};
+    if(typeof allowSelfApproval!=='boolean'||typeof timeZone!=='string'||timeZone.length>100)return reply.code(400).send({error:'invalid_tenant_settings'});
+    try{new Intl.DateTimeFormat('en-US',{timeZone}).format();}catch{return reply.code(400).send({error:'invalid_tenant_time_zone'});}
+    const result=await withTenant(options.pool,current.tenantId,client=>client.query<{allow_self_approval:boolean;time_zone:string}>(
+      'UPDATE core.tenants SET allow_self_approval=$2,time_zone=$3 WHERE tenant_id=$1 RETURNING allow_self_approval,time_zone',[current.tenantId,allowSelfApproval,timeZone]));
+    if(!result.rowCount)return reply.code(404).send({error:'tenant_not_found'});
+    return reply.send({allowSelfApproval:result.rows[0]!.allow_self_approval,timeZone:result.rows[0]!.time_zone});
+  });
   app.get('/api/me/agent',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const memory=await getPersonalMemory(options.pool,{tenantId:current.tenantId,principalId:current.userId});
