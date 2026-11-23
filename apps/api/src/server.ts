@@ -453,6 +453,42 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     try{return reply.code(201).send(await submitFeedback(options.pool,{tenantId:current.tenantId,principalId:current.userId,runId:request.params.runId,verdict:body.verdict!,...(body.correction?{correction:body.correction}:{})}));}
     catch(error){const code=error instanceof Error?error.message:'feedback_failed';if(code==='run_not_found')return reply.code(404).send({error:code});if(code==='unsafe_correction'||code==='correction_not_allowed_for_useful_verdict')return reply.code(400).send({error:code});throw error;}
   });
+  app.get('/api/me/saved-questions',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const memory=await getPersonalMemory(options.pool,{tenantId:current.tenantId,principalId:current.userId});
+    if(!memory.savedPlanIds.length)return reply.send({questions:[]});
+    const result=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{plan_id:string;plan:Record<string,unknown>;created_at:Date}>(
+      `SELECT p.plan->>'plan_id' AS plan_id,p.plan,r.created_at FROM runs.analytic_plans p
+       JOIN runs.runs r USING(tenant_id,run_id)
+       WHERE p.tenant_id=$1 AND r.principal_id=$2 AND p.plan->>'plan_id'=ANY($3::text[])
+       ORDER BY r.created_at DESC`,[current.tenantId,current.userId,memory.savedPlanIds]));
+    return reply.send({questions:result.rows.map(row=>({planId:row.plan_id,question:row.plan.question,createdAt:row.created_at.toISOString(),sourceIds:(row.plan.scope as {source_ids:string[]}).source_ids}))});
+  });
+  app.post<{Params:{planId:string}}>('/api/me/saved-questions/:planId/start',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const memory=await getPersonalMemory(options.pool,{tenantId:current.tenantId,principalId:current.userId});
+    if(!memory.savedPlanIds.includes(request.params.planId))return reply.code(404).send({error:'saved_question_not_found'});
+    const saved=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{plan:Record<string,unknown>}>(
+      `SELECT p.plan FROM runs.analytic_plans p JOIN runs.runs r USING(tenant_id,run_id)
+       WHERE p.tenant_id=$1 AND r.principal_id=$2 AND p.plan->>'plan_id'=$3`,[current.tenantId,current.userId,request.params.planId]));
+    const sourceIds=(saved.rows[0]?.plan.scope as {source_ids?:string[]}|undefined)?.source_ids;
+    if(!saved.rowCount||!sourceIds?.length)return reply.code(404).send({error:'saved_question_not_found'});
+    try{
+      const sources=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{source_id:string;agent_id:string;group_id:string;group_version:number}>(
+        `SELECT connection_id AS source_id,connector_agent_id AS agent_id,source_group_id AS group_id,source_group_version AS group_version
+         FROM registry.connections WHERE tenant_id=$1 AND status='active' AND connection_id=ANY($2::uuid[])`,[current.tenantId,sourceIds]));
+      if(sources.rowCount!==sourceIds.length)return reply.code(403).send({error:'source_not_active_or_available'});
+      const plan=await createAnalyticPlan({question:String(saved.rows[0]!.plan.question),runId:randomUUID(),sources:sources.rows.map(row=>({sourceId:row.source_id,agentId:row.agent_id,groupId:row.group_id,groupVersion:row.group_version}))});
+      return reply.code(201).send({...await startAnalyticRun(options.pool,{tenantId:current.tenantId,principalId:current.userId,plan}),planId:plan.plan_id});
+    }catch(error){const code=error instanceof Error?error.message:'saved_question_start_failed';if(['principal_not_entitled','source_not_active','source_group_version_not_pinned'].includes(code))return reply.code(403).send({error:code});if(code.startsWith('analytic_plan'))return reply.code(400).send({error:code});throw error;}
+  });
+  app.delete<{Params:{planId:string}}>('/api/me/saved-questions/:planId',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const memory=await getPersonalMemory(options.pool,{tenantId:current.tenantId,principalId:current.userId});
+    if(!memory.savedPlanIds.includes(request.params.planId))return reply.code(404).send({error:'saved_question_not_found'});
+    await putPersonalMemory(options.pool,{tenantId:current.tenantId,principalId:current.userId,memory:{...memory,savedPlanIds:memory.savedPlanIds.filter(id=>id!==request.params.planId)}});
+    return reply.send({deleted:true});
+  });
   app.get<{Params:{runId:string};Querystring:{after?:string}}>('/api/runs/:runId/events',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const owner=await withTenant(options.pool,current.tenantId,async(client)=>client.query('SELECT 1 FROM runs.runs WHERE tenant_id=$1 AND run_id=$2 AND principal_id=$3',[current.tenantId,request.params.runId,current.userId]));
