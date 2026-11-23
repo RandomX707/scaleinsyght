@@ -37,7 +37,8 @@ test('phase1_golden_source_activation_profiles_dictionary_and_read_once_notifica
  await expect(page.getByRole('heading',{name:'Discovery complete'})).toBeVisible();
  await expect(page.getByRole('status')).toContainText('499 objects profiled from 500 listed');
  await page.getByRole('button',{name:'Close'}).click();
- await page.getByRole('button',{name:'View profile'}).click();
+ const profiledSource=page.getByRole('article').filter({hasText:'sql server'});
+ await profiledSource.getByRole('button',{name:'View profile'}).click();
  await expect(page.getByRole('heading',{name:'Profile'})).toBeVisible();
  await expect(page.getByText('500',{exact:true})).toBeVisible();
  await page.getByRole('button',{name:'Open Dictionary'}).click();
