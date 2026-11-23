@@ -51,6 +51,27 @@ describe('c6 lineage and identifier schema contracts', () => {
     expect(beforeCapture.assertions).toHaveLength(0);
   });
 
+  it('c6_lineage_traversal_stops_at_requested_depth',async()=>{
+    const tenantId=`phase3-depth-${crypto.randomUUID()}`;
+    const principalId=await withTenant(pool,tenantId,async(client)=>{
+      await client.query('INSERT INTO core.tenants(tenant_id,name) VALUES($1,$1)',[tenantId]);
+      return (await client.query<{user_id:string}>("INSERT INTO core.users(tenant_id,email,password_hash) VALUES($1,$2,'synthetic') RETURNING user_id",[tenantId,`${tenantId}@synthetic.example`])).rows[0]!.user_id;
+    });
+    const connection=await activateConnection(appPool,{tenantId,principalId,connectorType:'postgres'});
+    const ids=await withTenant(pool,tenantId,async(client)=>{
+      const assets:string[]=[];
+      for(const name of ['synthetic.root','synthetic.middle','synthetic.leaf']){
+        const result=await client.query<{asset_id:string}>("INSERT INTO graph.assets(tenant_id,source_id,asset_type,qualified_name,fingerprint) VALUES($1,$2,'dataset',$3,decode(repeat('01',32),'hex')) RETURNING asset_id",[tenantId,connection.connectionId,name]);
+        assets.push(result.rows[0]!.asset_id);
+      }
+      await client.query("INSERT INTO graph.relationships(tenant_id,family,relationship_type,from_asset_id,to_asset_id,granularity) VALUES($1,'data_flow','DERIVES_FROM',$2,$3,'dataset'),($1,'data_flow','DERIVES_FROM',$3,$4,'dataset')",[tenantId,assets[0],assets[1],assets[2]]);
+      return assets;
+    });
+    const result=await queryLineage(appPool,{tenantId,assetId:ids[0]!,direction:'downstream',maxDepth:1});
+    expect(result.asset_ids).toContain(ids[1]);
+    expect(result.asset_ids).not.toContain(ids[2]);
+  });
+
   it('c1_phase3_graph_tables_are_tenant_scoped_and_forced_rls', async () => {
     const result = await pool.query<{ table_name: string; rls: boolean; forced: boolean; has_tenant: boolean }>(
       `SELECT c.relname AS table_name,c.relrowsecurity AS rls,c.relforcerowsecurity AS forced,

@@ -11,11 +11,23 @@ function testUrl(key:'DATABASE_URL'|'DATABASE_URL_MIGRATE'):string{
   const value=process.env[key];if(!value)throw new Error(`${key} is required; graph benchmarks require real PostgreSQL`);
   const url=new URL(value);url.pathname='/si_test';return url.toString();
 }
-const app=new Pool({connectionString:testUrl('DATABASE_URL'),max:2});
+const app=new Pool({connectionString:testUrl('DATABASE_URL'),max:2,options:'-c statement_timeout=10000 -c application_name=phase3-graph-benchmark'});
 const migrate=new Pool({connectionString:testUrl('DATABASE_URL_MIGRATE'),max:2});
+const monitor=new Pool({connectionString:testUrl('DATABASE_URL'),max:2,options:'-c statement_timeout=10000 -c application_name=phase3-graph-benchmark-monitor'});
+
+async function sampleActivity(tenantId:string):Promise<Array<{pid:number;state:string|null;wait_event_type:string|null;wait_event:string|null;query:string}>>{
+  return withTenant(monitor,tenantId,async(client)=>{
+    const result=await client.query<{pid:number;state:string|null;wait_event_type:string|null;wait_event:string|null;query:string}>(
+      `SELECT pid,state,wait_event_type,wait_event,left(query,500) AS query
+       FROM pg_stat_activity
+       WHERE application_name='phase3-graph-benchmark' AND usename=current_user
+         AND pid<>pg_backend_pid() AND state='active'`);
+    return result.rows;
+  });
+}
 
 describe('phase 3 graph traversal benchmark',()=>{
-  afterAll(async()=>{await app.end();await migrate.end();});
+  afterAll(async()=>{await app.end();await migrate.end();await monitor.end();});
   it('c6_postgres_depth_four_traversal_on_100k_assets_meets_five_second_p95',async()=>{
     const tenantId=`graph-bench-${crypto.randomUUID()}`;
     const userId=await withTenant(migrate,tenantId,async(client)=>{
@@ -23,37 +35,88 @@ describe('phase 3 graph traversal benchmark',()=>{
       const result=await client.query<{user_id:string}>("INSERT INTO core.users(tenant_id,email,password_hash) VALUES($1,$2,'synthetic') RETURNING user_id",[tenantId,`${tenantId}@synthetic.example`]);
       return result.rows[0]!.user_id;
     });
-    console.info('benchmark: tenant created');
     const connection=await activateConnection(app,{tenantId,principalId:userId,connectorType:'postgres'});
-    console.info('benchmark: connection activated');
-    const rootId=await withTenant(migrate,tenantId,async(client)=>{
+    await withTenant(migrate,tenantId,async(client)=>{
       await client.query(`INSERT INTO graph.assets(tenant_id,source_id,asset_type,qualified_name,fingerprint)
         SELECT $1,$2,'dataset','bench.'||n,decode(md5($1||'.'||n),'hex') FROM generate_series(1,100000) AS n`,[tenantId,connection.connectionId]);
-      console.info('benchmark: assets inserted');
       await client.query(`WITH nodes AS (SELECT split_part(qualified_name,'.',2)::int AS n,asset_id FROM graph.assets WHERE tenant_id=$1 AND qualified_name LIKE 'bench.%')
         INSERT INTO graph.relationships(tenant_id,family,relationship_type,from_asset_id,to_asset_id,granularity)
         SELECT $1,'data_flow','DERIVES_FROM',parent.asset_id,child.asset_id,'dataset' FROM nodes child JOIN nodes parent ON parent.n=CASE
-          WHEN child.n BETWEEN 2 AND 11 THEN 1
-          WHEN child.n BETWEEN 12 AND 111 THEN 2+((child.n-12)/10)
-          WHEN child.n BETWEEN 112 AND 10111 THEN 12+((child.n-112)/100)
-          WHEN child.n>10111 THEN 112+((child.n-10112)/10)
+          WHEN child.n BETWEEN 2 AND 50 THEN 1
+          WHEN child.n BETWEEN 51 AND 2451 THEN 2+((child.n-51)/49)
+          WHEN child.n BETWEEN 2452 AND 7253 THEN 51+((child.n-2452)/2)
+          WHEN child.n>7253 THEN 2452+((child.n-7254)%4802)
         END WHERE child.n>1`,[tenantId]);
-      console.info('benchmark: edges inserted');
-      return (await client.query<{asset_id:string}>("SELECT asset_id FROM graph.assets WHERE tenant_id=$1 AND qualified_name='bench.1'",[tenantId])).rows[0]!.asset_id;
+      await client.query(`WITH nodes AS (SELECT split_part(qualified_name,'.',2)::int AS n,asset_id FROM graph.assets WHERE tenant_id=$1 AND qualified_name LIKE 'bench.%'),
+        shortcuts AS (SELECT i,2452+(i%4802) AS child_n,51+(((i%4802)/2)+1+(i/4802))%2401 AS parent_n FROM generate_series(0,4999) AS i)
+        INSERT INTO graph.relationships(tenant_id,family,relationship_type,from_asset_id,to_asset_id,granularity)
+        SELECT $1,'data_flow','MAPS_TO',parent.asset_id,child.asset_id,'dataset' FROM shortcuts s
+        JOIN nodes child ON child.n=s.child_n JOIN nodes parent ON parent.n=s.parent_n`,[tenantId]);
     });
-    console.info('benchmark: seed committed');
+    await migrate.query('ANALYZE graph.assets');
+    await migrate.query('ANALYZE graph.relationships');
+    await migrate.query('ANALYZE graph.assertions');
+    await migrate.query('ANALYZE graph.evidence');
+    await migrate.query('ANALYZE graph.gaps');
+    const degree=await withTenant(migrate,tenantId,async(client)=>client.query<{average_degree:number;maximum_degree:number;hub_count:number}>(
+      `WITH degrees AS (
+         SELECT asset_id,count(*)::int AS degree FROM (
+           SELECT from_asset_id AS asset_id FROM graph.relationships WHERE tenant_id=$1 AND family='data_flow'
+           UNION ALL SELECT to_asset_id FROM graph.relationships WHERE tenant_id=$1 AND family='data_flow'
+         ) edges GROUP BY asset_id
+       ) SELECT avg(coalesce(degree,0))::float AS average_degree,max(coalesce(degree,0))::int AS maximum_degree,
+         count(*) FILTER(WHERE coalesce(degree,0)>10)::int AS hub_count
+       FROM graph.assets a LEFT JOIN degrees d USING(asset_id) WHERE a.tenant_id=$1`,[tenantId]));
+    console.info(`Fan-out (incident edges): average ${degree.rows[0]!.average_degree.toFixed(3)}, maximum ${degree.rows[0]!.maximum_degree}, hubs over 10 edges ${degree.rows[0]!.hub_count}`);
+    expect(degree.rows[0]!.average_degree).toBeGreaterThanOrEqual(2);
+    expect(degree.rows[0]!.average_degree).toBeLessThanOrEqual(5);
+    expect(degree.rows[0]!.maximum_degree).toBeLessThanOrEqual(50);
+    const starts=await withTenant(migrate,tenantId,async(client)=>client.query<{asset_id:string}>(
+      "SELECT asset_id FROM graph.assets WHERE tenant_id=$1 AND qualified_name LIKE 'bench.%' ORDER BY md5(asset_id::text) LIMIT 50",[tenantId]));
+    const rls=await withTenant(app,tenantId,async(client)=>client.query<{role:string;tenant:string}>(
+      "SELECT current_user AS role,current_setting('app.tenant_id') AS tenant"));
+    expect(rls.rows[0]).toEqual({role:'si_app',tenant:tenantId});
+    const explain=await withTenant(app,tenantId,async(client)=>client.query<{ 'QUERY PLAN':string }>(
+      `EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT TEXT)
+       WITH RECURSIVE walk(asset_id,depth,visited,relationship_id) AS (
+         SELECT $1::uuid,0,ARRAY[$1::uuid],NULL::uuid
+         UNION ALL
+         SELECT next.asset_id,w.depth+1,w.visited||next.asset_id,next.relationship_id
+         FROM walk w CROSS JOIN LATERAL (
+           SELECT r.to_asset_id AS asset_id,r.relationship_id FROM graph.relationships r
+           WHERE r.tenant_id=$2 AND r.family='data_flow' AND r.from_asset_id=w.asset_id
+           UNION ALL SELECT r.from_asset_id,r.relationship_id FROM graph.relationships r
+           WHERE r.tenant_id=$2 AND r.family='data_flow' AND r.to_asset_id=w.asset_id
+         ) next WHERE w.depth<4 AND NOT(next.asset_id=ANY(w.visited))
+       ) SELECT DISTINCT r.from_asset_id,r.to_asset_id,r.relationship_id,r.granularity
+         FROM walk w JOIN graph.relationships r ON r.tenant_id=$2 AND r.relationship_id=w.relationship_id
+         WHERE w.relationship_id IS NOT NULL`,[starts.rows[0]!.asset_id,tenantId]));
+    console.info(`EXPLAIN ANALYZE on si_app with RLS enabled:\n${explain.rows.map(row=>row['QUERY PLAN']).join('\n')}`);
     const samples:number[]=[];
-    for(let index=0;index<5;index++){
+    const activeSamples:Array<{wait_event_type:string|null;wait_event:string|null;query:string}> = [];
+    for(const start of starts.rows){
       const started=performance.now();
-      const result=await queryLineage(app,{tenantId,assetId:rootId,direction:'downstream'});
-      console.info(`benchmark: traversal ${index+1} completed in ${(performance.now()-started).toFixed(1)} ms`);
+      let monitoring=true;
+      const monitorTask=(async()=>{while(monitoring){
+        activeSamples.push(...(await sampleActivity(tenantId)));
+        await new Promise(resolve=>setTimeout(resolve,100));
+      }})();
+      try{
+        const result=await queryLineage(app,{tenantId,assetId:start.asset_id,direction:'both',maxDepth:4});
+        expect(result.asset_ids).toContain(start.asset_id);
+      }finally{
+        monitoring=false;
+        await monitorTask;
+      }
       samples.push(performance.now()-started);
-      expect(result.asset_ids).toHaveLength(100000);
-      expect(result.edges).toHaveLength(99999);
     }
     samples.sort((a,b)=>a-b);
+    const p50=samples[Math.ceil(samples.length*0.5)-1]!;
     const p95=samples[Math.ceil(samples.length*0.95)-1]!;
-    console.info(`Phase 3 depth-four traversal p95: ${p95.toFixed(1)} ms`);
+    const maximum=samples.at(-1)!;
+    console.info(`50 random depth-four traversals: p50=${p50.toFixed(1)} ms, p95=${p95.toFixed(1)} ms, max=${maximum.toFixed(1)} ms`);
+    console.info(`pg_stat_activity samples: ${activeSamples.length}; lock waits=${activeSamples.filter(row=>row.wait_event_type==='Lock').length}`);
+    if(activeSamples.some(row=>row.wait_event_type==='Lock'))console.info(`Lock-wait sample: ${JSON.stringify(activeSamples.find(row=>row.wait_event_type==='Lock'))}`);
     expect(p95).toBeLessThan(5000);
   },300_000);
 });

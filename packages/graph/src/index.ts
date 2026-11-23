@@ -57,11 +57,14 @@ export interface QueryLineageInput {
   tenantId: string;
   assetId: string;
   direction: 'upstream' | 'downstream' | 'both';
+  maxDepth?: number;
   asOf?: Date;
   methods?: GraphAssertion['evidence_method'][];
 }
 
 export async function queryLineage(pool: Pool, input: QueryLineageInput): Promise<LineagePath> {
+  const maxDepth=input.maxDepth??20;
+  if(!Number.isInteger(maxDepth)||maxDepth<1||maxDepth>20)throw new Error('invalid_lineage_depth');
   return withTenant(pool, input.tenantId, async (client) => {
     const edges = await client.query<{ from_asset_id: string; to_asset_id: string; relationship_id: string; granularity:'system'|'dataset'|'field'|'metric'|'report' }>(
       `WITH RECURSIVE walk(asset_id,depth,visited,relationship_id) AS (
@@ -76,12 +79,12 @@ export async function queryLineage(pool: Pool, input: QueryLineageInput): Promis
            SELECT r.from_asset_id AS asset_id,r.relationship_id FROM graph.relationships r
            WHERE $2 IN ('upstream','both') AND r.tenant_id=$3 AND r.family='data_flow' AND r.to_asset_id=w.asset_id
          ) next
-         WHERE w.depth<20 AND NOT (next.asset_id=ANY(w.visited))
+         WHERE w.depth<$4 AND NOT (next.asset_id=ANY(w.visited))
        )
        SELECT DISTINCT r.from_asset_id,r.to_asset_id,r.relationship_id,r.granularity FROM walk w
        JOIN graph.relationships r ON r.tenant_id=$3 AND r.relationship_id=w.relationship_id
        WHERE w.relationship_id IS NOT NULL`,
-      [input.assetId,input.direction,input.tenantId],
+      [input.assetId,input.direction,input.tenantId,maxDepth],
     );
     const visited = [...new Set([input.assetId,...edges.rows.flatMap((row) => [row.from_asset_id,row.to_asset_id])])];
     const assets=await client.query<{asset_id:string;qualified_name:string;asset_type:string;active:boolean}>(
