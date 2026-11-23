@@ -6,6 +6,7 @@ import { Pool, Client } from 'pg';
 import { buildServer, hashPassword } from '@scaleinsyght/api/server';
 import { assertLiveModelTestAllowed, OpenAIModelGateway } from '@scaleinsyght/model-gateway';
 import { withTenant } from '@scaleinsyght/db';
+import { containsExpectedNumbers, extractNumbers } from './live-result-check.mjs';
 
 config({ path: '.env' });
 
@@ -77,12 +78,13 @@ try {
 
     const gateway = new OpenAIModelGateway(appPool);
     const analytic = await gateway.complete({
-      tenantId, alias: 'cheap', question: 'Summarize the synthetic hospital encounter aggregate. Return the exact encounter_count, department_count, and average_per_department values, and state that they are aggregate counts.',
+      tenantId, alias: 'cheap', question: 'Summarize the synthetic hospital encounter aggregate. Return only a JSON object with numeric fields encounter_count, department_count, and average_per_department. Use the exact values and do not use thousands separators or prose.',
       metadata: { classification: 'METADATA_STATISTICAL', structural: { source: 'public.encounters', grouping: 'department_id' }, descriptive: {}, statistical: { encounter_count: Number(metrics.encounter_count), department_count: Number(metrics.department_count), average_per_department: Number(metrics.average_per_department) }, sensitivityTags: [], groupSize: Number(metrics.encounter_count), minimumCellSize: 10 },
       maxOutputTokens: 300,
     });
     const expectedAnalytic = `encounter_count=${metrics.encounter_count}; department_count=${metrics.department_count}; average_per_department=${metrics.average_per_department}`;
-    const analyticMatches = [metrics.encounter_count, metrics.department_count, metrics.average_per_department].every((value) => analytic.text.includes(value));
+    const expectedAnalyticValues = [metrics.encounter_count, metrics.department_count, metrics.average_per_department];
+    const analyticMatches = containsExpectedNumbers(analytic.text, expectedAnalyticValues);
 
     const lineageNames = lineage.assets.map((asset) => asset.qualified_name);
     const lineageEdges = lineage.edges ?? [];
@@ -100,6 +102,7 @@ try {
     const totals = usage.rows[0]!;
     process.stdout.write(`Analytic deterministic baseline: ${expectedAnalytic}\n`);
     process.stdout.write(`Analytic model ${analytic.model}: ${analyticMatches ? 'matched all values' : 'differed from baseline'} (${analytic.inputTokens + analytic.outputTokens} tokens)\n`);
+    process.stdout.write(`Analytic model numeric values observed: ${extractNumbers(analytic.text).join(', ')}\n`);
     process.stdout.write(`Lineage deterministic path: ${expectedLineage}\n`);
     process.stdout.write(`Lineage model ${lineageAnswer.model}: ${lineageMatches ? 'named every source object' : 'omitted or changed a source object'} (${lineageAnswer.inputTokens + lineageAnswer.outputTokens} tokens)\n`);
     process.stdout.write(`Total live model usage: ${totals.input_tokens} input tokens, ${totals.output_tokens} output tokens, USD ${Number(totals.cost_usd).toFixed(6)}\n`);

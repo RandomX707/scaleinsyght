@@ -59,7 +59,7 @@ The hospital schema contains fake values only. It is generated locally from dete
 | `c7_gateway_does_not_record_estimated_tokens_as_provider_usage` | Missing provider usage is recorded as a safe failure, not fabricated billing totals | 5, 7 |
 | `real_postgres_read_only_connector_harvests_profiles_infers_er_dictionary_and_nightly_refresh` | Dedicated source role runs harvest/profile/ER/dictionary/nightly and imports the compiled manifest idempotently; database, schema, tables and rows remain unwritable | 2, 5, 6, 7 |
 | `c3_test_live_refuses_ci_even_when_opted_in` and `c3_test_live_requires_explicit_local_opt_in` | `pnpm test:live` is local-only, requires opt-in and uses model IDs from `.env` | 3, 4, 7 |
-| `gitleaks_hook_rejects_synthetic_staged_credential_canary` | Pre-commit hook blocks a staged fake credential; CI scans commits and `.env` remains ignored | 7 |
+| `secret_scanner_rejects_openai_style_key_in_env_example` | Shared scanner accepts the empty placeholder, rejects a synthetic OpenAI-style key without printing it, and is wired into staged pre-commit checks and CI working-tree checks; Gitleaks scans history | 7 |
 | `phase-5b-vendor-prerequisites-document` | Prerequisites name the exact SQL Server instance and free Snowflake trial/account details needed; no install or signup occurs | 6 |
 
 ## Verification gates
