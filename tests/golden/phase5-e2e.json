@@ -1,0 +1,7 @@
+{
+  "users": [
+    { "tenantId": "phase5-e2e-saved-questions", "email": "owner@phase5-e2e-saved-questions.synthetic.example" },
+    { "tenantId": "phase5-e2e-reports", "email": "owner@phase5-e2e-reports.synthetic.example" },
+    { "tenantId": "phase5-e2e-reports", "email": "reviewer@phase5-e2e-reports.synthetic.example" }
+  ]
+}

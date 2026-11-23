@@ -21,11 +21,10 @@ describe('contract 1 saved question ownership and revalidation', () => {
   it('c1_saved_questions_are_private_deletable_and_revalidated_before_reuse', async () => {
     const tenantId = `saved-question-${crypto.randomUUID()}`;
     let ownerId = '';
-    let otherId = '';
     await withTenant(migrate, tenantId, async (db) => {
       await db.query('INSERT INTO core.tenants(tenant_id,name) VALUES($1,$1)', [tenantId]);
       ownerId = (await db.query<{ user_id: string }>('INSERT INTO core.users(tenant_id,email,password_hash) VALUES($1,$2,$3) RETURNING user_id', [tenantId, `${tenantId}@synthetic.example`, hashPassword('synthetic-password')])).rows[0]!.user_id;
-      otherId = (await db.query<{ user_id: string }>('INSERT INTO core.users(tenant_id,email,password_hash) VALUES($1,$2,$3) RETURNING user_id', [tenantId, `${tenantId}-other@synthetic.example`, hashPassword('synthetic-password')])).rows[0]!.user_id;
+      await db.query('INSERT INTO core.users(tenant_id,email,password_hash) VALUES($1,$2,$3)', [tenantId, `${tenantId}-other@synthetic.example`, hashPassword('synthetic-password')]);
       await db.query("INSERT INTO registry.capabilities(tenant_id,capability_id,active_version,effect_class,effect_safety,enabled) VALUES($1,'analytic.read',1,'READ','not_applicable',true)", [tenantId]);
     });
     const source = await activateConnection(app, { tenantId, principalId: ownerId, connectorType: 'postgres' });
