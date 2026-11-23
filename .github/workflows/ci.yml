@@ -25,6 +25,14 @@ jobs:
       DATABASE_URL_ADMIN: postgresql://postgres:postgres@127.0.0.1:5432/postgres
       ARTIFACT_MASTER_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
       ARTIFACT_VOLUME_PATH: .local/artifacts
+      POSTGRES_PASSWORD: ci-compose-superuser
+      SI_APP_PASSWORD: ci-compose-app
+      SI_WORKER_PASSWORD: ci-compose-worker
+      SI_MIGRATE_PASSWORD: ci-compose-migrate
+      SESSION_SECRET: ci-compose-session-secret-with-more-than-thirty-two-bytes
+      CONTROL_PLANE_URL: https://control.synthetic.invalid
+      GATEWAY_CREDENTIAL: synthetic-ci-gateway-credential-only
+      GATEWAY_SOURCE_ID: 00000000-0000-4000-8000-000000000001
     steps:
       - uses: actions/checkout@v4
         with:
@@ -41,6 +49,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - name: Install PostgreSQL 16 client tools for encrypted restore drill
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          curl --fail --silent --show-error --location https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo tee /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc >/dev/null
+          . /etc/os-release
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-16
+          echo "/usr/lib/postgresql/16/bin" >> "$GITHUB_PATH"
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: python -m venv .venv
@@ -49,6 +66,7 @@ jobs:
       - run: pnpm db:setup
       - run: pnpm lint
       - run: pnpm typecheck
+      - run: pnpm eval:golden
       - run: pnpm test
       - run: pnpm test:sqlparse
       - run: pnpm db:migrate
@@ -56,3 +74,12 @@ jobs:
       - run: pnpm test:contracts
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test:e2e
+      - name: Build deployment images and check Compose config
+        run: |
+          docker compose config --quiet
+          docker compose build api worker web sqlparse customer-gateway
+      - name: Cold start deployment reference stack
+        run: docker compose up -d --wait api web worker sqlparse
+      - name: Stop deployment reference stack
+        if: always()
+        run: docker compose down --volumes --remove-orphans

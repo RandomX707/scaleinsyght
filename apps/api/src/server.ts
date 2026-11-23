@@ -3,7 +3,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { withTenant, getUsage } from '@scaleinsyght/db';
 import { activateConnection, approveGovernedVersion, createConnectionDraft, createGovernedDraft, deletePersonalMemory, getApprovedGovernedVersion, getPersonalMemory, moveConnectionToGroup, putPersonalMemory, type ConnectorType, type PersonalMemoryData } from '@scaleinsyght/registry';
-import { createGoldenConnector, createPostgresConnector, listGoldenSources, type ReadOnlyConnector } from '@scaleinsyght/connectors';
+import { createCrmConnector, createGoldenConnector, createLakeConnector, createPostgresConnector, listGoldenSources, type ReadOnlyConnector } from '@scaleinsyght/connectors';
 import { EncryptedArtifactStore } from '@scaleinsyght/artifacts';
 import { getNotifications, markNotificationRead, readConnectionScope, readWorkbook, retireConnection, runGoldenProfile, saveConnectionScope, storeWorkbook } from '@scaleinsyght/profiler';
 import { applyPersonalContext, createAnalyticPlan, startAnalyticRun, submitFeedback, type StructuredAnswer } from '@scaleinsyght/analytic';
@@ -14,9 +14,11 @@ import { createGoldenHubAdapters, getGoldenHubFixtures, type FlowSpecDelivery, t
 import { nextScheduleInstant, renderEvidencePack, safeEvidencePack, type ExportFormat, type SafeEvidencePack } from '@scaleinsyght/reports';
 import { ClaimSchema, EvidenceRefSchema } from '@scaleinsyght/contracts';
 import { authorise } from '@scaleinsyght/policy';
+import { createOidcAuthorizationRequest, verifyOidcIdToken } from '@scaleinsyght/auth-oidc';
+import { createEnrollment, hashGatewaySecret, validateGatewayPlan, validateGatewayResult } from '@scaleinsyght/customer-gateway';
 
 export interface GoldenAccount { tenantId: string; email: string; }
-export interface ServerOptions { pool: Pool; sessionSecret: string; goldenAccounts: GoldenAccount[]; artifactStore?: EncryptedArtifactStore; hubAdapters?: { semantics: SemanticsAdapter; dataStudio: { product: 'data_studio'; version: number; connected: boolean; capabilities: readonly string[]; deliverFlowSpec(key: string, spec: FlowSpecDelivery): Promise<unknown>; lookupFlowSpec(key: string): Promise<unknown>; } }; }
+export interface ServerOptions { pool: Pool; sessionSecret: string; goldenAccounts: GoldenAccount[]; artifactStore?: EncryptedArtifactStore; oidcFetch?: typeof fetch; hubAdapters?: { semantics: SemanticsAdapter; dataStudio: { product: 'data_studio'; version: number; connected: boolean; capabilities: readonly string[]; deliverFlowSpec(key: string, spec: FlowSpecDelivery): Promise<unknown>; lookupFlowSpec(key: string): Promise<unknown>; } }; }
 const sessionLifetimeMs = 8 * 60 * 60 * 1000;
 export function hashPassword(password: string, salt = randomBytes(16).toString('hex')): string {
   return `${salt}:${scryptSync(password,salt,64).toString('hex')}`;
@@ -27,19 +29,149 @@ function verifyPassword(password:string,encoded:string):boolean{
   return expected.length===actual.length && timingSafeEqual(actual,expected);
 }
 function digest(value:string):Buffer{return createHash('sha256').update(value).digest();}
+function oidcSubjectHash(tenantId:string,issuer:string,subject:string,secret:string):Buffer{return createHmac('sha256',secret).update('scale-insyght:oidc-subject:v1\0').update(tenantId).update('\0').update(issuer).update('\0').update(subject).digest();}
 function sign(value:string,secret:string):string{return createHmac('sha256',secret).update(value).digest('base64url');}
+function secureEqual(left:string,right:string):boolean{const a=Buffer.from(left);const b=Buffer.from(right);return a.length===b.length&&timingSafeEqual(a,b);}
+function cookieValue(header:string|undefined,name:string):string|null{
+  if(!header)return null;return header.split(';').map(part=>part.trim()).find(part=>part.startsWith(`${name}=`))?.slice(name.length+1)??null;
+}
+async function oidcDocument(fetcher:typeof fetch,url:string):Promise<Record<string,unknown>>{
+  const response=await fetcher(url,{headers:{accept:'application/json'},signal:AbortSignal.timeout(5000)});
+  if(!response.ok)throw new Error('oidc_provider_unavailable');
+  const length=Number(response.headers.get('content-length')??0);if(length>1_048_576)throw new Error('oidc_provider_response_too_large');
+  const text=await response.text();if(Buffer.byteLength(text,'utf8')>1_048_576)throw new Error('oidc_provider_response_too_large');
+  const value=JSON.parse(text) as unknown;if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('oidc_provider_response_invalid');
+  return value as Record<string,unknown>;
+}
+function oidcEndpoint(value:unknown):string{
+  if(typeof value!=='string')throw new Error('oidc_provider_response_invalid');
+  const url=new URL(value);if(url.protocol!=='https:')throw new Error('oidc_https_required');return url.toString();
+}
 
 export async function buildServer(options:ServerOptions):Promise<FastifyInstance>{
   if(options.sessionSecret.length<32)throw new Error('SESSION_SECRET must contain at least 32 characters');
   const app=Fastify({logger:false,bodyLimit:25*1024*1024});
+  const oidcFetch=options.oidcFetch??fetch;
   const postgresConnectors=new Map<string,ReadOnlyConnector>();
   const connectorFor=(sourceId:string):ReadOnlyConnector=>{
+    if(sourceId==='synthetic-lake')return createLakeConnector();
+    if(sourceId==='synthetic-crm')return createCrmConnector();
     if(sourceId!=='local-hospital')return createGoldenConnector(sourceId);
     const url=process.env.DATABASE_URL_SAMPLE_SOURCE;if(!url)throw new Error('DATABASE_URL_SAMPLE_SOURCE is required for the local hospital source');
     let connector=postgresConnectors.get(url);if(!connector){connector=createPostgresConnector(url);postgresConnectors.set(url,connector);}return connector;
   };
+  const availableConnectorSources=()=>[
+    ...listGoldenSources(),
+    ...(process.env.DATABASE_URL_SAMPLE_SOURCE?[{id:'local-hospital',type:'postgres' as const,name:'Local synthetic hospital PostgreSQL'}]:[]),
+    {id:'synthetic-lake',type:'lake' as const,name:'Synthetic lake'},
+    {id:'synthetic-crm',type:'crm' as const,name:'Synthetic CRM'},
+  ];
+  app.get('/api/gateways',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const allowed=await withTenant(options.pool,current.tenantId,client=>client.query("SELECT 1 FROM core.entitlements WHERE tenant_id=$1 AND principal_id=$2 AND capability_id='tenant.gateway.manage' AND allowed AND resource_id IS NULL LIMIT 1",[current.tenantId,current.userId]));
+    if(!allowed.rowCount)return reply.code(403).send({error:'tenant_admin_required'});
+    const gateways=await withTenant(options.pool,current.tenantId,client=>client.query<{gateway_id:string;source_connection_id:string;last_seen_at:Date|null;revoked_at:Date|null}>('SELECT gateway_id,source_connection_id,last_seen_at,revoked_at FROM gateway.clients WHERE tenant_id=$1 ORDER BY created_at DESC',[current.tenantId]));
+    return reply.send({gateways:gateways.rows.map(row=>({gatewayId:row.gateway_id,sourceConnectionId:row.source_connection_id,lastSeenAt:row.last_seen_at,revokedAt:row.revoked_at}))});
+  });
+  app.post<{Params:{gatewayId:string}}>('/api/gateways/:gatewayId/revoke',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    if(!/^[0-9a-f-]{36}$/i.test(request.params.gatewayId))return reply.code(400).send({error:'invalid_gateway_id'});
+    const allowed=await withTenant(options.pool,current.tenantId,client=>client.query("SELECT 1 FROM core.entitlements WHERE tenant_id=$1 AND principal_id=$2 AND capability_id='tenant.gateway.manage' AND allowed AND resource_id IS NULL LIMIT 1",[current.tenantId,current.userId]));
+    if(!allowed.rowCount)return reply.code(403).send({error:'tenant_admin_required'});
+    const revoked=await withTenant(options.pool,current.tenantId,async(client)=>{
+      const result=await client.query('UPDATE gateway.clients SET revoked_at=clock_timestamp() WHERE tenant_id=$1 AND gateway_id=$2 AND revoked_at IS NULL RETURNING gateway_id',[current.tenantId,request.params.gatewayId]);
+      if(result.rowCount)await client.query("INSERT INTO gateway.events(tenant_id,gateway_id,event_type,safe_status) VALUES($1,$2,'gateway_revoked','revoked')",[current.tenantId,request.params.gatewayId]);return Boolean(result.rowCount);
+    });
+    if(!revoked)return reply.code(404).send({error:'gateway_not_found'});return reply.send({gatewayId:request.params.gatewayId,status:'revoked'});
+  });
   app.addHook('onClose',async()=>{await Promise.all([...postgresConnectors.values()].map(connector=>connector.close?.()));});
   const hubAdapters=options.hubAdapters??createGoldenHubAdapters(getGoldenHubFixtures());
+  const gatewayAuth=async(request: { headers: Record<string, string | string[] | undefined> })=>{
+    const header=request.headers.authorization;
+    if(typeof header!=='string'||!header.startsWith('Bearer '))return null;
+    const credential=header.slice(7);const parts=credential.split('.');
+    if(parts.length!==3||!parts[0]||! /^[a-zA-Z0-9_-]{3,128}$/.test(parts[0])||! /^[0-9a-f-]{36}$/i.test(parts[1]!)||! /^[0-9a-f]{64}$/i.test(parts[2]!))return null;
+    const [tenantId,gatewayId]=parts;
+    try{
+      return await withTenant(options.pool,tenantId!,async(client)=>{
+        const found=await client.query<{credential_hash:Buffer;source_connection_id:string}>("SELECT c.credential_hash,c.source_connection_id FROM gateway.clients c JOIN registry.connections r ON r.tenant_id=c.tenant_id AND r.connection_id=c.source_connection_id WHERE c.tenant_id=$1 AND c.gateway_id=$2 AND c.revoked_at IS NULL AND r.status='active'",[tenantId,gatewayId]);
+        const row=found.rows[0];if(!row)return null;
+        const actual=Buffer.from(hashGatewaySecret(credential),'hex');
+        if(actual.length!==row.credential_hash.length||!secureEqual(actual.toString('hex'),row.credential_hash.toString('hex')))return null;
+        return {tenantId:tenantId!,gatewayId:gatewayId!,sourceConnectionId:row.source_connection_id};
+      });
+    }catch{return null;}
+  };
+  app.post('/api/gateways/enrollments',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const sourceConnectionId=String((request.body as {sourceConnectionId?:unknown})?.sourceConnectionId??'');
+    if(!/^[0-9a-f-]{36}$/i.test(sourceConnectionId))return reply.code(400).send({error:'invalid_source_connection'});
+    const allowed=await withTenant(options.pool,current.tenantId,client=>client.query("SELECT 1 FROM core.entitlements WHERE tenant_id=$1 AND principal_id=$2 AND capability_id='tenant.gateway.manage' AND allowed AND resource_id IS NULL LIMIT 1",[current.tenantId,current.userId]));
+    if(!allowed.rowCount)return reply.code(403).send({error:'tenant_admin_required'});
+    const enrollment=await createEnrollment({tenantId:current.tenantId});
+    const row=await withTenant(options.pool,current.tenantId,async(client)=>{
+      const source=await client.query('SELECT 1 FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2 AND status=\'active\'', [current.tenantId,sourceConnectionId]);
+      if(!source.rowCount)return null;
+      const inserted=await client.query<{enrollment_id:string}>('INSERT INTO gateway.enrollments(tenant_id,source_connection_id,token_hash,expires_at,created_by) VALUES($1,$2,$3,to_timestamp($4/1000.0),$5) RETURNING enrollment_id',[current.tenantId,sourceConnectionId,Buffer.from(enrollment.tokenHash,'hex'),enrollment.expiresAt,current.userId]);
+      await client.query("INSERT INTO gateway.events(tenant_id,event_type,safe_status) VALUES($1,'gateway_enrollment_created','created')",[current.tenantId]);return inserted.rows[0];
+    });
+    if(!row)return reply.code(404).send({error:'connection_not_found'});
+    return reply.code(201).send({enrollmentId:row.enrollment_id,token:enrollment.token,expiresAt:new Date(enrollment.expiresAt).toISOString()});
+  });
+  app.post('/api/gateways/claim',async(request,reply)=>{
+    const body=request.body as {tenantId?:unknown;token?:unknown};const tenantId=String(body?.tenantId??'');const token=String(body?.token??'');
+    if(!/^[a-zA-Z0-9_-]{3,128}$/.test(tenantId)||!/^[0-9a-f]{64}$/i.test(token))return reply.code(400).send({error:'gateway_claim_invalid'});
+    const claimed=await withTenant(options.pool,tenantId,async(client)=>{
+      const enrollment=await client.query<{enrollment_id:string;source_connection_id:string;consumed_at:Date|null;expires_at:Date}>('SELECT enrollment_id,source_connection_id,consumed_at,expires_at FROM gateway.enrollments WHERE tenant_id=$1 AND token_hash=$2 FOR UPDATE',[tenantId,Buffer.from(hashGatewaySecret(token),'hex')]);
+      const row=enrollment.rows[0];if(!row||row.consumed_at||row.expires_at.getTime()<=Date.now())return null;
+      await client.query('UPDATE gateway.enrollments SET consumed_at=clock_timestamp() WHERE tenant_id=$1 AND enrollment_id=$2',[tenantId,row.enrollment_id]);
+      const gatewayId=randomUUID();const secret=randomBytes(32).toString('hex');const credential=`${tenantId}.${gatewayId}.${secret}`;
+      await client.query('INSERT INTO gateway.clients(tenant_id,gateway_id,source_connection_id,credential_hash) VALUES($1,$2,$3,$4)',[tenantId,gatewayId,row.source_connection_id,Buffer.from(hashGatewaySecret(credential),'hex')]);
+      await client.query("INSERT INTO gateway.events(tenant_id,gateway_id,event_type,safe_status) VALUES($1,$2,'gateway_claimed','claimed')",[tenantId,gatewayId]);
+      return {gatewayId,credential};
+    });
+    if(!claimed)return reply.code(401).send({error:'gateway_enrollment_invalid'});return reply.code(201).send(claimed);
+  });
+  app.post('/api/gateways/requests',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const body=request.body as {gatewayId?:unknown;plan?:unknown};const gatewayId=String(body?.gatewayId??'');
+    let validatedPlan;try{validatedPlan=await validateGatewayPlan(body?.plan);}catch{return reply.code(400).send({error:'gateway_plan_rejected'});}
+    const sourceId=validatedPlan.scope.source_ids[0]!;
+    const queued=await withTenant(options.pool,current.tenantId,async(client)=>{
+      const gateway=await client.query<{source_connection_id:string}>("SELECT c.source_connection_id FROM gateway.clients c JOIN registry.connections r ON r.tenant_id=c.tenant_id AND r.connection_id=c.source_connection_id WHERE c.tenant_id=$1 AND c.gateway_id=$2 AND c.revoked_at IS NULL AND r.status='active'",[current.tenantId,gatewayId]);
+      if(!gateway.rowCount||gateway.rows[0]!.source_connection_id!==sourceId)return null;
+      const entitlement=await client.query("SELECT 1 FROM core.entitlements WHERE tenant_id=$1 AND principal_id=$2 AND capability_id='analytic.read' AND allowed AND (resource_id IS NULL OR resource_id=$3) LIMIT 1",[current.tenantId,current.userId,sourceId]);if(!entitlement.rowCount)return null;
+      const result=await client.query<{request_id:string}>('INSERT INTO gateway.requests(tenant_id,gateway_id,source_connection_id,plan) VALUES($1,$2,$3,$4::jsonb) RETURNING request_id',[current.tenantId,gatewayId,sourceId,JSON.stringify(validatedPlan)]);return result.rows[0];
+    });
+    if(!queued)return reply.code(403).send({error:'gateway_source_not_authorized'});return reply.code(202).send({requestId:queued.request_id,state:'queued'});
+  });
+  app.post('/api/gateways/poll',async(request,reply)=>{
+    const gateway=await gatewayAuth(request);if(!gateway)return reply.code(401).send({error:'gateway_credential_invalid'});
+    const claimed=await withTenant(options.pool,gateway.tenantId,async(client)=>{
+      await client.query('UPDATE gateway.clients SET last_seen_at=clock_timestamp() WHERE tenant_id=$1 AND gateway_id=$2',[gateway.tenantId,gateway.gatewayId]);
+      const expired=await client.query<{request_id:string;gateway_id:string}>("UPDATE gateway.requests SET state='expired',safe_failure_code='lease_attempts_exhausted',updated_at=clock_timestamp() WHERE tenant_id=$1 AND gateway_id=$2 AND state='leased' AND lease_expires_at<clock_timestamp() AND attempts>=5 RETURNING request_id,gateway_id",[gateway.tenantId,gateway.gatewayId]);
+      for(const row of expired.rows)await client.query("INSERT INTO gateway.events(tenant_id,gateway_id,request_id,event_type,safe_status) VALUES($1,$2,$3,'gateway_request_expired','attempt_limit')",[gateway.tenantId,row.gateway_id,row.request_id]);
+      const next=await client.query<{request_id:string;plan:unknown;attempts:number}>('SELECT request_id,plan,attempts FROM gateway.requests WHERE tenant_id=$1 AND gateway_id=$2 AND (state=\'queued\' OR (state=\'leased\' AND lease_expires_at<clock_timestamp())) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1',[gateway.tenantId,gateway.gatewayId]);
+      const row=next.rows[0];if(!row)return null;const lease=randomUUID();
+      await client.query("UPDATE gateway.requests SET state='leased',lease_token=$3,lease_expires_at=clock_timestamp()+interval '2 minutes',attempts=attempts+1,updated_at=clock_timestamp() WHERE tenant_id=$1 AND request_id=$2",[gateway.tenantId,row.request_id,lease]);
+      await client.query("INSERT INTO gateway.events(tenant_id,gateway_id,request_id,event_type,safe_status) VALUES($1,$2,$3,'gateway_request_claimed','leased')",[gateway.tenantId,gateway.gatewayId,row.request_id]);return {requestId:row.request_id,plan:row.plan,fencingToken:lease,attempt:row.attempts+1};
+    });
+    return reply.send({request:claimed});
+  });
+  app.post<{Params:{requestId:string}}>('/api/gateways/results/:requestId',async(request,reply)=>{
+    const gateway=await gatewayAuth(request);if(!gateway)return reply.code(401).send({error:'gateway_credential_invalid'});
+    let result;try{result=validateGatewayResult(request.body);}catch{return reply.code(400).send({error:'gateway_result_invalid'});}
+    if(result.requestId!==request.params.requestId)return reply.code(400).send({error:'gateway_result_invalid'});
+    const stableResult={requestId:result.requestId,fencingToken:result.fencingToken,aggregates:result.aggregates.map(item=>item.unit===undefined?{metric:item.metric,value:item.value}:{metric:item.metric,value:item.value,unit:item.unit})};
+    const hash=Buffer.from(createHash('sha256').update(JSON.stringify(stableResult)).digest('hex'),'hex');
+    const outcome=await withTenant(options.pool,gateway.tenantId,async(client)=>{
+      const current=await client.query<{state:string;lease_token:string|null;result_hash:Buffer|null}>('SELECT state,lease_token,result_hash FROM gateway.requests WHERE tenant_id=$1 AND request_id=$2 AND gateway_id=$3 FOR UPDATE',[gateway.tenantId,request.params.requestId,gateway.gatewayId]);const row=current.rows[0];if(!row)return 'missing';
+      if(row.state==='completed'&&row.result_hash?.equals(hash))return 'replayed';if(row.state!=='leased'||row.lease_token!==result.fencingToken)return 'stale';
+      await client.query("UPDATE gateway.requests SET state='completed',result=$4::jsonb,result_hash=$5,updated_at=clock_timestamp() WHERE tenant_id=$1 AND request_id=$2 AND lease_token=$3",[gateway.tenantId,request.params.requestId,result.fencingToken,JSON.stringify(result),hash]);
+      await client.query("INSERT INTO gateway.events(tenant_id,gateway_id,request_id,event_type,safe_status) VALUES($1,$2,$3,'gateway_request_completed','completed')",[gateway.tenantId,gateway.gatewayId,request.params.requestId]);return 'completed';
+    });
+    if(outcome==='missing')return reply.code(404).send({error:'gateway_request_not_found'});if(outcome==='stale')return reply.code(409).send({error:'gateway_lease_stale'});return reply.send({status:outcome});
+  });
   app.addContentTypeParser('application/octet-stream',{parseAs:'buffer'},(_request,payload,done)=>done(null,payload));
   app.get('/api/health',async()=>({status:'ok'}));
   app.get('/api/flowspecs',async(request,reply)=>{
@@ -390,6 +522,106 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     });
     return valid?current:null;
   }
+  app.get('/api/tenant/sso',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const result=await withTenant(options.pool,current.tenantId,client=>client.query<{issuer:string;client_id:string;client_secret_ref:string;allowed_email_domains:string[];enabled:boolean}>(
+      'SELECT issuer,client_id,client_secret_ref,allowed_email_domains,enabled FROM core.oidc_providers WHERE tenant_id=$1',[current.tenantId]));
+    const row=result.rows[0];return reply.send({provider:row?{issuer:row.issuer,clientId:row.client_id,clientSecretRef:row.client_secret_ref,allowedEmailDomains:row.allowed_email_domains,enabled:row.enabled}:null});
+  });
+  app.post<{Body:{issuer?:unknown;clientId?:unknown;clientSecretRef?:unknown;allowedEmailDomains?:unknown;enabled?:unknown}}>('/api/tenant/sso',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const admin=await withTenant(options.pool,current.tenantId,client=>client.query(
+      "SELECT 1 FROM core.entitlements WHERE tenant_id=$1 AND principal_id=$2 AND capability_id='tenant.sso.configure' AND allowed AND resource_id IS NULL LIMIT 1",[current.tenantId,current.userId]));
+    if(!admin.rowCount)return reply.code(403).send({error:'tenant_admin_required'});
+    const body=request.body;
+    if(typeof body.issuer!=='string'||typeof body.clientId!=='string'||typeof body.clientSecretRef!=='string'||!Array.isArray(body.allowedEmailDomains)||body.allowedEmailDomains.some(domain=>typeof domain!=='string')||(body.enabled!==undefined&&typeof body.enabled!=='boolean'))return reply.code(400).send({error:'invalid_sso_configuration'});
+    let issuer:string;try{const parsed=new URL(body.issuer);if(parsed.protocol!=='https:'||parsed.search||parsed.hash)throw new Error();issuer=parsed.toString();}catch{return reply.code(400).send({error:'invalid_sso_issuer'});}
+    const clientId=body.clientId.trim(),secretRef=body.clientSecretRef.trim();
+    const domains=(body.allowedEmailDomains as string[]).map(domain=>domain.trim().toLowerCase());
+    if(!clientId||clientId.length>255||!/^[A-Z][A-Z0-9_]{2,127}$/.test(secretRef)||domains.length<1||domains.length>20||domains.some(domain=>!/^[a-z0-9.-]+\.[a-z]{2,63}$/.test(domain)))return reply.code(400).send({error:'invalid_sso_configuration'});
+    const enabled=body.enabled!==false;
+    await withTenant(options.pool,current.tenantId,async(client)=>{
+      await client.query(`INSERT INTO core.oidc_providers(tenant_id,issuer,client_id,client_secret_ref,allowed_email_domains,enabled)
+        VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(tenant_id) DO UPDATE SET issuer=EXCLUDED.issuer,client_id=EXCLUDED.client_id,client_secret_ref=EXCLUDED.client_secret_ref,allowed_email_domains=EXCLUDED.allowed_email_domains,enabled=EXCLUDED.enabled,updated_at=clock_timestamp()`,
+      [current.tenantId,issuer,clientId,secretRef,domains,enabled]);
+      await client.query("INSERT INTO core.activity_events(tenant_id,event_type,principal_id,sso_provider_id) SELECT $1,'sso_provider_configured',$2,provider_id FROM core.oidc_providers WHERE tenant_id=$1",[current.tenantId,current.userId]);
+    });
+    return reply.send({enabled,issuer,clientId,clientSecretRef:secretRef,allowedEmailDomains:domains});
+  });
+  app.get<{Params:{tenantId:string}}>('/api/auth/oidc/:tenantId/start',async(request,reply)=>{
+    const tenantId=request.params.tenantId;
+    if(!/^[a-zA-Z0-9_-]{3,128}$/.test(tenantId))return reply.code(404).send({error:'oidc_provider_not_found'});
+    const result=await withTenant(options.pool,tenantId,client=>client.query<{provider_id:string;issuer:string;client_id:string;enabled:boolean}>(
+      'SELECT provider_id,issuer,client_id,enabled FROM core.oidc_providers WHERE tenant_id=$1',[tenantId]));
+    const provider=result.rows[0];if(!provider?.enabled)return reply.code(404).send({error:'oidc_provider_not_found'});
+    const redirectUri=process.env.OIDC_REDIRECT_URI;if(!redirectUri)return reply.code(503).send({error:'oidc_redirect_uri_required'});
+    try{
+      const discoveryUrl=`${provider.issuer.replace(/\/$/,'')}/.well-known/openid-configuration`;
+      const discovery=await oidcDocument(oidcFetch,discoveryUrl);
+      if(discovery.issuer!==provider.issuer)return reply.code(503).send({error:'oidc_provider_unavailable'});
+      const authorizationEndpoint=oidcEndpoint(discovery.authorization_endpoint);
+      const requestData=createOidcAuthorizationRequest({authorizationEndpoint,clientId:provider.client_id,redirectUri});
+      const expiresAt=Date.now()+5*60_000;
+      const statePayload=Buffer.from(JSON.stringify({tenantId,providerId:provider.provider_id,state:requestData.state,nonce:requestData.nonce,codeVerifier:requestData.codeVerifier,expiresAt})).toString('base64url');
+      const cookie=`si_oidc=${statePayload}.${sign(statePayload,options.sessionSecret)}; HttpOnly; SameSite=Lax; Path=/api/auth/oidc; Max-Age=300; Secure`;
+      await withTenant(options.pool,tenantId,client=>client.query('INSERT INTO core.oidc_login_states(tenant_id,state_hash,provider_id,expires_at) VALUES($1,$2,$3,to_timestamp($4/1000.0))',[tenantId,digest(requestData.state),provider.provider_id,expiresAt]));
+      return reply.header('set-cookie',cookie).redirect(requestData.authorizationUrl,302);
+    }catch{return reply.code(503).send({error:'oidc_provider_unavailable'});}
+  });
+  app.get<{Querystring:{code?:string;state?:string;error?:string}}>('/api/auth/oidc/callback',async(request,reply)=>{
+    const rawCookie=cookieValue(request.headers.cookie,'si_oidc');
+    if(!rawCookie||request.query.error||!request.query.code||!request.query.state||request.query.code.length>4096||request.query.state.length>256)return reply.code(400).send({error:'oidc_callback_invalid'});
+    const [encoded,signature]=rawCookie.split('.');if(!encoded||!signature||!secureEqual(sign(encoded,options.sessionSecret),signature))return reply.code(400).send({error:'oidc_callback_invalid'});
+    let state:{tenantId:string;providerId:string;state:string;nonce:string;codeVerifier:string;expiresAt:number};
+    try{state=JSON.parse(Buffer.from(encoded,'base64url').toString('utf8')) as typeof state;}catch{return reply.code(400).send({error:'oidc_callback_invalid'});}
+    if(!state.tenantId||!state.providerId||!state.state||!state.nonce||!state.codeVerifier||state.expiresAt<=Date.now()||!secureEqual(state.state,request.query.state))return reply.code(400).send({error:'oidc_callback_invalid'});
+    const claim=await withTenant(options.pool,state.tenantId,client=>client.query<{provider_id:string}>(
+      'UPDATE core.oidc_login_states SET consumed_at=clock_timestamp() WHERE tenant_id=$1 AND state_hash=$2 AND provider_id=$3 AND consumed_at IS NULL AND expires_at>clock_timestamp() RETURNING provider_id',[state.tenantId,digest(state.state),state.providerId]));
+    if(!claim.rowCount)return reply.code(400).send({error:'oidc_callback_invalid'});
+    try{
+      const providerResult=await withTenant(options.pool,state.tenantId,client=>client.query<{issuer:string;client_id:string;client_secret_ref:string;allowed_email_domains:string[];enabled:boolean}>(
+        'SELECT issuer,client_id,client_secret_ref,allowed_email_domains,enabled FROM core.oidc_providers WHERE tenant_id=$1 AND provider_id=$2',[state.tenantId,state.providerId]));
+      const provider=providerResult.rows[0];if(!provider?.enabled)throw new Error('oidc_provider_not_found');
+      const redirectUri=process.env.OIDC_REDIRECT_URI;if(!redirectUri)throw new Error('oidc_redirect_uri_required');
+      const discovery=await oidcDocument(oidcFetch,`${provider.issuer.replace(/\/$/,'')}/.well-known/openid-configuration`);
+      if(discovery.issuer!==provider.issuer)throw new Error('oidc_provider_unavailable');
+      const tokenEndpoint=oidcEndpoint(discovery.token_endpoint),jwksUri=oidcEndpoint(discovery.jwks_uri);
+      const clientSecret=process.env[provider.client_secret_ref];if(!clientSecret)throw new Error('oidc_client_secret_unavailable');
+      const tokenBody=new URLSearchParams({grant_type:'authorization_code',code:request.query.code,redirect_uri:redirectUri,client_id:provider.client_id,code_verifier:state.codeVerifier});
+      const tokenResponse=await oidcFetch(tokenEndpoint,{method:'POST',headers:{authorization:`Basic ${Buffer.from(`${provider.client_id}:${clientSecret}`).toString('base64')}`,'content-type':'application/x-www-form-urlencoded',accept:'application/json'},body:tokenBody,signal:AbortSignal.timeout(5000)});
+      if(!tokenResponse.ok)throw new Error('oidc_token_exchange_failed');
+      const tokenJson=await oidcDocument(async()=>tokenResponse,tokenEndpoint);
+      if(typeof tokenJson.id_token!=='string')throw new Error('oidc_id_token_missing');
+      const jwks=await oidcDocument(oidcFetch,jwksUri);
+      if(!Array.isArray(jwks.keys))throw new Error('oidc_jwks_invalid');
+      const claims=await verifyOidcIdToken(tokenJson.id_token,{issuer:provider.issuer,audience:provider.client_id,nonce:state.nonce,jwks: jwks as unknown as Parameters<typeof verifyOidcIdToken>[1]['jwks']});
+      if(typeof claims.sub!=='string'||!claims.sub||typeof claims.email!=='string'||claims.email_verified!==true)throw new Error('oidc_email_unverified');
+      const email=claims.email.trim().toLowerCase(),domain=email.split('@').at(-1)??'';
+      if(!provider.allowed_email_domains.includes(domain))throw new Error('oidc_email_domain_denied');
+      const subjectHash=oidcSubjectHash(state.tenantId,provider.issuer,claims.sub,options.sessionSecret);
+      const user=await withTenant(options.pool,state.tenantId,async(client)=>{
+        const existingIdentity=await client.query<{user_id:string}>('SELECT user_id FROM core.external_identities WHERE tenant_id=$1 AND issuer=$2 AND subject_hash=$3',[state.tenantId,provider.issuer,subjectHash]);
+        if(existingIdentity.rows[0])return existingIdentity.rows[0];
+        const existingUser=await client.query<{user_id:string}>('SELECT user_id FROM core.users WHERE tenant_id=$1 AND lower(email)=lower($2) AND is_active',[state.tenantId,email]);
+        const matched=existingUser.rows[0];if(!matched)throw new Error('oidc_identity_not_provisioned');
+        await client.query('INSERT INTO core.external_identities(tenant_id,issuer,subject_hash,user_id) VALUES($1,$2,$3,$4)',[state.tenantId,provider.issuer,subjectHash,matched.user_id]);return matched;
+      });
+      const token=randomBytes(32).toString('base64url'),sessionId=randomUUID();
+      await withTenant(options.pool,state.tenantId,async(client)=>{
+        await client.query("INSERT INTO core.sessions(tenant_id,session_id,user_id,token_hash,expires_at) VALUES($1,$2,$3,$4,clock_timestamp()+interval '8 hours')",[state.tenantId,sessionId,user.user_id,digest(token)]);
+        await client.query("INSERT INTO core.activity_events(tenant_id,event_type,principal_id,sso_provider_id) VALUES($1,'sso_login_succeeded',$2,$3)",[state.tenantId,user.user_id,state.providerId]);
+      });
+      const payload=Buffer.from(JSON.stringify({tenantId:state.tenantId,userId:user.user_id,sessionId,token})).toString('base64url');
+      const sessionCookie=`si_session=${payload}.${sign(payload,options.sessionSecret)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${sessionLifetimeMs/1000}; Secure`;
+      reply.header('set-cookie',[sessionCookie,'si_oidc=; HttpOnly; SameSite=Lax; Path=/api/auth/oidc; Max-Age=0; Secure']);
+      return reply.redirect('/',302);
+    }catch(error){
+      const message=error instanceof Error?error.message:'';
+      const safeCode=/^[a-z0-9_]{1,64}$/.test(message)?message:'oidc_login_failed';
+      await withTenant(options.pool,state.tenantId,client=>client.query("INSERT INTO core.activity_events(tenant_id,event_type,sso_provider_id,safe_error_code) VALUES($1,'sso_login_failed',$2,$3)",[state.tenantId,state.providerId,safeCode]));
+      return reply.code(401).send({error:'oidc_login_failed'});
+    }
+  });
   app.post('/api/auth/logout',async(request,reply)=>{
     const current=await session(request);if(current)await withTenant(options.pool,current.tenantId,async(client)=>{
       await client.query('UPDATE core.sessions SET revoked_at=clock_timestamp() WHERE session_id=$1 AND user_id=$2',[current.sessionId,current.userId]);
@@ -705,7 +937,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
   });
   app.post<{Body:{sourceId?:string}}>('/api/connections',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
-    const source=[...listGoldenSources(),...(process.env.DATABASE_URL_SAMPLE_SOURCE?[{id:'local-hospital',type:'postgres' as const,name:'Local synthetic hospital PostgreSQL'}]:[])].find((item)=>item.id===request.body?.sourceId);
+    const source=availableConnectorSources().find((item)=>item.id===request.body?.sourceId);
     if(!source)return reply.code(400).send({error:'unknown_synthetic_source'});
     const draft=await createConnectionDraft(options.pool,{tenantId:current.tenantId,connectorType:source.type as ConnectorType,sourceRef:source.id});
     return reply.code(201).send({connectionId:draft.connectionId,status:'draft',connectorType:source.type,sourceName:source.name});
@@ -715,7 +947,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const draft=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{source_ref:string|null;connector_type:string;status:string}>(
       'SELECT source_ref,connector_type,status FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2',[current.tenantId,request.params.connectionId]));
     const row=draft.rows[0];if(!row||row.status!=='draft'||!row.source_ref)return reply.code(404).send({error:'connection_draft_not_found'});
-    const source=[...listGoldenSources(),...(row.source_ref==='local-hospital'?[{id:'local-hospital',type:'postgres' as const,name:'Local synthetic hospital PostgreSQL'}]:[])].find((item)=>item.id===row.source_ref);if(!source||source.type!==row.connector_type)return reply.code(400).send({error:'connection_source_mismatch'});
+    const source=availableConnectorSources().find((item)=>item.id===row.source_ref);if(!source||source.type!==row.connector_type)return reply.code(400).send({error:'connection_source_mismatch'});
     return reply.send(await connectorFor(source.id).test());
   });
   app.post<{Params:{connectionId:string};Body:{scope?:Array<{qualifiedName:string;objectType:string;scopeMode:'profile'|'list_only'|'exclude'}>}}>('/api/connections/:connectionId/activate',async(request,reply)=>{
@@ -723,7 +955,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const draft=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{source_ref:string|null;connector_type:string;status:string}>(
       'SELECT source_ref,connector_type,status FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2',[current.tenantId,request.params.connectionId]));
     const row=draft.rows[0];if(!row||row.status!=='draft'||!row.source_ref)return reply.code(404).send({error:'connection_draft_not_found'});
-    const source=[...listGoldenSources(),...(row.source_ref==='local-hospital'?[{id:'local-hospital',type:'postgres' as const,name:'Local synthetic hospital PostgreSQL'}]:[])].find((item)=>item.id===row.source_ref);if(!source||source.type!==row.connector_type)return reply.code(400).send({error:'connection_source_mismatch'});
+    const source=availableConnectorSources().find((item)=>item.id===row.source_ref);if(!source||source.type!==row.connector_type)return reply.code(400).send({error:'connection_source_mismatch'});
     const connector=connectorFor(source.id);const checked=await connector.test();if(!checked.ok)return reply.code(400).send({error:'connection_test_failed'});
     const scope=request.body?.scope??[];
     const activated=await activateConnection(options.pool,{tenantId:current.tenantId,principalId:current.userId,connectorType:source.type as ConnectorType,connectionId:request.params.connectionId,sourceRef:source.id,scope});

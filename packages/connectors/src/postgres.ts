@@ -80,6 +80,13 @@ export class PostgresConnector implements ReadOnlyConnector {
     return result.rows;
   }
 
+  async queryAggregate(key:string,metric:'count'):Promise<{metric:'count';value:number}>{
+    if(metric!=='count')throw new Error('connector_query_not_supported');
+    const found=[...this.current.entries()].find(([name])=>assetKey(name)===key);if(!found)throw new Error('asset_not_found');
+    const table=found[1];const result=await this.pool.query<{value:string}>(`SELECT count(*)::text AS value FROM ${quoteIdentifier(table.schema_name)}.${quoteIdentifier(table.table_name)}`);
+    return {metric:'count',value:Number(result.rows[0]!.value)};
+  }
+
   async close():Promise<void>{await this.pool.end();}
 }
 

@@ -184,6 +184,9 @@ importers:
       '@scaleinsyght/artifacts':
         specifier: workspace:*
         version: link:packages/artifacts
+      '@scaleinsyght/auth-oidc':
+        specifier: workspace:*
+        version: link:packages/auth-oidc
       '@scaleinsyght/classification':
         specifier: workspace:*
         version: link:packages/classification
@@ -193,6 +196,9 @@ importers:
       '@scaleinsyght/contracts':
         specifier: workspace:*
         version: link:packages/contracts
+      '@scaleinsyght/customer-gateway':
+        specifier: workspace:*
+        version: link:packages/customer-gateway
       '@scaleinsyght/db':
         specifier: workspace:*
         version: link:packages/db
@@ -287,9 +293,15 @@ importers:
       '@scaleinsyght/artifacts':
         specifier: workspace:*
         version: link:../../packages/artifacts
+      '@scaleinsyght/auth-oidc':
+        specifier: workspace:*
+        version: link:../../packages/auth-oidc
       '@scaleinsyght/connectors':
         specifier: workspace:*
         version: link:../../packages/connectors
+      '@scaleinsyght/customer-gateway':
+        specifier: workspace:*
+        version: link:../../packages/customer-gateway
       '@scaleinsyght/db':
         specifier: workspace:*
         version: link:../../packages/db
@@ -369,6 +381,12 @@ importers:
 
   packages/artifacts: {}
 
+  packages/auth-oidc:
+    dependencies:
+      jose:
+        specifier: 6.2.18
+        version: 6.2.18
+
   packages/classification: {}
 
   packages/connectors: {}
@@ -378,6 +396,12 @@ importers:
       zod:
         specifier: ^4.1.12
         version: 4.6.7
+
+  packages/customer-gateway:
+    dependencies:
+      '@scaleinsyght/contracts':
+        specifier: workspace:*
+        version: link:../contracts
 
   packages/db:
     dependencies:
@@ -1893,6 +1917,9 @@ packages:
   jiti@2.7.0:
     resolution: {integrity: sha512-AC/7JofJvZGrrneWNaEnJeOLUx+JlGt7tNa0wZiRPT4MY1wmfKjt2+6O2p2uz2+skll8OZZmJMNqeke7kKbNgQ==}
     hasBin: true
+
+  jose@6.2.18:
+    resolution: {integrity: sha512-doV4thUwgkrycJH4yLeqwTGIIZphHl+pk7CPReuMIhYhncmgzdko85MaCG4YQFTxqMFr1/oEH32tZuKKovcDEg==}
 
   js-tokens@4.0.0:
     resolution: {integrity: sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ==}
@@ -4301,6 +4328,8 @@ snapshots:
   isexe@2.0.0: {}
 
   jiti@2.7.0: {}
+
+  jose@6.2.18: {}
 
   js-tokens@4.0.0: {}
 

@@ -1,0 +1,11 @@
+{
+  "name": "@scaleinsyght/auth-oidc",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "jose": "6.2.18"
+  }
+}

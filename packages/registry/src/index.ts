@@ -3,7 +3,7 @@ import type { Pool } from 'pg';
 import { withTenant } from '@scaleinsyght/db';
 import { hashPlan, type EffectClass, type EffectSafety } from '@scaleinsyght/contracts';
 
-export type ConnectorType = 'sql_server' | 'postgres' | 'snowflake' | 'excel' | 'dbt' | 'tableau' | 'power_bi';
+export type ConnectorType = 'sql_server' | 'postgres' | 'snowflake' | 'excel' | 'dbt' | 'tableau' | 'power_bi' | 'lake' | 'crm';
 
 export interface ActivateConnectionInput {
   tenantId: string;

@@ -15,7 +15,7 @@ const golden=JSON.parse(readFileSync(new URL('../../../tests/golden/phase0.json'
 const pool=new Pool({connectionString:process.env.DATABASE_URL_WORKER});
 const workerId=`worker-${process.pid}`;
 const healthServer=createServer((request,response)=>{if(request.url==='/health'){response.writeHead(200,{'content-type':'application/json'});response.end('{"status":"ok"}');return;}response.writeHead(404);response.end();});
-await new Promise<void>((resolve,reject)=>{healthServer.once('error',reject);healthServer.listen(Number(process.env.WORKER_HEALTH_PORT??3001),'127.0.0.1',resolve);});
+await new Promise<void>((resolve,reject)=>{healthServer.once('error',reject);healthServer.listen(Number(process.env.WORKER_HEALTH_PORT??3001),process.env.WORKER_HEALTH_HOST??'127.0.0.1',resolve);});
 let stopping=false;
 for(const signal of ['SIGINT','SIGTERM'] as const)process.on(signal,()=>{stopping=true;});
 async function dispatchDueSchedule():Promise<boolean>{
