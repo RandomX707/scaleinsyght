@@ -1,0 +1,29 @@
+# UI prototype comparison report
+
+All captures were regenerated from the freshly seeded Riverside Health demo with `pnpm screens` at a 1440×900 viewport. Each PNG is a 2880×900 composite: the application is on the left and the matching prototype route on the right. I reviewed every pair. The shared shell, navigation hierarchy, logo, typography, page spacing, cards, control styling, and colors use the prototype's visual system.
+
+The application renders live seeded API data and real interactions; the prototype uses a fixed illustrative dataset. Differences in labels, counts, row contents, graph size, and available actions below are intentional consequences of those sources. The app-only Hub route is compared with the prototype's Agents screen as the closest shared shell and card layout. The prototype has no separate BI reports route, so that app route is compared with its Lineage screen. FlowSpec is not a separate capture because it is a contract workflow rather than a mapped prototype screen.
+
+| Pair | Comparison and intentional difference |
+|---|---|
+| [Home](screens/home.png) | Chat answer and evidence use the seeded read-only analytic run; the prototype shows a fixed readmissions chart and table. The app's response is captured above its composer, matching the prototype's answer-first conversation state. |
+| [Connectors](screens/connectors.png) | Same three-column source-card grid and add action. Names, metadata totals, and source types reflect the local fictional demo connections; the private-network gateway panel is an existing app feature with no prototype counterpart. |
+| [Connector add flow](screens/connector-add-flow.png) | Both show the centered, step-based add modal. The app lists fictional available connections and its supported connector types; the prototype's choices are a static catalog. |
+| [Profile](screens/profile.png) | Both use a completion ring and grouped profile cards. The app's 5 objects and 24 fields are actual seeded profile results; the prototype illustrates a much larger fixed catalog. |
+| [ER explorer](screens/er-explorer.png) | The app graph shows the five seeded hospital tables and probable/declared links. The prototype shows a larger Meridian model with its own highlighted table and profile detail; those records are not in the demo source. |
+| [Dictionary](screens/dictionary.png) | Both have an imported summary, category tabs, and expandable catalog entries. App counts and table names reflect the five-table demo source; prototype figures describe its static imported dictionary. |
+| [Table lineage](screens/lineage-table.png) | Same selector, coverage summary, graph/evidence cards, and flow canvas. The app traces the seeded customer model and its two available hops; the prototype illustrates a multi-system sample graph. |
+| [Column lineage](screens/lineage-column.png) | Same column-flow table and missing-hop treatment. App rows are the actual seeded column-level metadata; prototype depicts the broader static graph. |
+| [ID trace](screens/id-trace.png) | The lookup stays above the path in both. The app lists only seeded identifier metadata and keeps the lookup empty; the prototype displays a fixed MRN example and seven illustrative path steps. |
+| [BI reports](screens/bi-reports.png) | The app shows report inventory and links from the API. The prototype has no dedicated BI reports screen, so its closest lineage screen is the comparison target. |
+| [Reports](screens/reports.png) | App report scheduling and governed-report creation use the existing report APIs; the prototype is a six-row imported report catalog. Forms and table rows follow the same card/table visual language. |
+| [Agents](screens/agents.png) | The app presents the user's agent, orchestrator, source groups, and identifier agents, matching the prototype hierarchy. The exact number and composition of groups come from the seeded connections. |
+| [My agent](screens/my-agent.png) | Both use preference and saved-question cards. App values are editable live preferences and actual saved questions; prototype terms and defaults are static examples. |
+| [Hub integrations](screens/hub-integrations.png) | App-only integration, certified-measure, and handoff cards use the same page, card, and button system. The prototype has no Hub screen, so Agents is the comparison target. |
+| [Approval matrix](screens/approval-matrix.png) | Both foreground the last night's run and reviewable findings. Finding counts, descriptions, and approval actions are taken from seeded demo records rather than prototype-only static rows. |
+| [Controls](screens/controls.png) | Both show source selection, scoping, and tenant controls. The app's additional SSO and Demo data sections expose existing controls and local demo actions; Demo data is shown only with `DEMO_MODE=true`. |
+| [Usage](screens/usage.png) | Both use usage summary cards and a connector table. Counts and model usage reflect the local tenant and current run history; the prototype's plan limits are fixed examples. |
+
+## Reproduce
+
+Run `DEMO_MODE=true pnpm screens` with the app and API services available. The script runs the idempotent demo seed, signs in as the local demo user, opens each app route and prototype route in Playwright Chromium at 1440×900, checks visible app copy for fixture names, internal roles, and IDs, and writes the 17 side-by-side PNGs into `docs/ui/screens/`.
