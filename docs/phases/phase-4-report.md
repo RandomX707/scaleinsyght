@@ -34,7 +34,7 @@ All required local gates passed against native PostgreSQL 16 and synthetic golde
 
 The graph regression benchmark measured average fan-out 2.100 edges per asset and maximum 50. The RLS-enabled traversal plan used the tenant/source and tenant/destination index-only scans plus the lineage assertion filter; execution time was 0.081 ms. Across 50 random depth-four traversals, p50 was 103.4 ms, p95 206.5 ms and max 210.6 ms; `pg_stat_activity` observed zero lock waits. This remains below the five-second p95 target and supports Decision 9's PostgreSQL graph store.
 
-The GitHub Actions workflow runs the same gates using its PostgreSQL 16 service container. Phase 4 CI and PR merge are pending the final push and review.
+The GitHub Actions workflow runs the same gates using its PostgreSQL 16 service container. PR #5 passed both push and pull-request CI on commit `0f8dbbf`; the PR is ready to merge.
 
 ## Assumptions and limits
 
