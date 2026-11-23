@@ -1,0 +1,17 @@
+{
+  "name": "@scaleinsyght/reports",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": {
+    "@scaleinsyght/analytic": "workspace:*",
+    "@scaleinsyght/contracts": "workspace:*",
+    "@scaleinsyght/db": "workspace:*",
+    "@scaleinsyght/registry": "workspace:*",
+    "exceljs": "^4.4.0",
+    "pdfkit": "^0.21.0",
+    "pptxgenjs": "^4.0.1",
+    "pg": "^8.16.3"
+  }
+}

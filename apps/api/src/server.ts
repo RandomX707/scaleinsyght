@@ -11,6 +11,7 @@ import { eventsAfter } from '@scaleinsyght/runner';
 import { AnalyticPlanSchema, FlowSpecSchema, hashPlan } from '@scaleinsyght/contracts';
 import { compareGraphSnapshots, getIdentifierPath, getImpactRadius, importGoldenMetadata, listGraphAssertions, listGraphAssets, listGraphSnapshots, listIdentifierFields, listReports, queryLineage, reconcileAssertion, reviewGraphAssertion, traceIdentifier, verifyAssertionFromRun } from '@scaleinsyght/graph';
 import { createGoldenHubAdapters, getGoldenHubFixtures, type FlowSpecDelivery, type SemanticsAdapter } from '@scaleinsyght/hub-adapters';
+import { renderEvidencePack, safeEvidencePack, type ExportFormat, type SafeEvidencePack } from '@scaleinsyght/reports';
 import { ClaimSchema, EvidenceRefSchema } from '@scaleinsyght/contracts';
 import { authorise } from '@scaleinsyght/policy';
 
@@ -446,6 +447,28 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const row=result.rows[0]!;const memory=await getPersonalMemory(options.pool,{tenantId:current.tenantId,principalId:current.userId});
     return reply.send({runId:row.run_id,state:row.state,stateVersion:row.state_version,plan:row.plan,planHash:row.plan_hash,answer:row.answer?applyPersonalContext(row.answer as unknown as StructuredAnswer,memory):null});
   });
+  app.post<{Params:{runId:string};Body:{format?:ExportFormat}}>('/api/runs/:runId/evidence-pack',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const format=request.body?.format;
+    if(!format||!['pdf','xlsx','pptx'].includes(format))return reply.code(400).send({error:'unsupported_export_format'});
+    const result=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{plan_hash:string;answer:Record<string,unknown>;state:string}>(
+      `SELECT p.plan_hash,a.answer,r.state FROM runs.runs r JOIN runs.analytic_plans p USING(tenant_id,run_id)
+       JOIN runs.analytic_answers a USING(tenant_id,run_id)
+       WHERE r.tenant_id=$1 AND r.run_id=$2 AND r.principal_id=$3`,[current.tenantId,request.params.runId,current.userId]));
+    const row=result.rows[0];if(!row)return reply.code(404).send({error:'run_not_found'});
+    if(row.state!=='COMPLETED')return reply.code(409).send({error:'evidence_pack_requires_completed_run'});
+    let rendered;
+    try{
+      const answer=((row.answer as {answer?:unknown}).answer??row.answer) as Parameters<typeof safeEvidencePack>[0]['answer'];
+      const pack=safeEvidencePack({runId:request.params.runId,planHash:row.plan_hash,answer});
+      rendered=await renderEvidencePack(pack,format);
+    }catch(error){if(error instanceof Error&&['evidence_pack_invalid','evidence_pack_sensitive_value'].includes(error.message))return reply.code(422).send({error:error.message});throw error;}
+    await withTenant(options.pool,current.tenantId,async(client)=>{
+      await client.query("SELECT set_config('app.principal_id',$1,true)",[current.userId]);
+      await client.query('INSERT INTO reports.export_events(tenant_id,run_id,principal_id,format,content_hash) VALUES($1,$2,$3,$4,$5)',[current.tenantId,request.params.runId,current.userId,format,rendered.contentHash]);
+    });
+    return reply.type(rendered.contentType).header('content-disposition',`attachment; filename="${rendered.filename}"`).header('x-content-sha256',rendered.contentHash).send(rendered.bytes);
+  });
   app.post<{ Params: { runId: string }; Body: { verdict?: 'useful' | 'not_useful'; correction?: { term: string; meaning: string } } }>('/api/runs/:runId/feedback',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const body=request.body;
@@ -488,6 +511,83 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     if(!memory.savedPlanIds.includes(request.params.planId))return reply.code(404).send({error:'saved_question_not_found'});
     await putPersonalMemory(options.pool,{tenantId:current.tenantId,principalId:current.userId,memory:{...memory,savedPlanIds:memory.savedPlanIds.filter(id=>id!==request.params.planId)}});
     return reply.send({deleted:true});
+  });
+  app.get('/api/me/reports',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const rows=await withTenant(options.pool,current.tenantId,async(client)=>{
+      await client.query("SELECT set_config('app.principal_id',$1,true)",[current.userId]);
+      return client.query<{report_id:string;name:string;governed_id:string;version:number;snapshot_id:string|null;run_id:string|null;created_at:Date|null}>(
+        `SELECT d.report_id,d.name,d.governed_id,d.version,s.snapshot_id,s.run_id,s.created_at FROM reports.definitions d
+         LEFT JOIN LATERAL(SELECT snapshot_id,run_id,created_at FROM reports.snapshots WHERE tenant_id=d.tenant_id AND report_id=d.report_id ORDER BY created_at DESC LIMIT 1)s ON true
+         WHERE d.tenant_id=$1 AND d.owner_id=$2 ORDER BY d.created_at DESC`,[current.tenantId,current.userId]);
+    });
+    return reply.send({reports:rows.rows.map(row=>({reportId:row.report_id,name:row.name,governedId:row.governed_id,version:row.version,latestSnapshotId:row.snapshot_id,latestRunId:row.run_id,latestSnapshotAt:row.created_at?.toISOString()??null}))});
+  });
+  app.post<{Body:{name?:string;governedId?:string;version?:number}}>('/api/me/reports',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const {name,governedId,version}=request.body??{};
+    if(typeof name!=='string'||!name.trim()||name.trim().length>120||typeof governedId!=='string'||!Number.isInteger(version)||version!<1)return reply.code(400).send({error:'invalid_report_definition'});
+    try{await getApprovedGovernedVersion(options.pool,{tenantId:current.tenantId,governedId,version:version!});}
+    catch(error){if(error instanceof Error&&error.message==='governed_version_not_approved')return reply.code(409).send({error:error.message});if(error instanceof Error&&error.message==='governed_version_not_found')return reply.code(404).send({error:error.message});throw error;}
+    const row=await withTenant(options.pool,current.tenantId,async(client)=>{
+      await client.query("SELECT set_config('app.principal_id',$1,true)",[current.userId]);
+      return client.query<{report_id:string}>('INSERT INTO reports.definitions(tenant_id,owner_id,name,governed_id,version) VALUES($1,$2,$3,$4,$5) RETURNING report_id',[current.tenantId,current.userId,name.trim(),governedId,version]);
+    });
+    return reply.code(201).send({reportId:row.rows[0]!.report_id,name:name.trim(),governedId,version});
+  });
+  app.post<{Params:{reportId:string}}>('/api/me/reports/:reportId/run',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const row=await withTenant(options.pool,current.tenantId,async(client)=>{
+      await client.query("SELECT set_config('app.principal_id',$1,true)",[current.userId]);
+      return client.query<{governed_id:string;version:number}>('SELECT governed_id,version FROM reports.definitions WHERE tenant_id=$1 AND report_id=$2 AND owner_id=$3',[current.tenantId,request.params.reportId,current.userId]);
+    });
+    if(!row.rowCount)return reply.code(404).send({error:'report_not_found'});
+    try{
+      const approved=await getApprovedGovernedVersion(options.pool,{tenantId:current.tenantId,governedId:row.rows[0]!.governed_id,version:row.rows[0]!.version});
+      const plan=AnalyticPlanSchema.parse({...approved.plan,run_id:randomUUID(),plan_hash:'0'.repeat(64)});plan.plan_hash=await hashPlan({...plan,plan_hash:''});
+      const run=await startAnalyticRun(options.pool,{tenantId:current.tenantId,principalId:current.userId,plan,governed:{governedId:row.rows[0]!.governed_id,version:approved.version}});
+      return reply.code(201).send({...run,reportId:request.params.reportId,version:approved.version});
+    }catch(error){const code=error instanceof Error?error.message:'report_run_failed';if(code==='principal_not_entitled')return reply.code(403).send({error:code});if(['governed_version_not_found','governed_version_not_approved'].includes(code))return reply.code(409).send({error:code});throw error;}
+  });
+  app.get<{Params:{reportId:string;format:string}}>('/api/me/reports/:reportId/exports/:format',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const format=request.params.format as ExportFormat;if(!['pdf','xlsx','pptx'].includes(format))return reply.code(400).send({error:'unsupported_export_format'});
+    const row=await withTenant(options.pool,current.tenantId,async(client)=>{
+      await client.query("SELECT set_config('app.principal_id',$1,true)",[current.userId]);
+      return client.query<{snapshot_id:string;run_id:string;safe_pack:SafeEvidencePack;content_hash:string}>('SELECT s.snapshot_id,s.run_id,s.safe_pack,s.content_hash FROM reports.snapshots s JOIN reports.definitions d USING(tenant_id,report_id) WHERE s.tenant_id=$1 AND s.report_id=$2 AND d.owner_id=$3 ORDER BY s.created_at DESC LIMIT 1',[current.tenantId,request.params.reportId,current.userId]);
+    });
+    if(!row.rowCount)return reply.code(404).send({error:'report_snapshot_not_found'});
+    const rendered=await renderEvidencePack(row.rows[0]!.safe_pack,format);
+    await withTenant(options.pool,current.tenantId,async(client)=>{
+      await client.query("SELECT set_config('app.principal_id',$1,true)",[current.userId]);
+      await client.query('INSERT INTO reports.export_events(tenant_id,run_id,principal_id,format,content_hash) VALUES($1,$2,$3,$4,$5)',[current.tenantId,row.rows[0]!.run_id,current.userId,format,rendered.contentHash]);
+    });
+    return reply.type(rendered.contentType).header('content-disposition',`attachment; filename="${rendered.filename}"`).header('x-content-sha256',rendered.contentHash).send(rendered.bytes);
+  });
+  app.get('/api/me/schedules',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const rows=await withTenant(options.pool,current.tenantId,async(client)=>{await client.query("SELECT set_config('app.principal_id',$1,true)",[current.userId]);return client.query('SELECT schedule_id,report_id,utc_time,next_run_at,enabled FROM reports.schedules WHERE tenant_id=$1 AND owner_id=$2 ORDER BY created_at',[current.tenantId,current.userId]);});
+    return reply.send({schedules:rows.rows.map((row)=>({scheduleId:row.schedule_id,reportId:row.report_id,utcTime:String(row.utc_time).slice(0,5),nextRunAt:(row.next_run_at as Date).toISOString(),enabled:row.enabled}))});
+  });
+  app.post<{Body:{reportId?:string;utcTime?:string}}>('/api/me/schedules',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const {reportId,utcTime}=request.body??{};if(typeof reportId!=='string'||typeof utcTime!=='string'||!/^([01]\d|2[0-3]):[0-5]\d$/.test(utcTime))return reply.code(400).send({error:'invalid_daily_schedule'});
+    const row=await withTenant(options.pool,current.tenantId,async(client)=>{
+      await client.query("SELECT set_config('app.principal_id',$1,true)",[current.userId]);
+      return client.query<{schedule_id:string;next_run_at:Date}>(
+        `WITH owned AS(SELECT report_id FROM reports.definitions WHERE tenant_id=$1 AND report_id=$2 AND owner_id=$3),
+         next_slot AS(SELECT CASE WHEN ((clock_timestamp() AT TIME ZONE 'UTC')::date+$4::time) AT TIME ZONE 'UTC'>clock_timestamp() THEN ((clock_timestamp() AT TIME ZONE 'UTC')::date+$4::time) AT TIME ZONE 'UTC' ELSE (((clock_timestamp() AT TIME ZONE 'UTC')::date+1)+$4::time) AT TIME ZONE 'UTC' END AS due)
+         INSERT INTO reports.schedules(tenant_id,report_id,owner_id,utc_time,next_run_at) SELECT $1,o.report_id,$3,$4::time,n.due FROM owned o CROSS JOIN next_slot n
+         ON CONFLICT(tenant_id,report_id) DO UPDATE SET utc_time=EXCLUDED.utc_time,next_run_at=EXCLUDED.next_run_at,enabled=true
+         RETURNING schedule_id,next_run_at`,[current.tenantId,reportId,current.userId,utcTime]);
+    });
+    if(!row.rowCount)return reply.code(404).send({error:'report_not_found'});
+    return reply.code(201).send({scheduleId:row.rows[0]!.schedule_id,reportId,utcTime,nextRunAt:row.rows[0]!.next_run_at.toISOString(),cadence:'daily'});
+  });
+  app.delete<{Params:{scheduleId:string}}>('/api/me/schedules/:scheduleId',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const result=await withTenant(options.pool,current.tenantId,async(client)=>{await client.query("SELECT set_config('app.principal_id',$1,true)",[current.userId]);return client.query('UPDATE reports.schedules SET enabled=false WHERE tenant_id=$1 AND schedule_id=$2 AND owner_id=$3',[current.tenantId,request.params.scheduleId,current.userId]);});
+    if(!result.rowCount)return reply.code(404).send({error:'schedule_not_found'});return reply.send({disabled:true});
   });
   app.get<{Params:{runId:string};Querystring:{after?:string}}>('/api/runs/:runId/events',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});

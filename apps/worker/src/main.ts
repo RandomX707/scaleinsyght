@@ -8,6 +8,7 @@ import { claimNextStep, completeStep, failStep } from '@scaleinsyght/runner';
 import { executeGoldenStep, finalizeAnalyticRun } from '@scaleinsyght/analytic';
 import type { AnalyticPlan } from '@scaleinsyght/contracts';
 import { authorise } from '@scaleinsyght/policy';
+import { claimDueSchedule, markScheduleSlotSkipped, markScheduleSlotStarted, persistReportSnapshot, startScheduledReportRun } from '@scaleinsyght/reports';
 
 config({path:fileURLToPath(new URL('../../../.env',import.meta.url))});
 const golden=JSON.parse(readFileSync(new URL('../../../tests/golden/phase0.json',import.meta.url),'utf8')) as {scriptedRun:{resultRefs:string[]}};
@@ -17,10 +18,16 @@ const healthServer=createServer((request,response)=>{if(request.url==='/health')
 await new Promise<void>((resolve,reject)=>{healthServer.once('error',reject);healthServer.listen(Number(process.env.WORKER_HEALTH_PORT??3001),'127.0.0.1',resolve);});
 let stopping=false;
 for(const signal of ['SIGINT','SIGTERM'] as const)process.on(signal,()=>{stopping=true;});
+async function dispatchDueSchedule():Promise<boolean>{
+ const due=await claimDueSchedule(pool);if(!due)return false;
+ try{await startScheduledReportRun(pool,due);await markScheduleSlotStarted(pool,due);}
+ catch(error){const reason=error instanceof Error?error.message:'';if(['governed_version_not_approved','governed_version_not_found','source_not_active','source_group_version_not_pinned','capability_not_available','principal_not_entitled'].includes(reason)){await markScheduleSlotSkipped(pool,due,reason as 'governed_version_not_approved'|'governed_version_not_found'|'source_not_active'|'source_group_version_not_pinned'|'capability_not_available'|'principal_not_entitled');console.info(`Scheduled report slot skipped for schedule ${due.scheduleId}: ${reason}`);}else console.error(`Scheduled report dispatch failed for schedule ${due.scheduleId}:`,error);}
+ return true;
+}
 while(!stopping){
  try{
   const claim=await claimNextStep(pool,workerId,30_000);
-  if(!claim){await new Promise(resolve=>setTimeout(resolve,500));continue;}
+  if(!claim){if(await dispatchDueSchedule())continue;await new Promise(resolve=>setTimeout(resolve,500));continue;}
   const task=await withRunTenant(pool,claim.runId,async(client)=>{
    const result=await client.query<{step_order:number;source_group_id:string|null;plan:AnalyticPlan|null;principal_id:string}>(
     `SELECT s.step_order,s.source_group_id,p.plan,r.principal_id FROM runs.steps s JOIN runs.runs r USING(tenant_id,run_id) LEFT JOIN runs.analytic_plans p USING(tenant_id,run_id)
@@ -47,6 +54,7 @@ while(!stopping){
     await failStep(pool,claim,{reasonCode:reason});
    }
    await finalizeAnalyticRun(pool,claim.runId);
+   await persistReportSnapshot(pool,claim.runId);
   }else{
    const ref=golden.scriptedRun.resultRefs[task.order-1];
    if(!ref)throw new Error(`No synthetic golden result reference for step order ${task.order}`);

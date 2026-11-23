@@ -17,6 +17,7 @@
     "@scaleinsyght/profiler": "workspace:*",
     "@scaleinsyght/registry": "workspace:*",
     "@scaleinsyght/runner": "workspace:*",
-    "@scaleinsyght/analytic": "workspace:*"
+    "@scaleinsyght/analytic": "workspace:*",
+    "@scaleinsyght/reports": "workspace:*"
   }
 }
