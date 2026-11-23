@@ -13,6 +13,7 @@
     "models:list": "tsx scripts/list-models.ts",
     "test:live": "tsx scripts/test-live.ts",
     "eval:golden": "vitest run tests/unit/analytic-plan.test.ts tests/contracts/c3_gateway_security.test.ts",
+    "backup:drill": "tsx scripts/backup-drill.ts",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:migrate:test": "tsx scripts/migrate.ts --test",
     "db:seed:golden": "tsx scripts/seed-golden.ts",

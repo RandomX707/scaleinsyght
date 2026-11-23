@@ -60,6 +60,8 @@ Lake and CRM metadata use existing connection, graph, profile, and event tables;
 
 `OIDC_REDIRECT_URI` is the exact HTTPS callback registered at the tenant's OIDC provider. `client_secret_ref` names an environment/secret-manager variable read only by the API; the value is never accepted in a route body, returned to the browser, or written to PostgreSQL. Password login remains available if OIDC is unavailable.
 
+The encrypted backup drill uses `DATABASE_URL_ADMIN`, `DATABASE_URL_MIGRATE`, PostgreSQL 16 `pg_dump`/`pg_restore`, and `BACKUP_ENCRYPTION_KEY` (base64 for 32 random bytes). Keep the key in the deployment secret store; the environment example contains only an empty placeholder. `pnpm backup:drill` creates random, isolated synthetic databases, verifies an encrypted archive restore, drops only those temporary databases, retains only the encrypted archive under `BACKUP_VOLUME_PATH` (default `.local/backups`), and prints safe timing/status fields.
+
 ## Acceptance tests
 
 | Named test case | Acceptance | Contract |
