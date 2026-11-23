@@ -1,7 +1,7 @@
 # Phase 6 Report — Enterprise connectivity, hardening and deployment
 
 **Branch:** `phase-6`  
-**Status:** implementation complete; waiting for the pull request CI container build and cold Compose check  
+**Status:** implementation complete; PR #8 checks green, merge pending  
 **Decision:** 36 remains assumed, pending Yashaswi.
 
 ## Assumptions pending Yashaswi
@@ -45,7 +45,7 @@ pnpm gateway:start
 | `pnpm test:e2e` | Pass — 11 tests |
 | `pnpm backup:drill` | Pass — 3 synthetic rows, RPO 0.102s, RTO 0.242s; retained artifact is encrypted |
 | `pnpm test:load` | Pass — 100 synthetic runs; first progress event p50 2.6ms, p95 6.6ms, max 19.8ms |
-| Docker image build and cold Compose start | Pending GitHub Actions; intentionally not run on the development machine |
+| Docker image build and cold Compose start | Pass — [PR #8 CI](https://github.com/RandomX707/scaleinsyght/actions/runs/45185478463); all five images built, Compose started the reference services and health checks passed |
 
 The generated local sample PostgreSQL source contains 42,132 fake rows and is accessed through the read-only connector role. Local E2E and contract fixtures use synthetic tenants and accounts only. No external identity provider, CRM, lake, or customer database was contacted.
 
@@ -53,6 +53,6 @@ The generated local sample PostgreSQL source contains 42,132 fake rows and is ac
 
 The first full E2E run found ambiguous Playwright locators after adding gateway controls and a second status notice. Locators were narrowed to the exact intended source field and status message; the rerun passed all 11 tests without changing assertions or test coverage. CI's PostgreSQL source contract also found a mismatch between a static sample-source URL in the workflow environment and the random password created by the sample-source setup. The static override has been removed so dbt and connector tests read the generated URL from ignored `.env`.
 
-The first PR workflow stopped before tests because the runner's Ubuntu repositories do not include `postgresql-client-16`. Switching to Ubuntu's generic client package then failed the backup drill's intentional PostgreSQL 16 client-version guard. The official PostgreSQL repository installed version 16, but the runner's default `PATH` still selected its newer client. CI now adds `/usr/lib/postgresql/16/bin` to the Actions path after installation; the complete workflow rerun is pending.
+The first PR workflow stopped before tests because the runner's Ubuntu repositories do not include `postgresql-client-16`. Switching to Ubuntu's generic client package then failed the backup drill's intentional PostgreSQL 16 client-version guard. The official PostgreSQL repository installed version 16, but the runner's default `PATH` still selected its newer client. CI now adds `/usr/lib/postgresql/16/bin` to the Actions path after installation. The subsequent full workflow passed, including image builds, Compose cold start, and health checks.
 
-The Docker image build and cold-start acceptance gate is delegated to CI under the local no-Docker constraint. The CI workflow runs Compose validation, builds all five deployment targets, starts the reference services from a cold state, waits for health, and cleans up. Phase completion and merge remain contingent on that GitHub Actions check passing.
+The Docker image build and cold-start acceptance gate is delegated to CI under the local no-Docker constraint. The CI workflow runs Compose validation, builds all five deployment targets, starts the reference services from a cold state, waits for health, and cleans up. Phase completion is now contingent only on merging PR #8.
