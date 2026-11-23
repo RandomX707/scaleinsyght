@@ -33,4 +33,15 @@ describe('contract 8 immutable FlowSpec approval',()=>{
  it('c8_rejects_mutating_or_unsupported_steps',async()=>{
   const result=await server.inject({method:'POST',url:'/api/flowspecs',headers:{cookie:ownerCookie},payload:{...spec(),nodes:[{id:'bad',kind:'read',capability:'customer.deploy',inputs:{}}]}});expect(result.statusCode).toBe(400);
  });
+ it('c8_handoff_without_valid_grant_is_refused_without_delivery',async()=>{
+  const created=await server.inject({method:'POST',url:'/api/flowspecs',headers:{cookie:ownerCookie},payload:spec('No grant')});const {flowspecId}=created.json() as {flowspecId:string};const result=await server.inject({method:'POST',url:`/api/flowspecs/${flowspecId}/handoff`,headers:{cookie:ownerCookie},payload:{version:1}});expect(result.statusCode).toBe(403);expect(result.json()).toMatchObject({error:'approved_unexpired_grant_required'});
+  const count=await withTenant(migrate,tenantId,(db)=>db.query('SELECT handoff_id FROM hub.handoffs WHERE tenant_id=$1 AND flowspec_id=$2',[tenantId,flowspecId]));expect(count.rowCount).toBe(0);
+ });
+ it('c8_confirmed_handoff_reuses_the_same_receiver_record_and_outbox',async()=>{
+  const created=await server.inject({method:'POST',url:'/api/flowspecs',headers:{cookie:ownerCookie},payload:spec('Idempotent receiver')});const {flowspecId}=created.json() as {flowspecId:string};
+  expect((await server.inject({method:'POST',url:`/api/flowspecs/${flowspecId}/approve`,headers:{cookie:approverCookie},payload:{version:1}})).statusCode).toBe(200);
+  const first=await server.inject({method:'POST',url:`/api/flowspecs/${flowspecId}/handoff`,headers:{cookie:ownerCookie},payload:{version:1}});expect(first.statusCode).toBe(200);expect(first.json()).toMatchObject({status:'confirmed',accepted:true});
+  const replay=await server.inject({method:'POST',url:`/api/flowspecs/${flowspecId}/handoff`,headers:{cookie:ownerCookie},payload:{version:1}});expect(replay.json()).toMatchObject({handoffId:first.json().handoffId,status:'confirmed',accepted:true});
+  const rows=await withTenant(migrate,tenantId,(db)=>db.query<{handoffs:string;outboxes:string;sent:string}>(`SELECT count(DISTINCT h.handoff_id)::text AS handoffs,count(DISTINCT o.message_id)::text AS outboxes,count(DISTINCT o.message_id) FILTER(WHERE o.sent_at IS NOT NULL)::text AS sent FROM hub.handoffs h JOIN runs.outbox o ON o.tenant_id=h.tenant_id AND o.message_id=h.outbox_message_id WHERE h.tenant_id=$1 AND h.flowspec_id=$2`,[tenantId,flowspecId]));expect(rows.rows[0]).toEqual({handoffs:'1',outboxes:'1',sent:'1'});
+ });
 });

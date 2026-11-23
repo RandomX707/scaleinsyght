@@ -86,9 +86,55 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const outcome=await withTenant(options.pool,current.tenantId,async(client)=>{
       const result=await client.query<{requested_by:string;expires_at:Date;status:string}>('SELECT requested_by,expires_at,status FROM hub.flowspec_approvals WHERE tenant_id=$1 AND flowspec_id=$2 AND version=$3 FOR UPDATE',[current.tenantId,request.params.id,version]);
       const approval=result.rows[0];if(!approval)return 'missing';if(approval.requested_by===current.userId)return 'self_approval';if(approval.status!=='pending'||approval.expires_at.getTime()<=Date.now())return 'not_pending';
-      await client.query("UPDATE hub.flowspec_approvals SET approved_by=$4,status='approved',decided_at=clock_timestamp() WHERE tenant_id=$1 AND flowspec_id=$2 AND version=$3",[current.tenantId,request.params.id,version,current.userId]);return 'approved';
+      const approved=await client.query<{approval_id:string;subject_hash:string}>('UPDATE hub.flowspec_approvals SET approved_by=$4,status=\'approved\',decided_at=clock_timestamp() WHERE tenant_id=$1 AND flowspec_id=$2 AND version=$3 RETURNING approval_id,subject_hash',[current.tenantId,request.params.id,version,current.userId]);
+      const key=createHash('sha256').update(`${current.tenantId}:${request.params.id}:${version}:${approved.rows[0]!.subject_hash}`).digest('hex');
+      await client.query(`INSERT INTO hub.handoff_grants(tenant_id,approval_id,flowspec_id,version,subject_hash,expires_at,idempotency_key)
+        SELECT tenant_id,approval_id,flowspec_id,version,subject_hash,expires_at,$4 FROM hub.flowspec_approvals WHERE tenant_id=$1 AND approval_id=$2 AND flowspec_id=$3`,[current.tenantId,approved.rows[0]!.approval_id,request.params.id,key]);return 'approved';
     });
     if(outcome==='missing')return reply.code(404).send({error:'approval_not_found'});if(outcome==='self_approval')return reply.code(403).send({error:'second_member_required'});if(outcome!=='approved')return reply.code(409).send({error:'approval_not_pending'});return reply.send({flowspecId:request.params.id,version,status:'approved'});
+  });
+  app.post<{Params:{id:string}}>('/api/flowspecs/:id/handoff',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    if(!hubAdapters.dataStudio.connected)return reply.code(503).send({error:'hub_adapter_disconnected'});
+    const version=Number((request.body as {version?:unknown})?.version);if(!Number.isInteger(version)||version<1)return reply.code(400).send({error:'invalid_version'});
+    const delivery=await withTenant(options.pool,current.tenantId,async(client)=>{
+      const existing=await client.query<{handoff_id:string;idempotency_key:string;payload_hash:string;status:string;receiver_ref:string|null}>('SELECT handoff_id,idempotency_key,payload_hash,status,receiver_ref FROM hub.handoffs WHERE tenant_id=$1 AND flowspec_id=$2 AND version=$3',[current.tenantId,request.params.id,version]);
+      if(existing.rows[0])return {kind:'existing' as const,row:existing.rows[0]};
+      const approved=await client.query<{payload:Record<string,unknown>;subject_hash:string;grant_id:string;idempotency_key:string;expires_at:Date;consumed_at:Date|null}>(
+        `SELECT v.payload,v.subject_hash,g.grant_id,g.idempotency_key,g.expires_at,g.consumed_at FROM hub.flowspec_versions v
+         JOIN hub.flowspec_approvals a USING(tenant_id,flowspec_id,version,subject_hash) JOIN hub.handoff_grants g USING(tenant_id,approval_id,flowspec_id,version,subject_hash)
+         WHERE v.tenant_id=$1 AND v.flowspec_id=$2 AND v.version=$3 AND a.status='approved' AND a.expires_at>clock_timestamp() FOR UPDATE OF g`,[current.tenantId,request.params.id,version]);
+      const row=approved.rows[0];if(!row)return {kind:'no_grant' as const};
+      if(row.expires_at.getTime()<=Date.now())return {kind:'expired' as const};
+      if(row.consumed_at)return {kind:'consumed' as const};
+      const runId=randomUUID();await client.query("INSERT INTO runs.runs(tenant_id,run_id,principal_id,state) VALUES($1,$2,$3,'RUNNING')",[current.tenantId,runId,current.userId]);
+      const payloadHash=createHash('sha256').update(JSON.stringify(row.payload)).digest('hex');
+      const outbox=await client.query<{message_id:string}>("INSERT INTO runs.outbox(tenant_id,run_id,destination,payload) VALUES($1,$2,'data_studio',$3::jsonb) RETURNING message_id",[current.tenantId,runId,JSON.stringify({flowspecId:request.params.id,version,payloadHash})]);
+      const handoff=await client.query<{handoff_id:string}>('INSERT INTO hub.handoffs(tenant_id,grant_id,flowspec_id,version,run_id,outbox_message_id,idempotency_key,payload_hash,status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,\'pending\') RETURNING handoff_id',[current.tenantId,row.grant_id,request.params.id,version,runId,outbox.rows[0]!.message_id,row.idempotency_key,payloadHash]);
+      await client.query('UPDATE hub.handoff_grants SET consumed_at=clock_timestamp() WHERE tenant_id=$1 AND grant_id=$2',[current.tenantId,row.grant_id]);
+      return {kind:'created' as const,row:{handoff_id:handoff.rows[0]!.handoff_id,idempotency_key:row.idempotency_key,payload_hash:payloadHash,status:'pending',receiver_ref:null},delivery:{flowspecId:request.params.id,version,payloadHash}};
+    });
+    if(delivery.kind==='no_grant')return reply.code(403).send({error:'approved_unexpired_grant_required'});if(delivery.kind==='expired')return reply.code(409).send({error:'handoff_grant_expired'});if(delivery.kind==='consumed')return reply.code(409).send({error:'handoff_grant_consumed'});
+    const row=delivery.row;
+    if(row.status==='confirmed'||row.status==='reconciled')return reply.send({handoffId:row.handoff_id,status:row.status,accepted:true,receiverRef:row.receiver_ref});
+    const lookup=await hubAdapters.dataStudio.lookupFlowSpec(row.idempotency_key) as {status?:string;receiverRef?:string}|null;
+    let receipt=lookup;
+    if(!receipt&&delivery.kind==='created')receipt=await hubAdapters.dataStudio.deliverFlowSpec(row.idempotency_key,delivery.delivery) as {status?:string;receiverRef?:string};
+    if(!receipt)return reply.code(202).send({handoffId:row.handoff_id,status:'unknown',accepted:false});
+    if(receipt.status!=='accepted')return reply.code(202).send({handoffId:row.handoff_id,status:'unknown',accepted:false});
+    await withTenant(options.pool,current.tenantId,async(client)=>{
+      await client.query("UPDATE hub.handoffs SET status='confirmed',receiver_ref=$3,confirmed_at=clock_timestamp() WHERE tenant_id=$1 AND handoff_id=$2 AND status IN ('pending','unknown')",[current.tenantId,row.handoff_id,receipt!.receiverRef??`synthetic:${row.idempotency_key}`]);
+      await client.query("UPDATE runs.outbox SET sent_at=clock_timestamp() WHERE tenant_id=$1 AND message_id=(SELECT outbox_message_id FROM hub.handoffs WHERE tenant_id=$1 AND handoff_id=$2)",[current.tenantId,row.handoff_id]);
+    });
+    return reply.send({handoffId:row.handoff_id,status:'confirmed',accepted:true,receiverRef:receipt.receiverRef??`synthetic:${row.idempotency_key}`});
+  });
+  app.get<{Params:{id:string;handoffId:string}}>('/api/flowspecs/:id/handoff/:handoffId',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const found=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{handoff_id:string;idempotency_key:string;payload_hash:string;status:string;receiver_ref:string|null}>('SELECT handoff_id,idempotency_key,payload_hash,status,receiver_ref FROM hub.handoffs WHERE tenant_id=$1 AND flowspec_id=$2 AND handoff_id=$3',[current.tenantId,request.params.id,request.params.handoffId]));
+    const row=found.rows[0];if(!row)return reply.code(404).send({error:'handoff_not_found'});if(row.status==='confirmed'||row.status==='reconciled')return reply.send({handoffId:row.handoff_id,status:row.status,accepted:true,receiverRef:row.receiver_ref});
+    const receipt=await hubAdapters.dataStudio.lookupFlowSpec(row.idempotency_key) as {status?:string;receiverRef?:string}|null;
+    if(receipt?.status==='accepted'){await withTenant(options.pool,current.tenantId,(client)=>client.query("UPDATE hub.handoffs SET status='reconciled',receiver_ref=$3,confirmed_at=clock_timestamp() WHERE tenant_id=$1 AND handoff_id=$2 AND status IN ('pending','unknown')",[current.tenantId,row.handoff_id,receipt.receiverRef??`synthetic:${row.idempotency_key}`]));return reply.send({handoffId:row.handoff_id,status:'reconciled',accepted:true,receiverRef:receipt.receiverRef});}
+    await withTenant(options.pool,current.tenantId,(client)=>client.query("UPDATE hub.handoffs SET status='unknown' WHERE tenant_id=$1 AND handoff_id=$2 AND status='pending'",[current.tenantId,row.handoff_id]));return reply.code(202).send({handoffId:row.handoff_id,status:'unknown',accepted:false});
   });
   app.get('/api/hub/adapters',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
