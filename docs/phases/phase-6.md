@@ -16,7 +16,9 @@
 | Route/interface | Behavior | Contract |
 |---|---|---|
 | `POST /api/gateways/enrollments` | An authenticated tenant administrator issues a one-use, short-lived gateway enrollment token; only a hash is stored | 1, 5 |
+| `GET /api/gateways` / `POST /api/gateways/:gatewayId/revoke` | Tenant administrators see safe gateway status and revoke a gateway credential | 1, 5 |
 | `POST /api/gateways/claim` | The outbound gateway exchanges the one-use token for a scoped gateway credential; replay and cross-tenant claims fail | 1, 5, 7 |
+| `POST /api/gateways/requests` | An authorized user queues one validated read plan for an active, source-bound gateway | 1, 3, 5 |
 | `POST /api/gateways/poll` | The authenticated gateway polls for the next tenant-bound, already-authorized read request; an empty queue is a successful empty response | 1, 3, 5 |
 | `POST /api/gateways/results/:requestId` | Gateway returns only the validated bounded result envelope for the claimed request; replay is idempotent and stale claims are rejected | 1, 3, 5, 7 |
 | Existing connection test/discover/profile/analytic routes | Support a private source routed through the customer-side gateway, plus generic read-only lake and CRM connector types | 1, 2, 3, 6, 7 |
@@ -51,7 +53,7 @@ Lake and CRM metadata use existing connection, graph, profile, and event tables;
 
 ## UI
 
-- **Connectors:** an administrator can issue/revoke a gateway enrollment code and see gateway online/last-seen status. The code is shown once. Private connections clearly indicate that traffic is initiated from the customer network.
+- **Connectors:** an administrator can issue/revoke a gateway enrollment code and see gateway online/last-seen status. The code is shown once and only in in-memory UI state. Private connections clearly indicate that traffic is initiated from the customer network.
 - **Connector setup:** generic lake/CRM read-only connection forms use secret references and display no saved credential values. Scope and read-only warnings match existing SQL connectors.
 - **Controls / SSO:** tenant administrator can configure an OIDC issuer, client id, secret reference, and allowed email domains; UI states that password login remains available as recovery.
 - No evaluation, backup, restore, or load-test screens are added; those are operator CLI workflows. No Docker workflow is added to local development UI.

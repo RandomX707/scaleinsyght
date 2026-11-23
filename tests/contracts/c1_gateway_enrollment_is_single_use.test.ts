@@ -78,5 +78,10 @@ describe('contract 1 and 5 customer gateway protocol', () => {
     expect(replay.json()).toEqual({ status: 'replayed' });
     const raw = await server.inject({ method: 'POST', url: `/api/gateways/results/${request.requestId}`, headers: { authorization: `Bearer ${credential}` }, payload: { ...result, rows: [{ patient_id: 'synthetic' }] } });
     expect(raw.statusCode).toBe(400);
+    const listed=await server.inject({method:'GET',url:'/api/gateways',headers:{cookie:sessionCookie}});
+    expect(listed.json<{gateways:Array<{gatewayId:string}>}>().gateways.some(item=>item.gatewayId===claim.json<{gatewayId:string}>().gatewayId)).toBe(true);
+    const revoked=await server.inject({method:'POST',url:`/api/gateways/${claim.json<{gatewayId:string}>().gatewayId}/revoke`,headers:{cookie:sessionCookie}});
+    expect(revoked.json()).toMatchObject({status:'revoked'});
+    expect((await server.inject({method:'POST',url:'/api/gateways/poll',headers:{authorization:`Bearer ${credential}`}})).statusCode).toBe(401);
   });
 });

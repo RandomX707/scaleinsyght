@@ -66,20 +66,38 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     {id:'synthetic-lake',type:'lake' as const,name:'Synthetic lake'},
     {id:'synthetic-crm',type:'crm' as const,name:'Synthetic CRM'},
   ];
+  app.get('/api/gateways',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const allowed=await withTenant(options.pool,current.tenantId,client=>client.query("SELECT 1 FROM core.entitlements WHERE tenant_id=$1 AND principal_id=$2 AND capability_id='tenant.gateway.manage' AND allowed AND resource_id IS NULL LIMIT 1",[current.tenantId,current.userId]));
+    if(!allowed.rowCount)return reply.code(403).send({error:'tenant_admin_required'});
+    const gateways=await withTenant(options.pool,current.tenantId,client=>client.query<{gateway_id:string;source_connection_id:string;last_seen_at:Date|null;revoked_at:Date|null}>('SELECT gateway_id,source_connection_id,last_seen_at,revoked_at FROM gateway.clients WHERE tenant_id=$1 ORDER BY created_at DESC',[current.tenantId]));
+    return reply.send({gateways:gateways.rows.map(row=>({gatewayId:row.gateway_id,sourceConnectionId:row.source_connection_id,lastSeenAt:row.last_seen_at,revokedAt:row.revoked_at}))});
+  });
+  app.post<{Params:{gatewayId:string}}>('/api/gateways/:gatewayId/revoke',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    if(!/^[0-9a-f-]{36}$/i.test(request.params.gatewayId))return reply.code(400).send({error:'invalid_gateway_id'});
+    const allowed=await withTenant(options.pool,current.tenantId,client=>client.query("SELECT 1 FROM core.entitlements WHERE tenant_id=$1 AND principal_id=$2 AND capability_id='tenant.gateway.manage' AND allowed AND resource_id IS NULL LIMIT 1",[current.tenantId,current.userId]));
+    if(!allowed.rowCount)return reply.code(403).send({error:'tenant_admin_required'});
+    const revoked=await withTenant(options.pool,current.tenantId,async(client)=>{
+      const result=await client.query('UPDATE gateway.clients SET revoked_at=clock_timestamp() WHERE tenant_id=$1 AND gateway_id=$2 AND revoked_at IS NULL RETURNING gateway_id',[current.tenantId,request.params.gatewayId]);
+      if(result.rowCount)await client.query("INSERT INTO gateway.events(tenant_id,gateway_id,event_type,safe_status) VALUES($1,$2,'gateway_revoked','revoked')",[current.tenantId,request.params.gatewayId]);return Boolean(result.rowCount);
+    });
+    if(!revoked)return reply.code(404).send({error:'gateway_not_found'});return reply.send({gatewayId:request.params.gatewayId,status:'revoked'});
+  });
   app.addHook('onClose',async()=>{await Promise.all([...postgresConnectors.values()].map(connector=>connector.close?.()));});
   const hubAdapters=options.hubAdapters??createGoldenHubAdapters(getGoldenHubFixtures());
   const gatewayAuth=async(request: { headers: Record<string, string | string[] | undefined> })=>{
     const header=request.headers.authorization;
     if(typeof header!=='string'||!header.startsWith('Bearer '))return null;
     const credential=header.slice(7);const parts=credential.split('.');
-    if(parts.length!==3||!parts[0]||!parts[1]||!parts[2])return null;
+    if(parts.length!==3||!parts[0]||! /^[a-zA-Z0-9_-]{3,128}$/.test(parts[0])||! /^[0-9a-f-]{36}$/i.test(parts[1]!)||! /^[0-9a-f]{64}$/i.test(parts[2]!))return null;
     const [tenantId,gatewayId]=parts;
     try{
       return await withTenant(options.pool,tenantId!,async(client)=>{
-        const found=await client.query<{credential_hash:Buffer;source_connection_id:string}>('SELECT credential_hash,source_connection_id FROM gateway.clients WHERE tenant_id=$1 AND gateway_id=$2 AND revoked_at IS NULL',[tenantId,gatewayId]);
+        const found=await client.query<{credential_hash:Buffer;source_connection_id:string}>("SELECT c.credential_hash,c.source_connection_id FROM gateway.clients c JOIN registry.connections r ON r.tenant_id=c.tenant_id AND r.connection_id=c.source_connection_id WHERE c.tenant_id=$1 AND c.gateway_id=$2 AND c.revoked_at IS NULL AND r.status='active'",[tenantId,gatewayId]);
         const row=found.rows[0];if(!row)return null;
         const actual=Buffer.from(hashGatewaySecret(credential),'hex');
-        if(actual.length!==row.credential_hash.length||!actual.equals(row.credential_hash))return null;
+        if(actual.length!==row.credential_hash.length||!secureEqual(actual.toString('hex'),row.credential_hash.toString('hex')))return null;
         return {tenantId:tenantId!,gatewayId:gatewayId!,sourceConnectionId:row.source_connection_id};
       });
     }catch{return null;}
@@ -87,6 +105,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
   app.post('/api/gateways/enrollments',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const sourceConnectionId=String((request.body as {sourceConnectionId?:unknown})?.sourceConnectionId??'');
+    if(!/^[0-9a-f-]{36}$/i.test(sourceConnectionId))return reply.code(400).send({error:'invalid_source_connection'});
     const allowed=await withTenant(options.pool,current.tenantId,client=>client.query("SELECT 1 FROM core.entitlements WHERE tenant_id=$1 AND principal_id=$2 AND capability_id='tenant.gateway.manage' AND allowed AND resource_id IS NULL LIMIT 1",[current.tenantId,current.userId]));
     if(!allowed.rowCount)return reply.code(403).send({error:'tenant_admin_required'});
     const enrollment=await createEnrollment({tenantId:current.tenantId});
@@ -101,7 +120,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
   });
   app.post('/api/gateways/claim',async(request,reply)=>{
     const body=request.body as {tenantId?:unknown;token?:unknown};const tenantId=String(body?.tenantId??'');const token=String(body?.token??'');
-    if(!tenantId||!token)return reply.code(400).send({error:'gateway_claim_invalid'});
+    if(!/^[a-zA-Z0-9_-]{3,128}$/.test(tenantId)||!/^[0-9a-f]{64}$/i.test(token))return reply.code(400).send({error:'gateway_claim_invalid'});
     const claimed=await withTenant(options.pool,tenantId,async(client)=>{
       const enrollment=await client.query<{enrollment_id:string;source_connection_id:string;consumed_at:Date|null;expires_at:Date}>('SELECT enrollment_id,source_connection_id,consumed_at,expires_at FROM gateway.enrollments WHERE tenant_id=$1 AND token_hash=$2 FOR UPDATE',[tenantId,Buffer.from(hashGatewaySecret(token),'hex')]);
       const row=enrollment.rows[0];if(!row||row.consumed_at||row.expires_at.getTime()<=Date.now())return null;
@@ -119,7 +138,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     let validatedPlan;try{validatedPlan=await validateGatewayPlan(body?.plan);}catch{return reply.code(400).send({error:'gateway_plan_rejected'});}
     const sourceId=validatedPlan.scope.source_ids[0]!;
     const queued=await withTenant(options.pool,current.tenantId,async(client)=>{
-      const gateway=await client.query<{source_connection_id:string}>('SELECT source_connection_id FROM gateway.clients WHERE tenant_id=$1 AND gateway_id=$2 AND revoked_at IS NULL',[current.tenantId,gatewayId]);
+      const gateway=await client.query<{source_connection_id:string}>("SELECT c.source_connection_id FROM gateway.clients c JOIN registry.connections r ON r.tenant_id=c.tenant_id AND r.connection_id=c.source_connection_id WHERE c.tenant_id=$1 AND c.gateway_id=$2 AND c.revoked_at IS NULL AND r.status='active'",[current.tenantId,gatewayId]);
       if(!gateway.rowCount||gateway.rows[0]!.source_connection_id!==sourceId)return null;
       const entitlement=await client.query("SELECT 1 FROM core.entitlements WHERE tenant_id=$1 AND principal_id=$2 AND capability_id='analytic.read' AND allowed AND (resource_id IS NULL OR resource_id=$3) LIMIT 1",[current.tenantId,current.userId,sourceId]);if(!entitlement.rowCount)return null;
       const result=await client.query<{request_id:string}>('INSERT INTO gateway.requests(tenant_id,gateway_id,source_connection_id,plan) VALUES($1,$2,$3,$4::jsonb) RETURNING request_id',[current.tenantId,gatewayId,sourceId,JSON.stringify(validatedPlan)]);return result.rows[0];
@@ -130,6 +149,8 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const gateway=await gatewayAuth(request);if(!gateway)return reply.code(401).send({error:'gateway_credential_invalid'});
     const claimed=await withTenant(options.pool,gateway.tenantId,async(client)=>{
       await client.query('UPDATE gateway.clients SET last_seen_at=clock_timestamp() WHERE tenant_id=$1 AND gateway_id=$2',[gateway.tenantId,gateway.gatewayId]);
+      const expired=await client.query<{request_id:string;gateway_id:string}>("UPDATE gateway.requests SET state='expired',safe_failure_code='lease_attempts_exhausted',updated_at=clock_timestamp() WHERE tenant_id=$1 AND gateway_id=$2 AND state='leased' AND lease_expires_at<clock_timestamp() AND attempts>=5 RETURNING request_id,gateway_id",[gateway.tenantId,gateway.gatewayId]);
+      for(const row of expired.rows)await client.query("INSERT INTO gateway.events(tenant_id,gateway_id,request_id,event_type,safe_status) VALUES($1,$2,$3,'gateway_request_expired','attempt_limit')",[gateway.tenantId,row.gateway_id,row.request_id]);
       const next=await client.query<{request_id:string;plan:unknown;attempts:number}>('SELECT request_id,plan,attempts FROM gateway.requests WHERE tenant_id=$1 AND gateway_id=$2 AND (state=\'queued\' OR (state=\'leased\' AND lease_expires_at<clock_timestamp())) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1',[gateway.tenantId,gateway.gatewayId]);
       const row=next.rows[0];if(!row)return null;const lease=randomUUID();
       await client.query("UPDATE gateway.requests SET state='leased',lease_token=$3,lease_expires_at=clock_timestamp()+interval '2 minutes',attempts=attempts+1,updated_at=clock_timestamp() WHERE tenant_id=$1 AND request_id=$2",[gateway.tenantId,row.request_id,lease]);
@@ -141,7 +162,8 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const gateway=await gatewayAuth(request);if(!gateway)return reply.code(401).send({error:'gateway_credential_invalid'});
     let result;try{result=validateGatewayResult(request.body);}catch{return reply.code(400).send({error:'gateway_result_invalid'});}
     if(result.requestId!==request.params.requestId)return reply.code(400).send({error:'gateway_result_invalid'});
-    const hash=Buffer.from(createHash('sha256').update(JSON.stringify(result)).digest('hex'),'hex');
+    const stableResult={requestId:result.requestId,fencingToken:result.fencingToken,aggregates:result.aggregates.map(item=>item.unit===undefined?{metric:item.metric,value:item.value}:{metric:item.metric,value:item.value,unit:item.unit})};
+    const hash=Buffer.from(createHash('sha256').update(JSON.stringify(stableResult)).digest('hex'),'hex');
     const outcome=await withTenant(options.pool,gateway.tenantId,async(client)=>{
       const current=await client.query<{state:string;lease_token:string|null;result_hash:Buffer|null}>('SELECT state,lease_token,result_hash FROM gateway.requests WHERE tenant_id=$1 AND request_id=$2 AND gateway_id=$3 FOR UPDATE',[gateway.tenantId,request.params.requestId,gateway.gatewayId]);const row=current.rows[0];if(!row)return 'missing';
       if(row.state==='completed'&&row.result_hash?.equals(hash))return 'replayed';if(row.state!=='leased'||row.lease_token!==result.fencingToken)return 'stale';

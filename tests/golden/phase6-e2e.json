@@ -1,0 +1,5 @@
+{
+  "users": [
+    { "tenantId": "phase6-e2e-gateway-sso", "email": "admin@phase6-e2e-gateway-sso.synthetic.invalid" }
+  ]
+}
