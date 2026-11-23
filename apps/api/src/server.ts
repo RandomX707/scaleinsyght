@@ -42,16 +42,29 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const sources=[{id:'golden-dbt',type:'dbt' as const},{id:'golden-tableau',type:'tableau' as const},{id:'golden-powerbi',type:'power_bi' as const}];
     const source=sources.find((item)=>item.id===request.body?.sourceId);if(!source)return reply.code(400).send({error:'unknown_synthetic_source'});
-    const draft=await createConnectionDraft(options.pool,{tenantId:current.tenantId,connectorType:source.type,sourceRef:source.id});
-    return reply.code(201).send({connectionId:draft.connectionId,connectorType:source.type,status:'draft'});
+    const connection=await withTenant(options.pool,current.tenantId,async(client)=>{
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[JSON.stringify([current.tenantId,source.id])]);
+      const existing=await client.query<{connection_id:string;status:'draft'|'active'}>(
+        `SELECT connection_id,status FROM registry.connections WHERE tenant_id=$1 AND connector_type=$2 AND source_ref=$3 AND status IN ('active','draft')
+         ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END,created_at DESC LIMIT 1 FOR UPDATE`,
+        [current.tenantId,source.type,source.id]);
+      if(existing.rows[0])return existing.rows[0];
+      const created=await client.query<{connection_id:string;status:'draft'}>(
+        `INSERT INTO registry.connections(tenant_id,connector_type,status,source_ref) VALUES($1,$2,'draft',$3) RETURNING connection_id,status`,
+        [current.tenantId,source.type,source.id]);
+      return created.rows[0]!;
+    });
+    return reply.code(201).send({connectionId:connection.connection_id,connectorType:source.type,status:connection.status});
   });
   app.post<{Params:{connectionId:string}}>('/api/metadata/connections/:connectionId/activate',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const draft=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{source_ref:string|null;connector_type:string;status:string}>(
       'SELECT source_ref,connector_type,status FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2',[current.tenantId,request.params.connectionId]));
-    const row=draft.rows[0];if(!row||row.status!=='draft'||!row.source_ref)return reply.code(404).send({error:'metadata_connection_not_found'});
+    const row=draft.rows[0];if(!row||!row.source_ref)return reply.code(404).send({error:'metadata_connection_not_found'});
     const valid=(row.connector_type==='dbt'&&row.source_ref==='golden-dbt')||(row.connector_type==='tableau'&&row.source_ref==='golden-tableau')||(row.connector_type==='power_bi'&&row.source_ref==='golden-powerbi');
     if(!valid)return reply.code(400).send({error:'metadata_connection_mismatch'});
+    if(row.status==='active')return reply.send({connectionId:request.params.connectionId,status:'active',connectorType:row.connector_type});
+    if(row.status!=='draft')return reply.code(404).send({error:'metadata_connection_not_found'});
     const connection=await activateConnection(options.pool,{tenantId:current.tenantId,principalId:current.userId,connectorType:row.connector_type as ConnectorType,connectionId:request.params.connectionId,sourceRef:row.source_ref});
     return reply.send({connectionId:connection.connectionId,status:'active',connectorType:row.connector_type});
   });

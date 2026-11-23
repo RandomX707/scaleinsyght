@@ -1,19 +1,38 @@
 import { expect, test } from '@playwright/test';
 
-test.describe.configure({ mode: 'serial' });
+async function signIn(page: import('@playwright/test').Page,email:string){
+  await page.goto('/login');
+  await page.getByLabel('Email').fill(email);
+  await page.getByLabel('Password').fill('golden-local-only');
+  await page.getByRole('button',{name:'Sign in'}).click();
+}
+
+async function selectAssetAndWaitForLineage(page:import('@playwright/test').Page,qualifiedName:string){
+  const {assets}=await page.evaluate(async()=>{
+    const response=await fetch('/api/lineage/assets');
+    return await response.json() as {assets:Array<{asset_id:string;qualified_name:string}>};
+  });
+  const asset=assets.find(candidate=>candidate.qualified_name===qualifiedName);
+  expect(asset,`missing synthetic asset ${qualifiedName}`).toBeDefined();
+  const expectedAssetId=asset!.asset_id;
+  const lineageResponse=page.waitForResponse(response=>{
+    const url=new URL(response.url());
+    return url.pathname==='/api/lineage'&&url.searchParams.get('assetId')===expectedAssetId&&url.searchParams.get('direction')==='both';
+  });
+  await page.getByLabel('Graph asset').selectOption(expectedAssetId);
+  const response=await lineageResponse;
+  expect(response.ok()).toBe(true);
+}
 
 test('phase3_lineage_id_trace_impact_reports_and_snapshot_compare_are_keyboard_accessible', async ({ page }) => {
-  await page.goto('/login');
-  await page.getByLabel('Email').fill('analyst@north.example');
-  await page.getByLabel('Password').fill('golden-local-only');
-  await page.getByRole('button', { name: 'Sign in' }).click();
+  await signIn(page,'phase3-lineage@synthetic.example');
   await page.getByRole('link', { name: /Lineage/ }).click();
   await expect(page.getByRole('heading', { name: 'Lineage workspace' })).toBeVisible();
   await page.getByRole('button', { name: 'Import synthetic Power BI reports' }).click();
   await expect(page.getByRole('status')).toContainText('Synthetic lineage imported');
   await page.getByRole('button', { name: 'Import synthetic dbt manifest' }).click();
   await expect(page.getByRole('status')).toContainText('Synthetic lineage imported');
-  await page.getByLabel('Graph asset').selectOption({ label: 'dbt.customer_mart · dataset' });
+  await selectAssetAndWaitForLineage(page,'dbt.customer_mart');
   await expect(page.locator('.lineage-edges')).toContainText('Power BI.Customer Health');
   const idTraceLink=page.getByRole('link', { name: 'ID trace' });
   await idTraceLink.focus();
@@ -31,17 +50,14 @@ test('phase3_lineage_id_trace_impact_reports_and_snapshot_compare_are_keyboard_a
 });
 
 test('c6_accepted_inference_stays_unverified_in_api_and_lineage_ui',async({page})=>{
-  await page.goto('/login');
-  await page.getByLabel('Email').fill('analyst@north.example');
-  await page.getByLabel('Password').fill('golden-local-only');
-  await page.getByRole('button',{name:'Sign in'}).click();
+  await signIn(page,'phase3-review@synthetic.example');
   await page.getByRole('link',{name:/Lineage/}).click();
-  await page.getByRole('button',{name:'Import synthetic Power BI reports'}).click();
-  await expect(page.getByRole('status')).toContainText('Synthetic lineage imported');
   await page.getByRole('button',{name:'Import synthetic dbt manifest'}).click();
   await expect(page.getByRole('status')).toContainText('Synthetic lineage imported');
-  const latestDbtAsset=page.getByLabel('Graph asset').locator('option').filter({hasText:'dbt.customer_mart · dataset'}).last();
-  await page.getByLabel('Graph asset').selectOption((await latestDbtAsset.getAttribute('value'))!);
+  await page.getByRole('button',{name:'Import synthetic Power BI reports'}).click();
+  await expect(page.getByRole('status')).toContainText('Synthetic lineage imported');
+  await selectAssetAndWaitForLineage(page,'dbt.customer_mart');
+  await expect(page.locator('.lineage-edges')).toContainText('Power BI.Customer Health');
   const accept=page.getByRole('button',{name:'Accept assertion'}).first();
   await expect(accept).toBeVisible();
   await accept.click();

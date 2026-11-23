@@ -14,7 +14,7 @@ Status values: **decided**, **open** (with the phase it is needed by), or **assu
 | 6 | Release 1 connector set | decided | SQL Server, PostgreSQL, Excel upload, Snowflake, dbt, Tableau, Power BI | 18 Nov 2026 |
 | 7 | Run engine | decided | PostgreSQL runner; revisit past 30-day waits or 50 concurrent runs with lease contention | Yashaswi, 23 Nov 2026 |
 | 8 | Disclosure defaults | decided | No platform default; tagged data blocked until a tenant sets a policy | Yashaswi, 23 Nov 2026 |
-| 9 | Graph store | decided | Keep PostgreSQL as the graph store. On the synthetic 100,000-asset graph, 50 random depth-4 traversals measured p50 104.3 ms, p95 106.6 ms and max 227.7 ms; no graph infrastructure is needed. | Yashaswi, 23 Nov 2026 |
+| 9 | Graph store | decided | Keep PostgreSQL as the graph store. On the synthetic 100,000-asset graph, 50 random depth-4 traversals measured p50 103.7 ms, p95 104.7 ms and max 107.6 ms; no graph infrastructure is needed. | Yashaswi, 23 Nov 2026 |
 | 10 | Retention and file storage | decided | Each tenant's uploaded workbooks are stored on a dedicated encrypted local volume and deleted when their connector is removed. Retention periods for other records will be set later. | Yashaswi, 23 Nov 2026 |
 | 11 | What counts as lineage verification | assumed, pending Yashaswi | A run event naming the specific input and output marks that exact flow run_verified; reconciliation is recorded separately as reconciled | Agent assumption, 23 Nov 2026 |
 | 12 | Hub product interface order | open (phase 4) | Data Studio and Semantics first | |

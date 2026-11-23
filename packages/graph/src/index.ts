@@ -48,7 +48,7 @@ export async function writeGraphEvent(client: PoolClient, event: GraphEvent): Pr
   const safe = GraphEventSchema.parse(event);
   await client.query(
     `INSERT INTO graph.events(tenant_id,event_type,asset_id,assertion_id,report_asset_id,safe_payload)
-     VALUES(current_setting('app.tenant_id'),$1,$2,$3,$4,$5::jsonb)`,
+     VALUES(current_setting('app.tenant_id'),$1,$2,$3,$4,$5::jsonb) ON CONFLICT DO NOTHING`,
     [safe.event_type,safe.asset_id ?? null,safe.assertion_id ?? null,safe.report_asset_id ?? null,JSON.stringify(safe.safe_payload)],
   );
 }
@@ -136,14 +136,15 @@ const idPathAssetNames=['SyntheticSQL.Customer.customer_id','SyntheticSnowflake.
 
 async function ensureGraphEvidence(client:PoolClient,input:{tenantId:string;evidenceType:string;safeMetadata:Record<string,unknown>}):Promise<string>{
   const metadata=JSON.stringify(input.safeMetadata);
+  const inserted=await client.query<{evidence_id:string}>(
+    `INSERT INTO graph.evidence(tenant_id,evidence_type,safe_metadata) VALUES($1,$2,$3::jsonb)
+     ON CONFLICT(tenant_id,evidence_type,safe_metadata) WHERE safe_metadata ? 'fixture_key' DO NOTHING RETURNING evidence_id`,
+    [input.tenantId,input.evidenceType,metadata]);
+  if(inserted.rows[0])return inserted.rows[0].evidence_id;
   const existing=await client.query<{evidence_id:string}>(
     'SELECT evidence_id FROM graph.evidence WHERE tenant_id=$1 AND evidence_type=$2 AND safe_metadata=$3::jsonb ORDER BY captured_at,evidence_id LIMIT 1',
     [input.tenantId,input.evidenceType,metadata]);
-  if(existing.rows[0])return existing.rows[0].evidence_id;
-  const inserted=await client.query<{evidence_id:string}>(
-    'INSERT INTO graph.evidence(tenant_id,evidence_type,safe_metadata) VALUES($1,$2,$3::jsonb) RETURNING evidence_id',
-    [input.tenantId,input.evidenceType,metadata]);
-  return inserted.rows[0]!.evidence_id;
+  return existing.rows[0]!.evidence_id;
 }
 
 async function ensureGraphAssertion(client:PoolClient,input:{tenantId:string;relationshipId:string;evidenceMethod:GraphAssertion['evidence_method'];evidenceId:string;confidence:number;explanation:string|null;reviewStatus:GraphAssertion['review_status']}):Promise<string>{
@@ -159,9 +160,19 @@ async function ensureGraphAssertion(client:PoolClient,input:{tenantId:string;rel
   }
   const inserted=await client.query<{assertion_id:string}>(
     `INSERT INTO graph.assertions(tenant_id,relationship_id,evidence_method,evidence_ids,confidence_score,explanation,collector_version,review_status)
-     VALUES($1,$2,$3,ARRAY[$4::uuid],$5,$6,'phase3-golden-v1',$7) RETURNING assertion_id`,
+     VALUES($1,$2,$3,ARRAY[$4::uuid],$5,$6,'phase3-golden-v1',$7)
+     ON CONFLICT(tenant_id,relationship_id,evidence_method,collector_version) WHERE collector_version='phase3-golden-v1' DO NOTHING RETURNING assertion_id`,
     [input.tenantId,input.relationshipId,input.evidenceMethod,input.evidenceId,input.confidence,input.explanation,input.reviewStatus]);
-  return inserted.rows[0]!.assertion_id;
+  if(inserted.rows[0])return inserted.rows[0].assertion_id;
+  const conflicted=await client.query<{assertion_id:string;evidence_ids:string[]}>(
+    `SELECT assertion_id,evidence_ids FROM graph.assertions WHERE tenant_id=$1 AND relationship_id=$2
+     AND evidence_method=$3 AND collector_version='phase3-golden-v1' ORDER BY captured_at,assertion_id LIMIT 1`,
+    [input.tenantId,input.relationshipId,input.evidenceMethod]);
+  const existingAssertion=conflicted.rows[0]!;
+  if(!existingAssertion.evidence_ids.includes(input.evidenceId))await client.query(
+    'UPDATE graph.assertions SET evidence_ids=array_append(evidence_ids,$3::uuid) WHERE tenant_id=$1 AND assertion_id=$2',
+    [input.tenantId,existingAssertion.assertion_id,input.evidenceId]);
+  return existingAssertion.assertion_id;
 }
 
 export async function importGoldenMetadata(pool: Pool, input: ImportGoldenMetadataInput): Promise<{ assets: number; flows: number; reports: number; gaps: number }> {
@@ -231,9 +242,9 @@ export async function importGoldenMetadata(pool: Pool, input: ImportGoldenMetada
     for(const gap of corpus.gaps){
       const ids=gap.between.map((name)=>assetIds.get(name)).filter((id):id is string=>Boolean(id));
       if(ids.length!==gap.between.length)continue;
-      const existing=await client.query<{gap_id:string}>('SELECT gap_id FROM graph.gaps WHERE tenant_id=$1 AND between_asset_ids=$2::uuid[] AND reason=$3 ORDER BY detected_at,gap_id LIMIT 1',[input.tenantId,ids,gap.reason]);
-      const inserted=existing.rows[0]??(await client.query<{gap_id:string}>('INSERT INTO graph.gaps(tenant_id,between_asset_ids,reason) VALUES($1,$2::uuid[],$3) RETURNING gap_id',[input.tenantId,ids,gap.reason])).rows[0]!;
-      gapIds.set(gap.between.join('\0'),inserted.gap_id);gapCount++;
+      const newGap=await client.query<{gap_id:string}>('INSERT INTO graph.gaps(tenant_id,between_asset_ids,reason) VALUES($1,$2::uuid[],$3) ON CONFLICT(tenant_id,between_asset_ids,reason) DO NOTHING RETURNING gap_id',[input.tenantId,ids,gap.reason]);
+      const existing=newGap.rows[0]??(await client.query<{gap_id:string}>('SELECT gap_id FROM graph.gaps WHERE tenant_id=$1 AND between_asset_ids=$2::uuid[] AND reason=$3 ORDER BY detected_at,gap_id LIMIT 1',[input.tenantId,ids,gap.reason])).rows[0]!;
+      gapIds.set(gap.between.join('\0'),existing.gap_id);gapCount++;
     }
     for(const asset of corpus.assets.filter((candidate)=>candidate.kind==='field'&&/\.(customer_id|customer_key)$/.test(candidate.name))){
       const fieldName=asset.name.split('.').at(-1)!;
@@ -267,11 +278,16 @@ export async function importGoldenMetadata(pool: Pool, input: ImportGoldenMetada
         [input.tenantId,impactedAssetId,reportAssetId]);
       if(!existingImpact.rowCount)await writeGraphEvent(client,{event_type:'report_impacted',asset_id:impactedAssetId,report_asset_id:reportAssetId,safe_payload:{report_count:1,reason_code:'synthetic_lineage_change'}});
     }
-    const event:GraphEvent={event_type:'metadata_imported',safe_payload:{fixture_key:input.fixtureKey,asset_count:assetIds.size,tool:fixture.tool}};
-    await writeGraphEvent(client,event);
-    const cursor=await client.query<{event_cursor:string}>("SELECT coalesce(max(event_id),0)::text event_cursor FROM graph.events WHERE tenant_id=$1",[input.tenantId]);
-    const count=await client.query<{asset_count:number}>("SELECT count(*)::int asset_count FROM graph.assets WHERE tenant_id=$1",[input.tenantId]);
-    await client.query('INSERT INTO graph.snapshots(tenant_id,event_cursor,asset_count) VALUES($1,$2,$3)',[input.tenantId,cursor.rows[0]!.event_cursor,count.rows[0]!.asset_count]);
+    const priorImport=await client.query<{event_id:string}>(
+      "SELECT event_id FROM graph.events WHERE tenant_id=$1 AND event_type='metadata_imported' AND safe_payload->>'fixture_key'=$2 LIMIT 1",
+      [input.tenantId,input.fixtureKey]);
+    if(!priorImport.rowCount){
+      const event:GraphEvent={event_type:'metadata_imported',safe_payload:{fixture_key:input.fixtureKey,asset_count:fixture.assets.length,tool:fixture.tool}};
+      await writeGraphEvent(client,event);
+      const cursor=await client.query<{event_cursor:string}>("SELECT coalesce(max(event_id),0)::text event_cursor FROM graph.events WHERE tenant_id=$1",[input.tenantId]);
+      const count=await client.query<{asset_count:number}>("SELECT count(*)::int asset_count FROM graph.assets WHERE tenant_id=$1",[input.tenantId]);
+      await client.query('INSERT INTO graph.snapshots(tenant_id,event_cursor,asset_count) VALUES($1,$2,$3) ON CONFLICT(tenant_id,event_cursor) DO NOTHING',[input.tenantId,cursor.rows[0]!.event_cursor,count.rows[0]!.asset_count]);
+    }
     return {assets:fixture.assets.length,flows:flowCount,reports:fixture.reports.length,gaps:gapCount};
   });
 }

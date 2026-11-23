@@ -16,7 +16,7 @@ Trace a synthetic Power BI metric through Snowflake and dbt to SQL Server, showi
 
 No contract changes, graph database, external vendor connection or credential is in scope. PostgreSQL is the graph store unless the named benchmark fails its target. All tenant graph tables retain history; records are marked inactive/stale, never deleted.
 
-Decision 9 is decided by Yashaswi: keep PostgreSQL as the graph store. The synthetic 100,000-asset depth-4 benchmark measured p95 106.6 ms across 50 random starts, below the five-second threshold. Traversal is breadth-first, querying one frontier at a time and removing previously visited assets before the next level.
+Decision 9 is decided by Yashaswi: keep PostgreSQL as the graph store. The synthetic 100,000-asset depth-4 benchmark measured p95 104.7 ms across 50 random starts, below the five-second threshold. Traversal is breadth-first, querying one frontier at a time and removing previously visited assets before the next level.
 
 ## Routes
 
@@ -83,6 +83,7 @@ Controls are keyboard reachable, labeled and visibly focused (CLAUDE.md §§10�
 | `c6_id_path_confidence_uses_weakest_hop_and_gaps_make_it_incomplete` | C6 rules 10, 13 and acceptance 14 |
 | `c6_scope_excludes_and_list_only_objects_from_profiles_and_graph_assets` | C6 rule 16; CLAUDE.md §3.11 |
 | `c6_dbt_tableau_power_bi_golden_imports_create_typed_assets_events_and_report_links` | C1; C5; C6; connector, safe report link, review/verification/reconciliation, and raw-value privacy acceptance |
+| `c6_importing_the_same_fixture_twice_reuses_connection_and_keeps_fact_counts_unchanged` | C1; C6 fixture connection, asset, relationship, assertion, evidence, event and snapshot idempotency |
 | `c6_metadata_import_owns_only_named_fixture_assets_and_repeats_without_duplicate_facts` | C1; C6 fixture ownership and idempotency |
 | `c1_phase3_graph_tables_are_tenant_scoped_and_forced_rls` | C1 acceptance 4; CLAUDE.md §3.4 |
 | `c5_report_impact_notifications_use_a_typed_safe_notification_kind` | C1; C5; C7 |

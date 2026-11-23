@@ -16,6 +16,49 @@ const migrate=new Pool({connectionString:testUrl('DATABASE_URL_MIGRATE')});
 
 describe('c6 synthetic metadata import',()=>{
   afterAll(async()=>{await app.end();await migrate.end();});
+  it('c6_importing_the_same_fixture_twice_reuses_connection_and_keeps_fact_counts_unchanged',async()=>{
+    const tenantId=`phase3-idempotent-${crypto.randomUUID()}`;
+    await withTenant(migrate,tenantId,async(client)=>{
+      await client.query('INSERT INTO core.tenants(tenant_id,name) VALUES($1,$1)',[tenantId]);
+      await client.query("INSERT INTO core.users(tenant_id,email,password_hash) VALUES($1,$2,$3)",[tenantId,`${tenantId}@synthetic.example`,hashPassword('synthetic-password')]);
+    });
+    const server=await buildServer({pool:app,sessionSecret:'s'.repeat(64),goldenAccounts:[{tenantId,email:`${tenantId}@synthetic.example`}]});
+    try{
+      const login=await server.inject({method:'POST',url:'/api/auth/login',payload:{email:`${tenantId}@synthetic.example`,password:'synthetic-password'}});
+      const cookie=login.headers['set-cookie']!.split(';')[0]!;
+      const importFixture=async()=>{
+        const draft=await server.inject({method:'POST',url:'/api/metadata/connections',headers:{cookie},payload:{sourceId:'golden-powerbi'}});
+        expect(draft.statusCode,draft.body).toBe(201);
+        const connectionId=(draft.json() as {connectionId:string}).connectionId;
+        expect((await server.inject({method:'POST',url:`/api/metadata/connections/${connectionId}/activate`,headers:{cookie}})).statusCode).toBe(200);
+        expect((await server.inject({method:'POST',url:`/api/metadata/import/${connectionId}`,headers:{cookie},payload:{fixtureKey:'power-bi-reports'}})).statusCode).toBe(200);
+        return connectionId;
+      };
+      const firstConnection=await importFixture();
+      const before=await withTenant(migrate,tenantId,async(client)=>client.query<{connections:number;assets:number;relationships:number;assertions:number;evidence:number;events:number;snapshots:number}>(
+        `SELECT (SELECT count(*)::int FROM registry.connections WHERE tenant_id=$1 AND source_ref='golden-powerbi' AND status='active') connections,
+         (SELECT count(*)::int FROM graph.assets WHERE tenant_id=$1) assets,
+         (SELECT count(*)::int FROM graph.relationships WHERE tenant_id=$1) relationships,
+         (SELECT count(*)::int FROM graph.assertions WHERE tenant_id=$1) assertions,
+         (SELECT count(*)::int FROM graph.evidence WHERE tenant_id=$1) evidence,
+         (SELECT count(*)::int FROM graph.events WHERE tenant_id=$1) events,
+         (SELECT count(*)::int FROM graph.snapshots WHERE tenant_id=$1) snapshots`,[tenantId]));
+      const secondConnection=await importFixture();
+      const after=await withTenant(migrate,tenantId,async(client)=>client.query<{connections:number;assets:number;relationships:number;assertions:number;evidence:number;events:number;snapshots:number}>(
+        `SELECT (SELECT count(*)::int FROM registry.connections WHERE tenant_id=$1 AND source_ref='golden-powerbi' AND status='active') connections,
+         (SELECT count(*)::int FROM graph.assets WHERE tenant_id=$1) assets,
+         (SELECT count(*)::int FROM graph.relationships WHERE tenant_id=$1) relationships,
+         (SELECT count(*)::int FROM graph.assertions WHERE tenant_id=$1) assertions,
+         (SELECT count(*)::int FROM graph.evidence WHERE tenant_id=$1) evidence,
+         (SELECT count(*)::int FROM graph.events WHERE tenant_id=$1) events,
+         (SELECT count(*)::int FROM graph.snapshots WHERE tenant_id=$1) snapshots`,[tenantId]));
+      expect(secondConnection).toBe(firstConnection);
+      expect(before.rows[0]!.relationships).toBeGreaterThan(0);
+      expect(before.rows[0]!.assertions).toBeGreaterThan(0);
+      expect(before.rows[0]!.evidence).toBeGreaterThan(0);
+      expect(after.rows[0]).toEqual(before.rows[0]);
+    }finally{await server.close();}
+  });
   it('c6_dbt_tableau_power_bi_golden_imports_create_typed_assets_events_and_report_links',async()=>{
     const tenantId=`phase3-tool-${crypto.randomUUID()}`;
     await withTenant(migrate,tenantId,async(client)=>{
@@ -36,7 +79,7 @@ describe('c6 synthetic metadata import',()=>{
       const login=await server.inject({method:'POST',url:'/api/auth/login',payload:{email:`${tenantId}@synthetic.example`,password:'synthetic-password'}});
       const cookie=login.headers['set-cookie']!.split(';')[0]!;
       const draft=await server.inject({method:'POST',url:'/api/metadata/connections',headers:{cookie},payload:{sourceId:'golden-dbt'}});
-      expect(draft.statusCode).toBe(201);
+      expect(draft.statusCode,draft.body).toBe(201);
       const connectionId=(draft.json() as {connectionId:string}).connectionId;
       expect((await server.inject({method:'POST',url:`/api/metadata/connections/${connectionId}/activate`,headers:{cookie}})).statusCode).toBe(200);
       const imported=await server.inject({method:'POST',url:`/api/metadata/import/${connectionId}`,headers:{cookie},payload:{fixtureKey:'dbt-manifest'}});
@@ -138,7 +181,7 @@ describe('c6 synthetic metadata import',()=>{
        (SELECT count(*)::int FROM core.notifications WHERE tenant_id=$1 AND notification_type='report_impact') impacts,
        (SELECT count(*)::int FROM graph.id_path_steps WHERE tenant_id=$1) id_path_steps`,[tenantId]);
     });
-    expect(persisted.rows[0]).toMatchObject({datasets:expect.any(Number),reports:expect.any(Number),flows:expect.any(Number),assertions:expect.any(Number),events:4});
+    expect(persisted.rows[0]).toMatchObject({datasets:expect.any(Number),reports:expect.any(Number),flows:expect.any(Number),assertions:expect.any(Number),events:3});
     expect(persisted.rows[0]!.datasets).toBeGreaterThan(0);
     expect(persisted.rows[0]!.reports).toBeGreaterThan(0);
     expect(persisted.rows[0]!.id_fields).toBe(3);
