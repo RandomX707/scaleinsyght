@@ -34,6 +34,7 @@
     "@scaleinsyght/artifacts": "workspace:*",
     "@scaleinsyght/classification": "workspace:*",
     "@scaleinsyght/connectors": "workspace:*",
+    "@scaleinsyght/customer-gateway": "workspace:*",
     "@scaleinsyght/contracts": "workspace:*",
     "@scaleinsyght/db": "workspace:*",
     "@scaleinsyght/graph": "workspace:*",

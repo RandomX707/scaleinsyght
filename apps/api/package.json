@@ -13,6 +13,7 @@
     "@scaleinsyght/artifacts": "workspace:*",
     "@scaleinsyght/auth-oidc": "workspace:*",
     "@scaleinsyght/connectors": "workspace:*",
+    "@scaleinsyght/customer-gateway": "workspace:*",
     "@scaleinsyght/db": "workspace:*",
     "@scaleinsyght/policy": "workspace:*",
     "@scaleinsyght/profiler": "workspace:*",

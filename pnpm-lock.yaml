@@ -196,6 +196,9 @@ importers:
       '@scaleinsyght/contracts':
         specifier: workspace:*
         version: link:packages/contracts
+      '@scaleinsyght/customer-gateway':
+        specifier: workspace:*
+        version: link:packages/customer-gateway
       '@scaleinsyght/db':
         specifier: workspace:*
         version: link:packages/db
@@ -390,6 +393,12 @@ importers:
       zod:
         specifier: ^4.1.12
         version: 4.6.7
+
+  packages/customer-gateway:
+    dependencies:
+      '@scaleinsyght/contracts':
+        specifier: workspace:*
+        version: link:../contracts
 
   packages/db:
     dependencies:

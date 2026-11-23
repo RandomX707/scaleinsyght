@@ -7,6 +7,7 @@
     { "path": "./packages/registry" },
     { "path": "./packages/runner" },
     { "path": "./packages/connectors" },
+    { "path": "./packages/customer-gateway" },
     { "path": "./packages/classification" },
     { "path": "./packages/artifacts" },
     { "path": "./packages/profiler" },
