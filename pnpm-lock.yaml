@@ -199,6 +199,9 @@ importers:
       '@scaleinsyght/graph':
         specifier: workspace:*
         version: link:packages/graph
+      '@scaleinsyght/hub-adapters':
+        specifier: workspace:*
+        version: link:packages/hub-adapters
       '@scaleinsyght/policy':
         specifier: workspace:*
         version: link:packages/policy
@@ -376,6 +379,8 @@ importers:
       '@scaleinsyght/db':
         specifier: workspace:*
         version: link:../db
+
+  packages/hub-adapters: {}
 
   packages/policy:
     dependencies:

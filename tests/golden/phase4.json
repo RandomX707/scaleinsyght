@@ -1,0 +1,38 @@
+{
+  "tenant": {
+    "id": "phase4-hub-golden",
+    "name": "Phase 4 Hub synthetic tenant"
+  },
+  "adapters": [
+    {
+      "product": "data_studio",
+      "version": 1,
+      "fixtureKey": "data-studio-v1",
+      "connected": true,
+      "capabilities": ["flowspec.handoff", "flowspec.status"]
+    },
+    {
+      "product": "semantics",
+      "version": 1,
+      "fixtureKey": "semantics-v1",
+      "connected": true,
+      "capabilities": ["metric.list", "metric.query"]
+    }
+  ],
+  "metrics": [
+    {
+      "id": "active_customers",
+      "name": "Active customers",
+      "description": "Synthetic count of active customers.",
+      "dimensions": ["region"],
+      "unit": "customers",
+      "value": 1284,
+      "certified": true,
+      "fixtureKey": "active-customers-v1",
+      "sourceAsset": "golden.customer_summary.active_customers"
+    }
+  ],
+  "dataStudio": {
+    "accepted": true
+  }
+}

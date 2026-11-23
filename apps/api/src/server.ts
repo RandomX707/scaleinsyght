@@ -8,11 +8,14 @@ import { EncryptedArtifactStore } from '@scaleinsyght/artifacts';
 import { getNotifications, markNotificationRead, readConnectionScope, readWorkbook, retireConnection, runGoldenProfile, saveConnectionScope, storeWorkbook } from '@scaleinsyght/profiler';
 import { applyPersonalContext, createAnalyticPlan, startAnalyticRun, submitFeedback, type StructuredAnswer } from '@scaleinsyght/analytic';
 import { eventsAfter } from '@scaleinsyght/runner';
-import { AnalyticPlanSchema, hashPlan } from '@scaleinsyght/contracts';
+import { AnalyticPlanSchema, FlowSpecSchema, hashPlan } from '@scaleinsyght/contracts';
 import { compareGraphSnapshots, getIdentifierPath, getImpactRadius, importGoldenMetadata, listGraphAssertions, listGraphAssets, listGraphSnapshots, listIdentifierFields, listReports, queryLineage, reconcileAssertion, reviewGraphAssertion, traceIdentifier, verifyAssertionFromRun } from '@scaleinsyght/graph';
+import { createGoldenHubAdapters, getGoldenHubFixtures, type FlowSpecDelivery, type SemanticsAdapter } from '@scaleinsyght/hub-adapters';
+import { ClaimSchema, EvidenceRefSchema } from '@scaleinsyght/contracts';
+import { authorise } from '@scaleinsyght/policy';
 
 export interface GoldenAccount { tenantId: string; email: string; }
-export interface ServerOptions { pool: Pool; sessionSecret: string; goldenAccounts: GoldenAccount[]; artifactStore?: EncryptedArtifactStore; }
+export interface ServerOptions { pool: Pool; sessionSecret: string; goldenAccounts: GoldenAccount[]; artifactStore?: EncryptedArtifactStore; hubAdapters?: { semantics: SemanticsAdapter; dataStudio: { product: 'data_studio'; version: number; connected: boolean; capabilities: readonly string[]; deliverFlowSpec(key: string, spec: FlowSpecDelivery): Promise<unknown>; lookupFlowSpec(key: string): Promise<unknown>; } }; }
 const sessionLifetimeMs = 8 * 60 * 60 * 1000;
 export function hashPassword(password: string, salt = randomBytes(16).toString('hex')): string {
   return `${salt}:${scryptSync(password,salt,64).toString('hex')}`;
@@ -28,8 +31,201 @@ function sign(value:string,secret:string):string{return createHmac('sha256',secr
 export async function buildServer(options:ServerOptions):Promise<FastifyInstance>{
   if(options.sessionSecret.length<32)throw new Error('SESSION_SECRET must contain at least 32 characters');
   const app=Fastify({logger:false,bodyLimit:25*1024*1024});
+  const hubAdapters=options.hubAdapters??createGoldenHubAdapters(getGoldenHubFixtures());
   app.addContentTypeParser('application/octet-stream',{parseAs:'buffer'},(_request,payload,done)=>done(null,payload));
   app.get('/api/health',async()=>({status:'ok'}));
+  app.get('/api/flowspecs',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const result=await withTenant(options.pool,current.tenantId,async(client)=>client.query(
+      `SELECT f.flowspec_id AS "flowspecId",f.owner_id AS "ownerId",f.latest_version AS "latestVersion",v.subject_hash AS "subjectHash",a.status AS "approvalStatus",a.expires_at AS "expiresAt"
+       FROM hub.flowspecs f LEFT JOIN hub.flowspec_versions v ON v.tenant_id=f.tenant_id AND v.flowspec_id=f.flowspec_id AND v.version=f.latest_version
+       LEFT JOIN hub.flowspec_approvals a ON a.tenant_id=v.tenant_id AND a.flowspec_id=v.flowspec_id AND a.version=v.version AND a.subject_hash=v.subject_hash
+       WHERE f.tenant_id=$1 ORDER BY f.created_at DESC`,[current.tenantId]));
+    return reply.send({flowspecs:result.rows});
+  });
+  app.post('/api/flowspecs',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const parsed=FlowSpecSchema.safeParse(request.body);if(!parsed.success)return reply.code(400).send({error:'invalid_flowspec',details:parsed.error.issues.map(({path,message})=>({path,message}))});
+    const flowspecId=randomUUID();const payload=parsed.data;const subjectHash=createHash('sha256').update(JSON.stringify(payload)).digest('hex');const sourceSnapshotHash=createHash('sha256').update(JSON.stringify([...payload.sourceSnapshotIds].sort())).digest('hex');
+    await withTenant(options.pool,current.tenantId,async(client)=>{
+      await client.query('INSERT INTO hub.flowspecs(tenant_id,flowspec_id,owner_id,latest_version) VALUES($1,$2,$3,1)',[current.tenantId,flowspecId,current.userId]);
+      await client.query(`INSERT INTO hub.flowspec_versions(tenant_id,flowspec_id,version,payload,subject_hash,source_snapshot_ids,policy_version,created_by)
+        VALUES($1,$2,1,$3::jsonb,$4,$5::jsonb,'phase4-v1',$6)`,[current.tenantId,flowspecId,JSON.stringify(payload),subjectHash,JSON.stringify(payload.sourceSnapshotIds),current.userId]);
+      await client.query(`INSERT INTO hub.flowspec_approvals(tenant_id,flowspec_id,version,subject_hash,source_snapshot_hash,policy_version,requested_by,status,expires_at)
+        VALUES($1,$2,1,$3,$4,'phase4-v1',$5,'pending',clock_timestamp()+interval '7 days')`,[current.tenantId,flowspecId,subjectHash,sourceSnapshotHash,current.userId]);
+    });
+    return reply.code(201).send({flowspecId,version:1,subjectHash,status:'pending_approval'});
+  });
+  app.get<{Params:{id:string}}>('/api/flowspecs/:id',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const result=await withTenant(options.pool,current.tenantId,async(client)=>client.query(
+      `SELECT f.flowspec_id AS "flowspecId",f.owner_id AS "ownerId",v.version,v.payload,v.subject_hash AS "subjectHash",v.source_snapshot_ids AS "sourceSnapshotIds",v.policy_version AS "policyVersion",a.status AS "approvalStatus",a.approved_by AS "approvedBy",a.expires_at AS "expiresAt",h.handoff_id AS "handoffId",h.status AS "handoffStatus",h.receiver_ref AS "receiverRef"
+       FROM hub.flowspecs f JOIN hub.flowspec_versions v USING(tenant_id,flowspec_id) LEFT JOIN hub.flowspec_approvals a USING(tenant_id,flowspec_id,version,subject_hash)
+       LEFT JOIN LATERAL (SELECT handoff_id,status,receiver_ref FROM hub.handoffs WHERE tenant_id=v.tenant_id AND flowspec_id=v.flowspec_id AND version=v.version ORDER BY created_at DESC LIMIT 1) h ON true
+       WHERE f.tenant_id=$1 AND f.flowspec_id=$2 ORDER BY v.version`,[current.tenantId,request.params.id]));
+    if(!result.rowCount)return reply.code(404).send({error:'flowspec_not_found'});return reply.send({versions:result.rows});
+  });
+  app.post<{Params:{id:string}}>('/api/flowspecs/:id/versions',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const parsed=FlowSpecSchema.safeParse(request.body);if(!parsed.success)return reply.code(400).send({error:'invalid_flowspec'});
+    const payload=parsed.data;const subjectHash=createHash('sha256').update(JSON.stringify(payload)).digest('hex');const sourceSnapshotHash=createHash('sha256').update(JSON.stringify([...payload.sourceSnapshotIds].sort())).digest('hex');
+    const created=await withTenant(options.pool,current.tenantId,async(client)=>{
+      const owner=await client.query<{owner_id:string;latest_version:number}>('SELECT owner_id,latest_version FROM hub.flowspecs WHERE tenant_id=$1 AND flowspec_id=$2 FOR UPDATE',[current.tenantId,request.params.id]);
+      const row=owner.rows[0];if(!row)return {status:'missing' as const};if(row.owner_id!==current.userId)return {status:'forbidden' as const};
+      const version=row.latest_version+1;
+      await client.query('INSERT INTO hub.flowspec_versions(tenant_id,flowspec_id,version,payload,subject_hash,source_snapshot_ids,policy_version,created_by) VALUES($1,$2,$3,$4::jsonb,$5,$6::jsonb,\'phase4-v1\',$7)',[current.tenantId,request.params.id,version,JSON.stringify(payload),subjectHash,JSON.stringify(payload.sourceSnapshotIds),current.userId]);
+      await client.query('UPDATE hub.flowspecs SET latest_version=$3 WHERE tenant_id=$1 AND flowspec_id=$2',[current.tenantId,request.params.id,version]);
+      await client.query(`INSERT INTO hub.flowspec_approvals(tenant_id,flowspec_id,version,subject_hash,source_snapshot_hash,policy_version,requested_by,status,expires_at) VALUES($1,$2,$3,$4,$5,'phase4-v1',$6,'pending',clock_timestamp()+interval '7 days')`,[current.tenantId,request.params.id,version,subjectHash,sourceSnapshotHash,current.userId]);
+      return {status:'created' as const,version};
+    });
+    if(created.status==='missing')return reply.code(404).send({error:'flowspec_not_found'});if(created.status==='forbidden')return reply.code(403).send({error:'flowspec_owner_required'});
+    return reply.code(201).send({flowspecId:request.params.id,version:created.version,subjectHash,status:'pending_approval'});
+  });
+  app.post<{Params:{id:string}}>('/api/flowspecs/:id/approve',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const version=Number((request.body as {version?:unknown})?.version);if(!Number.isInteger(version)||version<1)return reply.code(400).send({error:'invalid_version'});
+    const outcome=await withTenant(options.pool,current.tenantId,async(client)=>{
+      const result=await client.query<{requested_by:string;expires_at:Date;status:string}>('SELECT requested_by,expires_at,status FROM hub.flowspec_approvals WHERE tenant_id=$1 AND flowspec_id=$2 AND version=$3 FOR UPDATE',[current.tenantId,request.params.id,version]);
+      const approval=result.rows[0];if(!approval)return 'missing';if(approval.requested_by===current.userId)return 'self_approval';if(approval.status!=='pending'||approval.expires_at.getTime()<=Date.now())return 'not_pending';
+      const approved=await client.query<{approval_id:string;subject_hash:string}>('UPDATE hub.flowspec_approvals SET approved_by=$4,status=\'approved\',decided_at=clock_timestamp() WHERE tenant_id=$1 AND flowspec_id=$2 AND version=$3 RETURNING approval_id,subject_hash',[current.tenantId,request.params.id,version,current.userId]);
+      const key=createHash('sha256').update(`${current.tenantId}:${request.params.id}:${version}:${approved.rows[0]!.subject_hash}`).digest('hex');
+      await client.query(`INSERT INTO hub.handoff_grants(tenant_id,approval_id,flowspec_id,version,subject_hash,expires_at,idempotency_key)
+        SELECT tenant_id,approval_id,flowspec_id,version,subject_hash,expires_at,$4 FROM hub.flowspec_approvals WHERE tenant_id=$1 AND approval_id=$2 AND flowspec_id=$3`,[current.tenantId,approved.rows[0]!.approval_id,request.params.id,key]);return 'approved';
+    });
+    if(outcome==='missing')return reply.code(404).send({error:'approval_not_found'});if(outcome==='self_approval')return reply.code(403).send({error:'second_member_required'});if(outcome!=='approved')return reply.code(409).send({error:'approval_not_pending'});return reply.send({flowspecId:request.params.id,version,status:'approved'});
+  });
+  app.post<{Params:{id:string}}>('/api/flowspecs/:id/handoff',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const studio=await withTenant(options.pool,current.tenantId,(client)=>client.query<{connected:boolean}>("SELECT connected FROM hub.adapters WHERE tenant_id=$1 AND product='data_studio'",[current.tenantId]));
+    if(!studio.rows[0]?.connected||!hubAdapters.dataStudio.connected)return reply.code(503).send({error:'hub_adapter_disconnected'});
+    const version=Number((request.body as {version?:unknown})?.version);if(!Number.isInteger(version)||version<1)return reply.code(400).send({error:'invalid_version'});
+    const delivery=await withTenant(options.pool,current.tenantId,async(client)=>{
+      const existing=await client.query<{handoff_id:string;idempotency_key:string;payload_hash:string;status:string;receiver_ref:string|null}>('SELECT handoff_id,idempotency_key,payload_hash,status,receiver_ref FROM hub.handoffs WHERE tenant_id=$1 AND flowspec_id=$2 AND version=$3',[current.tenantId,request.params.id,version]);
+      if(existing.rows[0])return {kind:'existing' as const,row:existing.rows[0],...(existing.rows[0].status==='pending'||existing.rows[0].status==='unknown'?{delivery:{flowspecId:request.params.id,version,payloadHash:existing.rows[0].payload_hash}}:{})};
+      const approved=await client.query<{payload:Record<string,unknown>;subject_hash:string;grant_id:string;idempotency_key:string;expires_at:Date;consumed_at:Date|null}>(
+        `SELECT v.payload,v.subject_hash,g.grant_id,g.idempotency_key,g.expires_at,g.consumed_at FROM hub.flowspec_versions v
+         JOIN hub.flowspec_approvals a USING(tenant_id,flowspec_id,version,subject_hash) JOIN hub.handoff_grants g USING(tenant_id,approval_id,flowspec_id,version,subject_hash)
+         WHERE v.tenant_id=$1 AND v.flowspec_id=$2 AND v.version=$3 AND a.status='approved' AND a.expires_at>clock_timestamp() FOR UPDATE OF g`,[current.tenantId,request.params.id,version]);
+      const row=approved.rows[0];if(!row)return {kind:'no_grant' as const};
+      if(row.expires_at.getTime()<=Date.now())return {kind:'expired' as const};
+      if(row.consumed_at)return {kind:'consumed' as const};
+      const runId=randomUUID();await client.query("INSERT INTO runs.runs(tenant_id,run_id,principal_id,state) VALUES($1,$2,$3,'RUNNING')",[current.tenantId,runId,current.userId]);
+      const decision=await client.query<{decision_id:string}>("INSERT INTO runs.authz_decisions(tenant_id,run_id,principal_id,capability_id,outcome,policy_version,reasons) VALUES($1,$2,$3,'flowspec.handoff','allow','phase4-v1','[\"approved_single_use_grant\"]') RETURNING decision_id",[current.tenantId,runId,current.userId]);
+      const payloadHash=createHash('sha256').update(JSON.stringify(row.payload)).digest('hex');
+      const outbox=await client.query<{message_id:string}>("INSERT INTO runs.outbox(tenant_id,run_id,destination,payload) VALUES($1,$2,'data_studio',$3::jsonb) RETURNING message_id",[current.tenantId,runId,JSON.stringify({flowspecId:request.params.id,version,payloadHash})]);
+      const handoff=await client.query<{handoff_id:string}>('INSERT INTO hub.handoffs(tenant_id,grant_id,flowspec_id,version,run_id,outbox_message_id,idempotency_key,payload_hash,status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,\'pending\') RETURNING handoff_id',[current.tenantId,row.grant_id,request.params.id,version,runId,outbox.rows[0]!.message_id,row.idempotency_key,payloadHash]);
+      await client.query('UPDATE hub.handoff_grants SET consumed_at=clock_timestamp() WHERE tenant_id=$1 AND grant_id=$2',[current.tenantId,row.grant_id]);
+      await client.query("INSERT INTO runs.events(tenant_id,run_id,sequence,event_type,decision_id,safe_payload) VALUES($1,$2,1,'handoff_intent_created',$3,$4::jsonb)",[current.tenantId,runId,decision.rows[0]!.decision_id,JSON.stringify({flowspec_id:request.params.id,version,status:'pending',payload_hash:payloadHash})]);
+      return {kind:'created' as const,row:{handoff_id:handoff.rows[0]!.handoff_id,idempotency_key:row.idempotency_key,payload_hash:payloadHash,status:'pending',receiver_ref:null},delivery:{flowspecId:request.params.id,version,payloadHash}};
+    });
+    if(delivery.kind==='no_grant')return reply.code(403).send({error:'approved_unexpired_grant_required'});if(delivery.kind==='expired')return reply.code(409).send({error:'handoff_grant_expired'});if(delivery.kind==='consumed')return reply.code(409).send({error:'handoff_grant_consumed'});
+    const row=delivery.row;
+    if(row.status==='confirmed'||row.status==='reconciled')return reply.send({handoffId:row.handoff_id,status:row.status,accepted:true,receiverRef:row.receiver_ref});
+    const lookup=await hubAdapters.dataStudio.lookupFlowSpec(row.idempotency_key) as {status?:string;receiverRef?:string}|null;
+    let receipt=lookup;
+    if(!receipt&&delivery.kind==='created')receipt=await hubAdapters.dataStudio.deliverFlowSpec(row.idempotency_key,delivery.delivery) as {status?:string;receiverRef?:string};
+    if(!receipt&&delivery.kind==='existing'&&delivery.delivery)receipt=await hubAdapters.dataStudio.deliverFlowSpec(row.idempotency_key,delivery.delivery) as {status?:string;receiverRef?:string};
+    if(!receipt)return reply.code(202).send({handoffId:row.handoff_id,status:'unknown',accepted:false});
+    if(receipt.status!=='accepted')return reply.code(202).send({handoffId:row.handoff_id,status:'unknown',accepted:false});
+    await withTenant(options.pool,current.tenantId,async(client)=>{
+      const confirmed=await client.query<{run_id:string|null}>('UPDATE hub.handoffs SET status=\'confirmed\',receiver_ref=$3,confirmed_at=clock_timestamp() WHERE tenant_id=$1 AND handoff_id=$2 AND status IN (\'pending\',\'unknown\') RETURNING run_id',[current.tenantId,row.handoff_id,receipt!.receiverRef??`synthetic:${row.idempotency_key}`]);
+      if(confirmed.rows[0]?.run_id){const run=await client.query<{state_version:number}>("UPDATE runs.runs SET state='COMPLETED',state_version=state_version+1,updated_at=clock_timestamp() WHERE tenant_id=$1 AND run_id=$2 RETURNING state_version",[current.tenantId,confirmed.rows[0].run_id]);const decision=await client.query<{decision_id:string}>('SELECT decision_id FROM runs.authz_decisions WHERE tenant_id=$1 AND run_id=$2 ORDER BY created_at DESC LIMIT 1',[current.tenantId,confirmed.rows[0].run_id]);await client.query("INSERT INTO runs.events(tenant_id,run_id,sequence,event_type,decision_id,safe_payload) VALUES($1,$2,2,'run_terminal',$3,$4::jsonb)",[current.tenantId,confirmed.rows[0].run_id,decision.rows[0]!.decision_id,JSON.stringify({state:'COMPLETED',state_version:run.rows[0]!.state_version,receiver_status:'confirmed'})]);}
+      await client.query("UPDATE runs.outbox SET sent_at=clock_timestamp() WHERE tenant_id=$1 AND message_id=(SELECT outbox_message_id FROM hub.handoffs WHERE tenant_id=$1 AND handoff_id=$2)",[current.tenantId,row.handoff_id]);
+    });
+    return reply.send({handoffId:row.handoff_id,status:'confirmed',accepted:true,receiverRef:receipt.receiverRef??`synthetic:${row.idempotency_key}`});
+  });
+  app.get<{Params:{id:string;handoffId:string}}>('/api/flowspecs/:id/handoff/:handoffId',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const found=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{handoff_id:string;idempotency_key:string;payload_hash:string;status:string;receiver_ref:string|null}>('SELECT handoff_id,idempotency_key,payload_hash,status,receiver_ref FROM hub.handoffs WHERE tenant_id=$1 AND flowspec_id=$2 AND handoff_id=$3',[current.tenantId,request.params.id,request.params.handoffId]));
+    const row=found.rows[0];if(!row)return reply.code(404).send({error:'handoff_not_found'});if(row.status==='confirmed'||row.status==='reconciled')return reply.send({handoffId:row.handoff_id,status:row.status,accepted:true,receiverRef:row.receiver_ref});
+    const receipt=await hubAdapters.dataStudio.lookupFlowSpec(row.idempotency_key) as {status?:string;receiverRef?:string}|null;
+    if(receipt?.status==='accepted'){await withTenant(options.pool,current.tenantId,async(client)=>{const reconciled=await client.query<{run_id:string|null}>('UPDATE hub.handoffs SET status=\'reconciled\',receiver_ref=$3,confirmed_at=clock_timestamp() WHERE tenant_id=$1 AND handoff_id=$2 AND status IN (\'pending\',\'unknown\') RETURNING run_id',[current.tenantId,row.handoff_id,receipt.receiverRef??`synthetic:${row.idempotency_key}`]);if(reconciled.rows[0]?.run_id){const run=await client.query<{state_version:number}>("UPDATE runs.runs SET state='COMPLETED',state_version=state_version+1,updated_at=clock_timestamp() WHERE tenant_id=$1 AND run_id=$2 RETURNING state_version",[current.tenantId,reconciled.rows[0].run_id]);const decision=await client.query<{decision_id:string}>('SELECT decision_id FROM runs.authz_decisions WHERE tenant_id=$1 AND run_id=$2 ORDER BY created_at DESC LIMIT 1',[current.tenantId,reconciled.rows[0].run_id]);await client.query("INSERT INTO runs.events(tenant_id,run_id,sequence,event_type,decision_id,safe_payload) VALUES($1,$2,2,'run_terminal',$3,$4::jsonb)",[current.tenantId,reconciled.rows[0].run_id,decision.rows[0]!.decision_id,JSON.stringify({state:'COMPLETED',state_version:run.rows[0]!.state_version,receiver_status:'reconciled'})]);}});return reply.send({handoffId:row.handoff_id,status:'reconciled',accepted:true,receiverRef:receipt.receiverRef});}
+    await withTenant(options.pool,current.tenantId,(client)=>client.query("UPDATE hub.handoffs SET status='unknown' WHERE tenant_id=$1 AND handoff_id=$2 AND status='pending'",[current.tenantId,row.handoff_id]));return reply.code(202).send({handoffId:row.handoff_id,status:'unknown',accepted:false});
+  });
+  app.get('/api/hub/adapters',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const adapters=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{product:string;connected:boolean;version:number;capabilities:string[];updated_at:Date}>(
+      `SELECT a.product,a.connected,a.current_version AS version,v.capabilities,a.updated_at FROM hub.adapters a JOIN hub.adapter_versions v ON v.tenant_id=a.tenant_id AND v.product=a.product AND v.version=a.current_version WHERE a.tenant_id=$1 ORDER BY a.product`,[current.tenantId]));
+    return reply.send({adapters:adapters.rows.map(({updated_at,...adapter})=>({...adapter,updatedAt:updated_at.toISOString()}))});
+  });
+  app.post<{Params:{product:string}}>('/api/hub/adapters/:product/connect',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    if(!['data_studio','semantics'].includes(request.params.product))return reply.code(404).send({error:'hub_adapter_not_found'});
+    const changed=await withTenant(options.pool,current.tenantId,async(client)=>client.query('UPDATE hub.adapters SET connected=true,updated_at=clock_timestamp() WHERE tenant_id=$1 AND product=$2 RETURNING product,connected,current_version AS version',[current.tenantId,request.params.product]));
+    if(!changed.rowCount)return reply.code(404).send({error:'hub_adapter_not_found'});return reply.send({adapter:changed.rows[0]});
+  });
+  app.post<{Params:{product:string}}>('/api/hub/adapters/:product/disconnect',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    if(!['data_studio','semantics'].includes(request.params.product))return reply.code(404).send({error:'hub_adapter_not_found'});
+    const changed=await withTenant(options.pool,current.tenantId,async(client)=>client.query('UPDATE hub.adapters SET connected=false,updated_at=clock_timestamp() WHERE tenant_id=$1 AND product=$2 RETURNING product,connected,current_version AS version',[current.tenantId,request.params.product]));
+    if(!changed.rowCount)return reply.code(404).send({error:'hub_adapter_not_found'});return reply.send({adapter:changed.rows[0]});
+  });
+  app.get('/api/semantics/metrics',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const result=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{metric_id:string;name:string;description:string;dimensions:string[];unit:string;certified:boolean;adapter_version:number}>(
+      `SELECT m.metric_id,m.name,m.description,m.dimensions,m.unit,m.certified,m.adapter_version FROM hub.certified_metrics m
+       JOIN hub.adapters a ON a.tenant_id=m.tenant_id AND a.product=m.adapter_product AND a.connected AND a.current_version=m.adapter_version
+       WHERE m.tenant_id=$1 ORDER BY m.name`,[current.tenantId]));
+    return reply.send({metrics:result.rows.map((metric)=>({metricId:metric.metric_id,name:metric.name,description:metric.description,dimensions:metric.dimensions,unit:metric.unit,certified:metric.certified,adapterVersion:metric.adapter_version}))});
+  });
+  app.post<{Params:{metricId:string}}>('/api/semantics/metrics/:metricId/query',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    if(!/^[a-z][a-z0-9_]{0,99}$/.test(request.params.metricId))return reply.code(400).send({error:'invalid_metric_id'});
+    const metric=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{metric_id:string;adapter_id:string;adapter_version:number;name:string;unit:string;source_asset:string;adapter_connected:boolean;adapter_current_version:number}>(
+      `SELECT m.metric_id,a.adapter_id,m.adapter_version,m.name,m.unit,m.source_asset,a.connected AS adapter_connected,a.current_version AS adapter_current_version
+       FROM hub.certified_metrics m JOIN hub.adapters a ON a.tenant_id=m.tenant_id AND a.product=m.adapter_product
+       WHERE m.tenant_id=$1 AND m.metric_id=$2 AND m.certified`,[current.tenantId,request.params.metricId]));
+    const selected=metric.rows[0];if(!selected)return reply.code(404).send({error:'certified_metric_not_found'});
+    if(!selected.adapter_connected||!hubAdapters.semantics.connected)return reply.code(503).send({error:'hub_adapter_disconnected'});
+    if(selected.adapter_current_version!==selected.adapter_version||selected.adapter_current_version!==hubAdapters.semantics.version)return reply.code(409).send({error:'semantic_adapter_version_changed'});
+    const decision=await authorise(options.pool,{principal:{tenant_id:current.tenantId,principal_id:current.userId,kind:'user',roles:[],groups:[],attributes:{}},capability_id:'semantics.metric.read',resources:[selected.metric_id],purpose:'certified_metric_query',environment:'synthetic_golden'});
+    if(decision.outcome!=='allow')return reply.code(403).send({error:'metric_not_authorized'});
+    let answerResult;
+    try{answerResult=await hubAdapters.semantics.queryCertifiedMetric(selected.metric_id);}
+    catch(error){if(error instanceof Error&&error.message==='hub_adapter_disconnected')return reply.code(503).send({error:error.message});if(error instanceof Error&&error.message==='unknown_certified_metric')return reply.code(404).send({error:'certified_metric_not_found'});throw error;}
+    const runId=randomUUID();const claimId=randomUUID();const evidenceId=randomUUID();
+    const evidence=EvidenceRefSchema.parse({evidence_id:evidenceId,kind:'api_call',source_id:selected.adapter_id,asset_ids:[],locator:`hub://semantics/metrics/${selected.metric_id}`,content_hash:answerResult.evidence.contentHash,captured_at:new Date().toISOString(),collector_version:`semantics-v${answerResult.adapterVersion}`,redacted_summary:`Certified synthetic metric ${selected.metric_id} returned by Semantics`});
+    const claim=ClaimSchema.parse({claim_id:claimId,kind:'metric',statement:`Certified metric ${answerResult.name}: ${answerResult.value} ${answerResult.unit}`,evidence_ids:[evidence.evidence_id]});
+    const answer={metric:answerResult.metricId,bySource:[{sourceId:selected.adapter_id,connectorType:'semantics',value:answerResult.value}],claims:[claim],evidence:[evidence],trust:{groupCount:1,sourceCount:1,joins:['group']},metricDefinition:{name:answerResult.name,unit:answerResult.unit,certified:answerResult.certified,adapter:'semantics',adapterVersion:answerResult.adapterVersion}};
+    try{
+      const committed=await withTenant(options.pool,current.tenantId,async(client)=>{
+        const currentMetric=await client.query<{connected:boolean;current_version:number;adapter_version:number;entitled:boolean;capability_enabled:boolean}>(
+          `SELECT a.connected,a.current_version,m.adapter_version,
+             EXISTS(SELECT 1 FROM core.entitlements e WHERE e.tenant_id=$1 AND e.principal_id=$2 AND e.capability_id='semantics.metric.read' AND e.allowed AND (e.resource_id IS NULL OR e.resource_id=m.metric_id)) AS entitled,
+             EXISTS(SELECT 1 FROM registry.capabilities c WHERE c.tenant_id=$1 AND c.capability_id='semantics.metric.read' AND c.effect_class='READ' AND c.enabled AND c.active_version=1) AS capability_enabled
+           FROM hub.certified_metrics m JOIN hub.adapters a ON a.tenant_id=m.tenant_id AND a.product=m.adapter_product WHERE m.tenant_id=$1 AND m.metric_id=$3 FOR SHARE OF a,m`,[current.tenantId,current.userId,selected.metric_id]);
+        const row=currentMetric.rows[0];if(!row||!row.connected||row.current_version!==row.adapter_version)throw new Error('semantic_adapter_version_changed');
+        if(!row.capability_enabled||!row.entitled){
+          await client.query(`INSERT INTO runs.authz_decisions(tenant_id,principal_id,capability_id,outcome,policy_version,reasons)
+            VALUES($1,$2,'semantics.metric.read','deny','phase4-v1','["authorization_revoked_before_execution"]')`,[current.tenantId,current.userId]);
+          return false;
+        }
+        await client.query(`INSERT INTO runs.runs(tenant_id,run_id,principal_id,state) VALUES($1,$2,$3,'CREATED')`,[current.tenantId,runId,current.userId]);
+        const authz=await client.query<{decision_id:string}>(`INSERT INTO runs.authz_decisions(tenant_id,run_id,principal_id,capability_id,outcome,policy_version,reasons)
+          VALUES($1,$2,$3,'semantics.metric.read','allow','phase4-v1','["certified_metric_entitled"]') RETURNING decision_id`,[current.tenantId,runId,current.userId]);
+        let sequence=0;
+        const event=async(type:string,payload:Record<string,unknown>,decisionId?:string)=>{
+          sequence+=1;await client.query(`INSERT INTO runs.events(tenant_id,run_id,sequence,event_type,decision_id,safe_payload) VALUES($1,$2,$3,$4,$5,$6::jsonb)`,[current.tenantId,runId,sequence,type,decisionId??authz.rows[0]!.decision_id,JSON.stringify(payload)]);
+        };
+        await event('run_created',{state:'CREATED',state_version:0});
+        for(const [state,type] of [['PLANNING','run_state_changed'],['PLAN_VALIDATED','plan_validated'],['RUNNING','run_state_changed']] as const){
+          const next=await client.query<{state_version:number}>(`UPDATE runs.runs SET state=$3,state_version=state_version+1,updated_at=clock_timestamp() WHERE tenant_id=$1 AND run_id=$2 RETURNING state_version`,[current.tenantId,runId,state]);
+          await event(type,{state,state_version:next.rows[0]!.state_version,count:1,capability_id:'semantics.metric.read',capability_version:1});
+        }
+        await client.query(`INSERT INTO hub.metric_results(tenant_id,run_id,metric_id,adapter_version,result_value,unit,evidence_metadata)
+          VALUES($1,$2,$3,$4,$5,$6,$7::jsonb)`,[current.tenantId,runId,selected.metric_id,answerResult.adapterVersion,answerResult.value,answerResult.unit,JSON.stringify(evidence)]);
+        await client.query(`INSERT INTO runs.analytic_answers(tenant_id,run_id,status,answer) VALUES($1,$2,'COMPLETED',$3::jsonb)`,[current.tenantId,runId,JSON.stringify(answer)]);
+        await event('evidence_added',{result_ref:`golden://semantics/${runId}/${selected.metric_id}`,result_classification:'AGGREGATE',capability_id:'semantics.metric.read',capability_version:1});
+        for(const state of ['FINALISING','COMPLETED'] as const){
+          const next=await client.query<{state_version:number}>(`UPDATE runs.runs SET state=$3,state_version=state_version+1,updated_at=clock_timestamp() WHERE tenant_id=$1 AND run_id=$2 RETURNING state_version`,[current.tenantId,runId,state]);
+          await event(state==='COMPLETED'?'run_terminal':'run_state_changed',{state,state_version:next.rows[0]!.state_version});
+        }
+        return true;
+      });
+      if(!committed)return reply.code(403).send({error:'metric_not_authorized'});
+    }catch(error){const code=error instanceof Error?error.message:'certified_metric_query_failed';if(code==='metric_not_authorized')return reply.code(403).send({error:code});if(code==='semantic_adapter_version_changed')return reply.code(409).send({error:code});throw error;}
+    return reply.code(201).send({runId,state:'COMPLETED',trustRoute:'certified_metric',answer});
+  });
   app.get('/api/metadata/sources',async(request,reply)=>{
     if(!await authenticatedSession(request))return reply.code(401).send({error:'unauthorized'});
     return reply.send({sources:[
@@ -242,8 +438,8 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
   });
   app.get<{Params:{runId:string}}>('/api/runs/:runId',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
-    const result=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{run_id:string;state:string;state_version:number;plan:Record<string,unknown>;plan_hash:string;answer:Record<string,unknown>|null}>(
-      `SELECT r.run_id,r.state,r.state_version,p.plan,p.plan_hash,a.answer FROM runs.runs r JOIN runs.analytic_plans p USING(tenant_id,run_id)
+    const result=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{run_id:string;state:string;state_version:number;plan:Record<string,unknown>|null;plan_hash:string|null;answer:Record<string,unknown>|null}>(
+      `SELECT r.run_id,r.state,r.state_version,p.plan,p.plan_hash,a.answer FROM runs.runs r LEFT JOIN runs.analytic_plans p USING(tenant_id,run_id)
        LEFT JOIN runs.analytic_answers a USING(tenant_id,run_id)
        WHERE r.tenant_id=$1 AND r.principal_id=$2 AND r.run_id=$3`,[current.tenantId,current.userId,request.params.runId]));
     if(!result.rowCount)return reply.code(404).send({error:'run_not_found'});
