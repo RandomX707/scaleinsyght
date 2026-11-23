@@ -28,7 +28,7 @@ async function sampleActivity(tenantId:string):Promise<Array<{pid:number;state:s
 
 describe('phase 3 graph traversal benchmark',()=>{
   afterAll(async()=>{await app.end();await migrate.end();await monitor.end();});
-  it('c6_postgres_depth_four_traversal_on_100k_assets_meets_five_second_p95',async()=>{
+  it('c6_postgres_depth_four_traversal_on_100k_assets_meets_one_second_p95_regression_guard',async()=>{
     const tenantId=`graph-bench-${crypto.randomUUID()}`;
     const userId=await withTenant(migrate,tenantId,async(client)=>{
       await client.query('INSERT INTO core.tenants(tenant_id,name) VALUES($1,$1)',[tenantId]);
@@ -121,6 +121,6 @@ describe('phase 3 graph traversal benchmark',()=>{
     console.info(`50 random depth-four traversals: p50=${p50.toFixed(1)} ms, p95=${p95.toFixed(1)} ms, max=${maximum.toFixed(1)} ms`);
     console.info(`pg_stat_activity samples: ${activeSamples.length}; lock waits=${activeSamples.filter(row=>row.wait_event_type==='Lock').length}`);
     if(activeSamples.some(row=>row.wait_event_type==='Lock'))console.info(`Lock-wait sample: ${JSON.stringify(activeSamples.find(row=>row.wait_event_type==='Lock'))}`);
-    expect(p95).toBeLessThan(5000);
+    expect(p95).toBeLessThan(1000);
   },300_000);
 });
