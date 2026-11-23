@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 export type HubProduct = 'data_studio' | 'semantics';
 
 export interface GoldenHubFixture {
+  tenant: { id: string; name: string };
   adapters: Array<{
     product: HubProduct;
     version: number;

@@ -1,4 +1,8 @@
 {
+  "tenant": {
+    "id": "phase4-hub-golden",
+    "name": "Phase 4 Hub synthetic tenant"
+  },
   "adapters": [
     {
       "product": "data_studio",
