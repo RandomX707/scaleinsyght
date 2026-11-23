@@ -8,6 +8,10 @@
   },
   "scripts": {
     "db:setup": "tsx scripts/db-setup.ts",
+    "db:setup:sample": "tsx scripts/setup-sample-source.ts",
+    "dbt:sample": "tsx scripts/run-sample-dbt.ts",
+    "models:list": "tsx scripts/list-models.ts",
+    "test:live": "tsx scripts/test-live.ts",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:migrate:test": "tsx scripts/migrate.ts --test",
     "db:seed:golden": "tsx scripts/seed-golden.ts",
@@ -18,7 +22,7 @@
     "test:sqlparse": "node scripts/sqlparse-test.mjs",
     "test": "vitest run tests/unit",
     "test:integration": "pnpm db:test:reset && pnpm db:migrate:test && vitest run tests/integration",
-    "test:contracts": "pnpm db:test:reset && pnpm db:migrate:test && vitest run tests/contracts",
+    "test:contracts": "pnpm db:test:reset && pnpm db:migrate:test && pnpm db:setup:sample && pnpm dbt:sample && vitest run tests/contracts",
     "test:e2e": "pnpm db:test:reset && pnpm db:migrate:test && pnpm db:seed:golden -- --test && playwright test",
     "lint": "eslint .",
     "typecheck": "tsc -b"
@@ -33,6 +37,7 @@
     "@scaleinsyght/db": "workspace:*",
     "@scaleinsyght/graph": "workspace:*",
     "@scaleinsyght/hub-adapters": "workspace:*",
+    "@scaleinsyght/model-gateway": "workspace:*",
     "@scaleinsyght/reports": "workspace:*",
     "@scaleinsyght/policy": "workspace:*",
     "@scaleinsyght/profiler": "workspace:*",

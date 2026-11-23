@@ -5,7 +5,7 @@ import './phase1.css';
 import './phase3.css';
 import './phase5.css';
 
-type Usage = { active_users: number; active_connectors: { by_type: Record<string, number> } };
+type Usage = { active_users: number; active_connectors: { by_type: Record<string, number> }; model_usage:{input_tokens:number;output_tokens:number;cost_usd:number;daily_cost_cap_usd:number;daily_token_cap:number} };
 type NavGroups = { workspace: boolean; platform: boolean };
 type Connection = { connectionId: string; connectorType: string; status: string; agentId: string | null; lastJobState: string | null };
 type Source = { id: string; type: string; name: string };
@@ -279,7 +279,7 @@ function App() {
   async function markRead(id: string) { await api(`/api/notifications/${id}/read`, { method: 'POST' }); await reloadNotifications(); }
   const currentConnection = new URLSearchParams(path.split('?')[1] ?? '').get('connection') ?? path.split('/')[2];
   let page: React.ReactNode;
-  if (path.startsWith('/usage')) page = <section><h1>Usage</h1><p>Counts are derived from activity events for this billing period.</p><div className="cards"><article><span>Active users</span><strong>{usage?.active_users ?? 0}</strong></article>{Object.entries(usage?.active_connectors.by_type ?? {}).map(([type, count]) => <article key={type}><span>Active {type.replaceAll('_', ' ')} connectors</span><strong>{count}</strong></article>)}</div></section>;
+  if (path.startsWith('/usage')) page = <section><h1>Usage</h1><p>Counts are derived from activity events for this billing period.</p><div className="cards"><article><span>Active users</span><strong>{usage?.active_users ?? 0}</strong></article>{Object.entries(usage?.active_connectors.by_type ?? {}).map(([type, count]) => <article key={type}><span>Active {type.replaceAll('_', ' ')} connectors</span><strong>{count}</strong></article>)}<article><span>Model tokens (billing period)</span><strong>{(usage?.model_usage.input_tokens??0)+(usage?.model_usage.output_tokens??0)}</strong></article><article><span>Model cost (billing period)</span><strong>USD {(usage?.model_usage.cost_usd??0).toFixed(4)}</strong></article><article><span>Daily model cap</span><strong>USD {(usage?.model_usage.daily_cost_cap_usd??2).toFixed(2)}</strong><p>{usage?.model_usage.daily_token_cap.toLocaleString()??'100,000'} tokens</p></article></div></section>;
   else if (path.startsWith('/connectors')) page = <ConnectorsPage connections={connections} reload={reloadConnections} navigate={navigate} />;
   else if (path.startsWith('/profile/')) page = <ProfilePage connectionId={currentConnection ?? ''} navigate={navigate} />;
   else if (path.startsWith('/dictionary')) page = currentConnection ? <DictionaryPage connectionId={currentConnection} /> : <section><h1>Dictionary</h1><p>Choose a connector to browse its Dictionary.</p>{connections.filter(connection => connection.status === 'active').map(connection => <button key={connection.connectionId} onClick={() => navigate(`/dictionary?connection=${connection.connectionId}`)}>{connection.connectorType.replaceAll('_', ' ')}</button>)}</section>;

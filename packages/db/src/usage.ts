@@ -7,6 +7,7 @@ export interface UsageRecord {
   active_users: number;
   active_connectors: { by_type: Record<string, number> };
   computed_from_event_ids_range: { first: string | null; last: string | null };
+  model_usage: { input_tokens:number;output_tokens:number;cost_usd:number;daily_cost_cap_usd:number;daily_token_cap:number };
 }
 
 export async function getUsage(
@@ -46,6 +47,9 @@ export async function getUsage(
        FROM core.activity_events WHERE tenant_id = $1 AND occurred_at < $2`,
       [tenantId, to],
     );
+    const modelUsage=await client.query<{input_tokens:string;output_tokens:string;cost_usd:string}>(
+      `SELECT COALESCE(sum(input_tokens),0)::text AS input_tokens,COALESCE(sum(output_tokens),0)::text AS output_tokens,COALESCE(sum(cost_usd),0)::text AS cost_usd
+       FROM core.model_usage WHERE tenant_id=$1 AND created_at >= $2 AND created_at < $3`,[tenantId,from,to]);
 
     return {
       tenant_id: tenantId,
@@ -53,6 +57,7 @@ export async function getUsage(
       active_users: Number(users.rows[0]?.count ?? 0),
       active_connectors: { by_type: Object.fromEntries(connectors.rows.map((row) => [row.connector_type, Number(row.count)])) },
       computed_from_event_ids_range: { first: range.rows[0]?.first ?? null, last: range.rows[0]?.last ?? null },
+      model_usage:{input_tokens:Number(modelUsage.rows[0]?.input_tokens??0),output_tokens:Number(modelUsage.rows[0]?.output_tokens??0),cost_usd:Number(modelUsage.rows[0]?.cost_usd??0),daily_cost_cap_usd:Number(process.env.MODEL_DAILY_COST_CAP_USD??2),daily_token_cap:Number(process.env.MODEL_DAILY_TOKEN_CAP??100_000)},
     };
   });
 }
