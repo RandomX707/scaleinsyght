@@ -48,7 +48,8 @@ export interface ReadOnlyConnector {
   discover(input: { mode: 'profile' | 'nightly'; scope?: ConnectorScope }): Promise<DiscoveryResult>;
   profile(assetKey: string, scope?: ConnectorScope, mode?: 'profile' | 'nightly'): Promise<ObjectProfile>;
   queryAggregate?(assetKey: string, metric: 'count'): Promise<{ metric: 'count'; value: number }>;
-  structuralReferences?(): Promise<Array<{from:string;to:string;fromColumn:string;toColumn:string}>>;
+  structuralReferences?(): Promise<Array<{from:string;to:string;fromColumn:string;toColumn:string;evidenceMethod?:'declared'|'inferred'}>>;
+  routines?():Promise<Array<{qualifiedName:string;kind:'function'|'procedure';definition:string}>>;
   close?(): Promise<void>;
 }
 

@@ -12,7 +12,7 @@ type RoleSafety = {
   sequence_write: boolean;
   inherited_roles: boolean;
 };
-export type PostgresStructuralReference = { from: string; to: string; fromColumn: string; toColumn: string };
+export type PostgresStructuralReference = { from: string; to: string; fromColumn: string; toColumn: string; evidenceMethod?: 'declared'|'inferred' };
 const quoteIdentifier=(value:string)=>`"${value.replaceAll('"','""')}"`;
 const assetKey=(qualifiedName:string)=>createHash('sha256').update(`postgres\0${qualifiedName}`).digest('hex');
 
@@ -93,7 +93,7 @@ export class PostgresConnector implements ReadOnlyConnector {
     const [qualifiedName,table]=found;if(scope?.exclude?.includes(qualifiedName)||scope?.listOnly?.includes(qualifiedName)||(scope?.profile?.length&&!scope.profile.includes(qualifiedName)))throw new Error('object_out_of_scope');
     const columns=await this.columns(table);const count=await this.pool.query<{count:string}>(`SELECT count(*)::text AS count FROM ${quoteIdentifier(table.schema_name)}.${quoteIdentifier(table.table_name)}`);
     const structural=columns.map(({column_name,data_type,is_nullable,comment})=>({column_name,data_type,is_nullable,comment}));
-    return {assetKey:key,qualifiedName,version:createHash('sha256').update(JSON.stringify(structural)).digest('hex'),rowCount:Number(count.rows[0]!.count),columns:columns.map(column=>({name:column.column_name,dataType:column.data_type,isNullable:column.is_nullable==='YES',sensitivityTags:column.comment?.includes('sensitivity:identifier')?['identifier']:[],statistics:{nullRate:null,distinctCount:null}}))};
+    return {assetKey:key,qualifiedName,version:createHash('sha256').update(JSON.stringify(structural)).digest('hex'),rowCount:Number(count.rows[0]!.count),columns:columns.map(column=>({name:column.column_name,dataType:column.data_type,isNullable:column.is_nullable==='YES',sensitivityTags:column.comment?.match(/sensitivity:([a-z_]+)/g)?.map(tag=>tag.slice('sensitivity:'.length))??[],statistics:{nullRate:null,distinctCount:null}}))};
   }
 
   async structuralReferences():Promise<PostgresStructuralReference[]>{
@@ -113,7 +113,36 @@ export class PostgresConnector implements ReadOnlyConnector {
       AND EXISTS(SELECT 1 FROM information_schema.tables visible_target WHERE visible_target.table_schema=target_ns.nspname AND visible_target.table_name=target_table.relname)
       ORDER BY local_ns.nspname,local_table.relname,local_key.position LIMIT $1`,[this.maxRows+1]);
     if(result.rows.length>this.maxRows)throw new Error('postgres_connector_result_limit_exceeded');
-    return result.rows;
+    const references=result.rows;
+    const inferredCandidates=await this.pool.query<{from:string;to:string;fromColumn:string;toColumn:string}>(`SELECT DISTINCT sn.nspname||'.'||st.relname AS "from",tn.nspname||'.'||tt.relname AS "to",sc.column_name AS "fromColumn",tc.column_name AS "toColumn"
+      FROM information_schema.columns sc
+      JOIN pg_namespace sn ON sn.nspname=sc.table_schema JOIN pg_class st ON st.relnamespace=sn.oid AND st.relname=sc.table_name AND st.relkind IN ('r','p')
+      JOIN information_schema.columns tc ON tc.column_name=sc.column_name AND tc.data_type=sc.data_type
+      JOIN pg_namespace tn ON tn.nspname=tc.table_schema JOIN pg_class tt ON tt.relnamespace=tn.oid AND tt.relname=tc.table_name AND tt.relkind IN ('r','p')
+      JOIN pg_constraint pk ON pk.conrelid=tt.oid AND pk.contype='p'
+      JOIN pg_attribute ta ON ta.attrelid=tt.oid AND ta.attname=tc.column_name AND ta.attnum=ANY(pk.conkey)
+      WHERE sc.table_schema NOT IN ('pg_catalog','information_schema') AND tc.table_schema NOT IN ('pg_catalog','information_schema')
+        AND sc.table_schema NOT LIKE 'pg_toast%' AND tc.table_schema NOT LIKE 'pg_toast%' AND st.oid<>tt.oid
+      ORDER BY 1,2,3 LIMIT $1`,[this.maxRows]);
+    const declared=new Set(references.map(item=>`${item.from}\0${item.fromColumn}\0${item.to}\0${item.toColumn}`));
+    for(const candidate of inferredCandidates.rows){
+      if(declared.has(`${candidate.from}\0${candidate.fromColumn}\0${candidate.to}\0${candidate.toColumn}`))continue;
+      const [fromSchema,fromTable]=candidate.from.split('.');const [toSchema,toTable]=candidate.to.split('.');if(!fromSchema||!fromTable||!toSchema||!toTable)continue;
+      const counts=await this.pool.query<{source_count:string;matched_count:string}>(`SELECT count(src.${quoteIdentifier(candidate.fromColumn)})::text AS source_count,count(dst.${quoteIdentifier(candidate.toColumn)})::text AS matched_count FROM ${quoteIdentifier(fromSchema)}.${quoteIdentifier(fromTable)} src LEFT JOIN ${quoteIdentifier(toSchema)}.${quoteIdentifier(toTable)} dst ON src.${quoteIdentifier(candidate.fromColumn)}=dst.${quoteIdentifier(candidate.toColumn)}`);
+      const sourceCount=Number(counts.rows[0]?.source_count??0);const matchedCount=Number(counts.rows[0]?.matched_count??0);
+      if(sourceCount>0&&matchedCount/sourceCount>=0.98)references.push({...candidate,evidenceMethod:'inferred'});
+      if(references.length>=this.maxRows)throw new Error('postgres_connector_result_limit_exceeded');
+    }
+    return references;
+  }
+
+  async routines():Promise<Array<{qualifiedName:string;kind:'function'|'procedure';definition:string}>>{
+    const result=await this.pool.query<{qualified_name:string;kind:'function'|'procedure';definition:string}>(`SELECT n.nspname||'.'||p.proname||'('||pg_get_function_identity_arguments(p.oid)||')' AS qualified_name,
+      CASE WHEN p.prokind='p' THEN 'procedure' ELSE 'function' END AS kind,pg_get_functiondef(p.oid) AS definition
+      FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_toast%'
+      AND p.prokind IN ('f','p') ORDER BY n.nspname,p.proname LIMIT $1`,[this.maxRows+1]);
+    if(result.rows.length>this.maxRows)throw new Error('postgres_connector_result_limit_exceeded');
+    return result.rows.map(row=>({qualifiedName:row.qualified_name,kind:row.kind,definition:row.definition}));
   }
 
   async queryAggregate(key:string,metric:'count'):Promise<{metric:'count';value:number}>{
