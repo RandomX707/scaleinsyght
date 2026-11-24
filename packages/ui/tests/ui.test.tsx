@@ -1,7 +1,7 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { Badge, Button, Card, Collapsible, EmptyState, Input, Logo, Modal, PageHeader, PoweredBy, Select, Table, Tabs, Textarea, Toast } from '../src/index.js';
+import { Badge, Button, Card, Collapsible, EmptyState, FileInput, Input, Logo, Modal, PageHeader, PoweredBy, Select, Table, Tabs, Textarea, Toast } from '../src/index.js';
 import { prototypeTokens } from '../src/tokens.js';
 
 describe('prototype-aligned shared UI', () => {
@@ -24,7 +24,7 @@ describe('prototype-aligned shared UI', () => {
       <Logo />
       <PoweredBy />
       <Card><Button variant="primary">Save</Button><Button variant="secondary">Cancel</Button><Button variant="ghost">More</Button></Card>
-      <label>Email<Input aria-label="Email" /></label><label>Details<Textarea aria-label="Details" /></label><label>Source<Select aria-label="Source"><option>Riverside</option></Select></label>
+      <label>Email<Input aria-label="Email" /></label><label>Details<Textarea aria-label="Details" /></label><label>Source<Select aria-label="Source"><option>Riverside</option></Select></label><label>Dictionary file<FileInput label="Dictionary file" accept=".csv,.xlsx" onChange={() => undefined} /></label>
       <Tabs label="Sections" items={[{ id: 'one', label: 'One' }, { id: 'two', label: 'Two' }]} selected="one" onSelect={() => undefined} />
       <Badge tone="good">Ready</Badge><Table headers={['Name']} rows={[["Riverside"]]} />
       <EmptyState title="No reports" description="Reports explain decisions." action={<Button>Connect a source</Button>} />
@@ -40,5 +40,9 @@ describe('prototype-aligned shared UI', () => {
     expect(markup).toContain('Email');
     expect(markup).toContain('Details');
     expect(markup).toContain('Source');
+    expect(markup).toContain('ui-file-input__native');
+    expect(markup).toContain('Choose file');
+    expect(markup).toContain('ui-file-input__native');
+    expect(markup).toContain('Choose file');
   });
 });

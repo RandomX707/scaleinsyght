@@ -66,17 +66,24 @@ function validatePlanGraph(plan: AnalyticPlan): void {
 }
 
 async function validateIntentAssets(client:import('pg').PoolClient,sourceId:string,intent:QueryIntent):Promise<void>{
-  const tables=intent.kind==='join_aggregate'?[intent.leftTable,intent.rightTable]:[intent.table];
+  const tables=intent.kind==='join_aggregate'||intent.kind==='grouped_join'?[intent.leftTable,intent.rightTable]:[intent.table];
   const found=await client.query<{qualified_name:string}>('SELECT qualified_name FROM graph.assets WHERE tenant_id=$1 AND source_id=$2 AND asset_type=\'dataset\' AND active AND qualified_name=ANY($3::text[])',[await client.query("SELECT current_setting('app.tenant_id') AS tenant_id").then(result=>result.rows[0]!.tenant_id),sourceId,tables]);
   if(found.rowCount!==new Set(tables).size)throw new Error('analytic_query_asset_not_found');
   const requiredColumns:string[]=[];
   if(intent.kind==='filtered_count')requiredColumns.push(`${intent.table}.${intent.column}`);
-  if(intent.kind==='group_by'){requiredColumns.push(`${intent.table}.${intent.groupBy}`);if(intent.aggregate.operation==='sum')requiredColumns.push(`${intent.table}.${intent.aggregate.column}`);}
-  if(intent.kind==='join_aggregate'){requiredColumns.push(`${intent.leftTable}.${intent.leftColumn}`,`${intent.rightTable}.${intent.rightColumn}`);if(intent.aggregate.operation==='sum')requiredColumns.push(`${intent.leftTable}.${intent.aggregate.column}`);}
+  if(intent.kind==='group_by')requiredColumns.push(`${intent.table}.${intent.groupBy}`);
+  if(intent.kind==='group_by'&&intent.aggregate.operation==='sum')requiredColumns.push(`${intent.table}.${intent.aggregate.column}`);
+  if(intent.kind==='average_count_by')requiredColumns.push(`${intent.table}.${intent.entityColumn}`,`${intent.table}.${intent.groupBy}`);
+  if(intent.kind==='join_aggregate'||intent.kind==='grouped_join'){
+    requiredColumns.push(`${intent.leftTable}.${intent.leftColumn}`,`${intent.rightTable}.${intent.rightColumn}`);
+    if(intent.kind==='grouped_join')requiredColumns.push(`${intent.groupByTable==='left'?intent.leftTable:intent.rightTable}.${intent.groupBy}`);
+    if(intent.aggregate.operation==='sum')requiredColumns.push(`${intent.leftTable}.${intent.aggregate.column}`);
+    for(const filter of intent.filters??[])requiredColumns.push(`${filter.table==='left'?intent.leftTable:filter.table==='right'?intent.rightTable:filter.table}.${filter.column}`);
+  }
   if(intent.kind==='compare_aggregates'&&intent.aggregate.operation==='sum')requiredColumns.push(`${intent.table}.${intent.aggregate.column}`);
   if(requiredColumns.length){const columns=await client.query<{qualified_name:string}>('SELECT qualified_name FROM graph.assets WHERE tenant_id=current_setting(\'app.tenant_id\') AND source_id=$1 AND asset_type=\'field\' AND active AND qualified_name=ANY($2::text[])',[sourceId,requiredColumns]);if(columns.rowCount!==new Set(requiredColumns).size)throw new Error('analytic_query_column_not_found');}
-  if(intent.kind==='join_aggregate'){
-    const join=await client.query(`SELECT 1 FROM graph.assets sourceField JOIN graph.relationships r ON r.tenant_id=sourceField.tenant_id AND r.from_asset_id=sourceField.asset_id AND r.relationship_type='REFERENCES' JOIN graph.assets targetField ON targetField.tenant_id=r.tenant_id AND targetField.asset_id=r.to_asset_id JOIN graph.assertions a ON a.tenant_id=r.tenant_id AND a.relationship_id=r.relationship_id WHERE sourceField.tenant_id=current_setting('app.tenant_id') AND sourceField.source_id=$1 AND targetField.source_id=$1 AND sourceField.qualified_name=$2 AND targetField.qualified_name=$3 LIMIT 1`,[sourceId,`${intent.leftTable}.${intent.leftColumn}`,`${intent.rightTable}.${intent.rightColumn}`]);
+  if(intent.kind==='join_aggregate'||intent.kind==='grouped_join'){
+    const join=await client.query(`SELECT 1 FROM graph.assets sourceField JOIN graph.relationships r ON r.tenant_id=sourceField.tenant_id AND r.from_asset_id=sourceField.asset_id AND r.relationship_type='REFERENCES' JOIN graph.assets targetField ON targetField.tenant_id=r.tenant_id AND targetField.asset_id=r.to_asset_id JOIN graph.assertions a ON a.tenant_id=r.tenant_id AND a.relationship_id=r.relationship_id WHERE sourceField.tenant_id=current_setting('app.tenant_id') AND sourceField.source_id=$1 AND targetField.source_id=$1 AND sourceField.qualified_name=$2 AND targetField.qualified_name=$3 AND (a.evidence_method='declared' OR (a.evidence_method='inferred' AND a.confidence_score>0.90)) LIMIT 1`,[sourceId,`${intent.leftTable}.${intent.leftColumn}`,`${intent.rightTable}.${intent.rightColumn}`]);
     if(!join.rowCount)throw new Error('analytic_query_join_unasserted');
   }
 }

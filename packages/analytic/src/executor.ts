@@ -8,12 +8,13 @@ export interface StructuredResult {
   groupId: string;
   metric: string;
   value: number;
+  rows?: Array<Record<string,unknown>>;
   claims: Claim[];
   evidence: EvidenceRef[];
 }
 export interface StructuredAnswer {
   metric: string;
-  bySource: Array<{ sourceId: string; connectorType: string; value: number }>;
+  bySource: Array<{ sourceId: string; connectorType: string; value: number; rows?: Array<Record<string,unknown>> }>;
   claims: Claim[];
   evidence: EvidenceRef[];
   trust: { groupCount: number; sourceCount: number; joins: Array<'group' | 'cross_group'> };
@@ -34,7 +35,7 @@ export function collateGroupResults(results: StructuredResult[]): StructuredAnsw
   }
   return {
     metric: results[0]!.metric,
-    bySource: results.map(({ sourceId, connectorType, value }) => ({ sourceId, connectorType, value })),
+    bySource: results.map(({ sourceId, connectorType, value, rows }) => ({ sourceId, connectorType, value, ...(rows?{rows}:{}) })),
     claims, evidence,
     trust: { groupCount: groups.size, sourceCount: results.length, joins: groups.size > 1 ? ['group', 'cross_group'] : ['group'] },
   };

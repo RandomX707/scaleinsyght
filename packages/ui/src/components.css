@@ -16,6 +16,10 @@
 .ui-page-header h1 { margin: 0; font-size: 22px; line-height: 1.25; font-weight: 700; }
 .ui-page-header p { margin: 5px 0 0; color: var(--muted); }
 .ui-input,.ui-select,.ui-textarea { width: 100%; min-height: 38px; border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; color: var(--ink); background: var(--surface); font: inherit; }
+.ui-file-input { display: flex; align-items: center; gap: 10px; }
+.ui-file-input__native { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; clip-path: inset(50%); border: 0; }
+.ui-file-input__native:focus-visible + .ui-button { outline: 2px solid var(--primary); outline-offset: 2px; }
+.ui-file-input > span { color: var(--muted); font-weight: 400; }
 .ui-textarea { min-height: 88px; resize: vertical; }
 .ui-field { display: flex; flex-direction: column; align-items: stretch; gap: 4px; color: var(--muted); font-size: 12px; font-weight: 600; }
 .ui-field--inline { flex-direction: row; align-items: center; }

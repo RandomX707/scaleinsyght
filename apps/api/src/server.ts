@@ -806,7 +806,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
       const candidates=sources.rows;
       const plannerInput=priorTurns.length?`${priorTurns.map(turn=>`${turn.role}: ${turn.content}`).join('\n')}\nuser: ${question}`:question;
       const planned=options.testAnalyticPlanner?await options.testAnalyticPlanner(plannerInput,candidates.length):null;
-      let selected=candidates;let intents:QueryIntent[]|undefined;
+      let selected=candidates;let intents:QueryIntent[]|undefined;let plannerProvenance:{model:string;inputTokens:number;outputTokens:number}|undefined;
       if(planned){
         if(!planned.length||planned.some(item=>!Number.isInteger(item.sourceIndex)||item.sourceIndex<0||item.sourceIndex>=candidates.length)||new Set(planned.map(item=>item.sourceIndex)).size!==planned.length)throw new Error('analytic_query_intent_invalid');
         selected=planned.map(item=>candidates[item.sourceIndex]!);intents=planned.map(item=>parseQueryIntent(item.intent));
@@ -816,9 +816,11 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
           LEFT JOIN LATERAL(SELECT jsonb_agg(jsonb_build_object('name',f.qualified_name,'data_type',p.data_type,'sensitivity_tags',p.sensitivity_tags) ORDER BY f.qualified_name) AS columns FROM graph.relationships r JOIN graph.assets f ON f.tenant_id=r.tenant_id AND f.asset_id=r.to_asset_id LEFT JOIN LATERAL(SELECT data_type,sensitivity_tags FROM profiler.field_profiles WHERE tenant_id=f.tenant_id AND asset_id=f.asset_id ORDER BY profile_version DESC LIMIT 1)p ON true WHERE r.tenant_id=c.tenant_id AND r.from_asset_id=d.asset_id AND r.relationship_type='CONTAINS') fields ON true
           WHERE c.tenant_id=$1 AND c.connection_id=ANY($2::uuid[]) GROUP BY c.connection_id`,[current.tenantId,candidates.map(row=>row.source_id)]));
         const catalogById=new Map(catalogue.rows.map(row=>[row.source_id,row.assets]));
-        const metadata={classification:'METADATA_STRUCTURAL' as const,structural:{sources:candidates.map((row,index)=>({index,name:row.display_name||row.connector_type,type:row.connector_type,assets:catalogById.get(row.source_id)??[]}))},descriptive:{},statistical:{},sensitivityTags:[]};
-        const prompt=`Translate the current user request and recent conversation into a validated typed query intent, never SQL. Use only the supplied source indexes, tables, columns, and relationship metadata. The current user question is authoritative; earlier turns resolve references such as “them” or “and in SQL Server?”. Do not answer a different question. Current question: ${question}\nRecent conversation: ${priorTurns.map(turn=>`${turn.role}: ${turn.content}`).join('\n')}`;
+        const relationships=await withTenant(options.pool,current.tenantId,client=>client.query<{source_index:number;from_name:string;to_name:string;evidence_method:string;confidence_score:number}>(`SELECT array_position($2::uuid[],sourceField.source_id)::integer-1 AS source_index,sourceField.qualified_name AS from_name,targetField.qualified_name AS to_name,a.evidence_method,a.confidence_score FROM graph.assets sourceField JOIN graph.relationships r ON r.tenant_id=sourceField.tenant_id AND r.from_asset_id=sourceField.asset_id AND r.relationship_type='REFERENCES' JOIN graph.assets targetField ON targetField.tenant_id=r.tenant_id AND targetField.asset_id=r.to_asset_id JOIN graph.assertions a ON a.tenant_id=r.tenant_id AND a.relationship_id=r.relationship_id WHERE r.tenant_id=$1 AND sourceField.source_id=ANY($2::uuid[]) AND targetField.source_id=sourceField.source_id AND (a.evidence_method='declared' OR (a.evidence_method='inferred' AND a.confidence_score>0.90)) ORDER BY 1,2,3`,[current.tenantId,candidates.map(row=>row.source_id)]));
+        const metadata={classification:'METADATA_STRUCTURAL' as const,structural:{sources:candidates.map((row,index)=>({index,name:row.display_name||row.connector_type,type:row.connector_type,assets:catalogById.get(row.source_id)??[]})),relationships:relationships.rows},descriptive:{},statistical:{},sensitivityTags:[]};
+        const prompt=`Translate the current user request and recent conversation into one or more validated typed query intents, never SQL. Use only supplied source indexes, exact qualified table and column names, and asserted relationships. Each intent has one source_index. Do not include a source unless the current question needs it. Supported shapes: {kind:'count',table}; {kind:'filtered_count',table,column,operator:'eq|neq|gt|gte|lt|lte|is_not_null',value?}; {kind:'group_by',table,groupBy,aggregate:{operation:'count'|'sum',column?}}; {kind:'join_aggregate',leftTable,rightTable,leftColumn,rightColumn,aggregate,filters:[{table,column,operator,value?}]}; {kind:'grouped_join',leftTable,rightTable,leftColumn,rightColumn,groupByTable:'left'|'right',groupBy,groupKey?,aggregate,filters,order:'asc'|'desc',limit}; {kind:'average_count_by',table,entityColumn,groupBy,limit?}; {kind:'compare_aggregates',table,aggregate}. Filters and joins must match the exact metadata. Do not infer column values or answer by choosing an unrelated source. The current question is authoritative; earlier turns resolve references such as “them” or “and in SQL Server?”. If the typed shapes cannot answer the exact question, return {"intents":[]} and do not answer a different question. Return only JSON shaped {"intents":[{"source_index":0,"intent":{...}}]}. Current question: ${question}\nRecent conversation: ${priorTurns.map(turn=>`${turn.role}: ${turn.content}`).join('\n')}`;
         const completion=await new OpenAIModelGateway(options.pool).complete({tenantId:current.tenantId,alias:'cheap',question:prompt,metadata,maxOutputTokens:500});
+        plannerProvenance={model:completion.model,inputTokens:completion.inputTokens,outputTokens:completion.outputTokens};
         const decoded=completion.text.trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'');let parsed:unknown;try{parsed=JSON.parse(decoded);}catch{throw new Error('analytic_query_intent_invalid');}
         if(!parsed||typeof parsed!=='object'||!('intents'in parsed)||!Array.isArray((parsed as {intents:unknown}).intents))throw new Error('analytic_query_intent_invalid');
         const modelIntents=(parsed as {intents:Array<{source_index?:unknown;intent?:unknown}>}).intents;if(!modelIntents.length||modelIntents.length>candidates.length)throw new Error('analytic_query_intent_invalid');
@@ -828,6 +830,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
       const plan=await createAnalyticPlan({question,runId:randomUUID(),sources:selected.map(row=>({sourceId:row.source_id,agentId:row.agent_id,groupId:row.group_id,groupVersion:row.group_version})),...(intents?{queryIntents:intents}:{})});
       const run=await startAnalyticRun(options.pool,{tenantId:current.tenantId,principalId:current.userId,plan,conversationId});
       await withTenant(options.pool,current.tenantId,async(client)=>{
+        if(plannerProvenance)await client.query('INSERT INTO runs.model_provenance(tenant_id,run_id,call_purpose,model_name,input_tokens,output_tokens,typed_plan) VALUES($1,$2,\'plan\',$3,$4,$5,$6::jsonb)',[current.tenantId,run.runId,plannerProvenance.model,plannerProvenance.inputTokens,plannerProvenance.outputTokens,JSON.stringify(intents??[])]);
         await client.query('UPDATE runs.conversations SET title=CASE WHEN title=\'New chat\' THEN $3 ELSE title END,updated_at=clock_timestamp() WHERE tenant_id=$1 AND principal_id=$2 AND conversation_id=$4',[current.tenantId,current.userId,question.trim().slice(0,200),conversationId]);
       });
       return reply.code(201).send({...run,conversationId});
@@ -835,13 +838,15 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
   });
   app.get<{Params:{runId:string}}>('/api/runs/:runId',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
-    const result=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{run_id:string;state:string;state_version:number;plan:Record<string,unknown>|null;plan_hash:string|null;answer:Record<string,unknown>|null}>(
-      `SELECT r.run_id,r.state,r.state_version,p.plan,p.plan_hash,a.answer FROM runs.runs r LEFT JOIN runs.analytic_plans p USING(tenant_id,run_id)
+    const result=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{run_id:string;state:string;state_version:number;plan:Record<string,unknown>|null;plan_hash:string|null;answer:Record<string,unknown>|null;model_provenance:Array<{purpose:string;model:string;inputTokens:number;outputTokens:number;typedPlan:unknown}>}>(
+      `SELECT r.run_id,r.state,r.state_version,p.plan,p.plan_hash,a.answer,
+        coalesce((SELECT jsonb_agg(jsonb_build_object('purpose',m.call_purpose,'model',m.model_name,'inputTokens',m.input_tokens,'outputTokens',m.output_tokens,'typedPlan',m.typed_plan) ORDER BY m.created_at) FROM runs.model_provenance m WHERE m.tenant_id=r.tenant_id AND m.run_id=r.run_id),'[]'::jsonb) AS model_provenance
+       FROM runs.runs r LEFT JOIN runs.analytic_plans p USING(tenant_id,run_id)
        LEFT JOIN runs.analytic_answers a USING(tenant_id,run_id)
        WHERE r.tenant_id=$1 AND r.principal_id=$2 AND r.run_id=$3`,[current.tenantId,current.userId,request.params.runId]));
     if(!result.rowCount)return reply.code(404).send({error:'run_not_found'});
     const row=result.rows[0]!;const memory=await getPersonalMemory(options.pool,{tenantId:current.tenantId,principalId:current.userId});
-    return reply.send({runId:row.run_id,state:row.state,stateVersion:row.state_version,plan:row.plan,planHash:row.plan_hash,answer:row.answer?applyPersonalContext(row.answer as unknown as StructuredAnswer,memory):null});
+    return reply.send({runId:row.run_id,state:row.state,stateVersion:row.state_version,plan:row.plan,planHash:row.plan_hash,modelProvenance:row.model_provenance,answer:row.answer?applyPersonalContext(row.answer as unknown as StructuredAnswer,memory):null});
   });
   app.post<{Params:{runId:string};Body:{format?:ExportFormat}}>('/api/runs/:runId/evidence-pack',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
@@ -1160,14 +1165,28 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
   });
   app.get<{Params:{connectionId:string}}>('/api/connections/:connectionId/er',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
-    const result=await withTenant(options.pool,current.tenantId,async(client)=>client.query(
-      `SELECT r.relationship_type,r.granularity,f.qualified_name AS from_name,t.qualified_name AS to_name,a.evidence_method,a.review_status,a.verification
+    const result=await withTenant(options.pool,current.tenantId,async(client)=>{
+      const relationships=await client.query(
+      `SELECT r.relationship_type,r.granularity,f.qualified_name AS from_name,t.qualified_name AS to_name,a.evidence_method,a.review_status,a.verification,a.confidence_score,a.explanation,a.evidence_ids
        FROM graph.relationships r JOIN graph.assets f ON f.tenant_id=r.tenant_id AND f.asset_id=r.from_asset_id
        JOIN graph.assets t ON t.tenant_id=r.tenant_id AND t.asset_id=r.to_asset_id
-       LEFT JOIN graph.assertions a ON a.tenant_id=r.tenant_id AND a.relationship_id=r.relationship_id
-       WHERE r.tenant_id=$1 AND (f.source_id=$2 OR t.source_id=$2) AND r.family='structural' ORDER BY r.relationship_type,f.qualified_name,t.qualified_name`,
-      [current.tenantId,request.params.connectionId]));
-    return reply.send({relationships:result.rows});
+       JOIN LATERAL(SELECT evidence_method,review_status,verification,confidence_score,explanation,evidence_ids FROM graph.assertions assertion
+         WHERE assertion.tenant_id=r.tenant_id AND assertion.relationship_id=r.relationship_id
+           AND (assertion.evidence_method='declared' OR (assertion.evidence_method='inferred' AND assertion.confidence_score>0.90))
+         ORDER BY CASE WHEN evidence_method='declared' THEN 0 ELSE 1 END,confidence_score DESC,captured_at DESC LIMIT 1)a ON true
+       WHERE r.tenant_id=$1 AND (f.source_id=$2 OR t.source_id=$2) AND r.family='structural' AND r.relationship_type='REFERENCES' ORDER BY r.relationship_type,f.qualified_name,t.qualified_name`,
+      [current.tenantId,request.params.connectionId]);
+      const tables=await client.query(`SELECT dataset.asset_id,dataset.qualified_name,version.structural_attributes->>'object_type' AS object_type,
+          coalesce(jsonb_agg(jsonb_build_object('name',field.qualified_name,'data_type',profile.data_type,'is_nullable',profile.is_nullable) ORDER BY field.qualified_name) FILTER(WHERE field.asset_id IS NOT NULL),'[]'::jsonb) AS columns
+        FROM graph.assets dataset JOIN LATERAL(SELECT structural_attributes FROM graph.asset_versions WHERE tenant_id=dataset.tenant_id AND asset_id=dataset.asset_id ORDER BY version DESC LIMIT 1)version ON true
+        LEFT JOIN graph.relationships contains ON contains.tenant_id=dataset.tenant_id AND contains.from_asset_id=dataset.asset_id AND contains.relationship_type='CONTAINS'
+        LEFT JOIN graph.assets field ON field.tenant_id=contains.tenant_id AND field.asset_id=contains.to_asset_id
+        LEFT JOIN LATERAL(SELECT data_type,is_nullable FROM profiler.field_profiles WHERE tenant_id=field.tenant_id AND asset_id=field.asset_id ORDER BY profile_version DESC LIMIT 1)profile ON true
+        WHERE dataset.tenant_id=$1 AND dataset.source_id=$2 AND dataset.asset_type='dataset' AND dataset.active
+        GROUP BY dataset.asset_id,dataset.qualified_name,version.structural_attributes ORDER BY dataset.qualified_name`,[current.tenantId,request.params.connectionId]);
+      return {relationships:relationships.rows,tables:tables.rows};
+    });
+    return reply.send(result);
   });
   app.get<{Querystring:{q?:string}}>('/api/catalogue/search',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});

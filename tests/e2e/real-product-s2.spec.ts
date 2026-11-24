@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { config } from 'dotenv';
 import { Pool } from 'pg';
 import { withTenant } from '@scaleinsyght/db';
@@ -10,6 +10,7 @@ import { runSqlServerAdminQuery } from '../../testbed/sqlserver/admin-query.js';
 config({ path: '.env' });
 const tenantUrl = () => { const value = process.env.DATABASE_URL_MIGRATE; if (!value) throw new Error('DATABASE_URL_MIGRATE is required for local S2 acceptance.'); const url = new URL(value); url.pathname = '/si_test'; return url.toString(); };
 const adminPool = new Pool({ connectionString: tenantUrl() });
+const truth=JSON.parse(readFileSync('testbed/truth.json','utf8')) as {answerChecks:{expectedRelationships:{sqlServer:Array<{from:string;to:string;evidenceMethod:string;confidence:number}>}}};
 const required = ['SQLSERVER_TESTBED_HOST','SQLSERVER_TESTBED_PORT','SQLSERVER_TESTBED_DATABASE','SQLSERVER_TESTBED_USERNAME','SQLSERVER_TESTBED_PASSWORD'] as const;
 const missing = required.filter((key) => !process.env[key]);
 if (missing.length) throw new Error(`${missing.join(', ')} required; run pnpm testbed:sqlserver:up. SQL Server E2E tests are never skipped.`);
@@ -56,8 +57,9 @@ test('s2_empty_tenant_adds_real_sql_server_profiles_and_relationships', async ({
   await page.goto(`/profile/${connectionId}`);
   await expect(page.getByText('Objects profiled')).toBeVisible(); await expect(page.locator('.profile-stats div').filter({ hasText: 'Objects profiled' }).locator('strong')).toHaveText('7');
   await expect(page.getByText(/patients\.name/)).toBeVisible(); await page.screenshot({ path: 'docs/acceptance/s2/profile.png', fullPage: true });
+  const erResponse=await page.request.get(`/api/connections/${connectionId}/er`);expect(erResponse.ok()).toBeTruthy();const erData=await erResponse.json() as {relationships:Array<{from_name:string;to_name:string;evidence_method:string;confidence_score:number}>;tables:Array<{qualified_name:string;object_type:string;columns:Array<{name:string;data_type:string}>}>};expect(erData.relationships.map(item=>({from:item.from_name,to:item.to_name,evidenceMethod:item.evidence_method,confidence:Number(item.confidence_score)})).sort((a,b)=>a.from.localeCompare(b.from))).toEqual([...truth.answerChecks.expectedRelationships.sqlServer].sort((a,b)=>a.from.localeCompare(b.from)));expect(erData.relationships).toHaveLength(6);expect(erData.tables.find(item=>item.qualified_name==='dbo.department_order_summary')?.object_type).toBe('view');expect(erData.tables.find(item=>item.qualified_name==='dbo.patients')?.columns.some(column=>column.name.endsWith('.patient_id')&&column.data_type)).toBe(true);
   await page.getByRole('button', { name: 'Explore relationships' }).click();
-  await expect(page.locator('.er-link--inferred')).not.toHaveCount(0); await page.screenshot({ path: 'docs/acceptance/s2/er-inferred.png', fullPage: true });
+  await expect(page.getByText('6 relationships')).toBeVisible();await expect(page.getByText('dbo.department_order_summary')).toBeVisible();await expect(page.locator('.er-link--inferred')).toHaveCount(4);await page.screenshot({ path: 'docs/acceptance/s2/er-inferred.png', fullPage: true });
   await page.goto(`/dictionary?connection=${connectionId}`);
   await expect(page.locator('.dictionary-list summary').filter({ hasText: 'dbo.patients' })).toBeVisible();
   await page.getByRole('tab', { name: /Procedures/ }).click();
@@ -66,6 +68,12 @@ test('s2_empty_tenant_adds_real_sql_server_profiles_and_relationships', async ({
   await page.goto('/'); await page.getByLabel('Ask a question').fill('How many patients are in SQL Server hospital?'); await page.getByRole('button', { name: 'Send question' }).click();
   await expect(page.getByText('500', { exact: true })).toBeVisible({ timeout: 120_000 });
   await expect(page.getByText(/Executed on SQL Server hospital; returned 1 aggregate row/)).toBeVisible();
+  await expect(page.getByRole('heading',{name:'How this was answered'})).toBeVisible();
+  await expect(page.getByText(/Plan model:/)).toBeVisible();await expect(page.getByText(/Answer model:/)).toBeVisible();
+  await expect(page.getByLabel('Ask a question')).toHaveValue('');await expect(page).toHaveURL(/\/conversations\//);
+  const recent=page.locator('.recent-list button').filter({hasText:'How many patients are in SQL Server hospital?'});await expect(recent).toBeVisible();await recent.click();await expect(page.getByText('500',{exact:true})).toBeVisible();
+  await page.getByLabel('Ask a question').fill('and how many of them have a phone number?');await page.getByRole('button',{name:'Send question'}).click();await expect(page.getByText(/Executed on SQL Server hospital; returned 1 aggregate row/).last()).toBeVisible({timeout:120_000});await expect(page.getByText('and how many of them have a phone number?')).toBeVisible();
+  await page.reload();await expect(page.getByText('and how many of them have a phone number?')).toBeVisible();await expect(page.getByText(/Executed on SQL Server hospital; returned 1 aggregate row/).last()).toBeVisible();
   await page.screenshot({ path: 'docs/acceptance/s2/home-answer.png', fullPage: true });
 });
 

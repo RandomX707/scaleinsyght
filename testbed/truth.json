@@ -1,6 +1,6 @@
 {
   "source": "si_testbed_pg",
-  "generatedAt": "2026-11-24T12:37:42.169Z",
+  "generatedAt": "2026-11-24T13:15:43.853Z",
   "rowCounts": {
     "patients": 500,
     "encounters": 700,
@@ -32,6 +32,118 @@
     "sourceCount": 500,
     "targetCount": 500,
     "declared": false
+  },
+  "inferredRelationships": [
+    {
+      "from": "encounters.department_id",
+      "to": "departments.department_id",
+      "matches": 700,
+      "sourceCount": 700,
+      "confidence": 1,
+      "declared": false
+    },
+    {
+      "from": "encounters.patient_id",
+      "to": "patients.patient_id",
+      "matches": 700,
+      "sourceCount": 700,
+      "confidence": 1,
+      "declared": false
+    },
+    {
+      "from": "encounters.provider_id",
+      "to": "providers.provider_id",
+      "matches": 700,
+      "sourceCount": 700,
+      "confidence": 1,
+      "declared": false
+    },
+    {
+      "from": "providers.department_id",
+      "to": "departments.department_id",
+      "matches": 24,
+      "sourceCount": 24,
+      "confidence": 1,
+      "declared": false
+    }
+  ],
+  "expectedRelationships": {
+    "postgres": [
+      {
+        "from": "public.orders.department_id",
+        "to": "public.departments.department_id",
+        "evidenceMethod": "declared",
+        "confidence": 1
+      },
+      {
+        "from": "public.orders.encounter_id",
+        "to": "public.encounters.encounter_id",
+        "evidenceMethod": "declared",
+        "confidence": 1
+      },
+      {
+        "from": "public.encounters.department_id",
+        "to": "public.departments.department_id",
+        "evidenceMethod": "inferred",
+        "confidence": 1
+      },
+      {
+        "from": "public.encounters.patient_id",
+        "to": "public.patients.patient_id",
+        "evidenceMethod": "inferred",
+        "confidence": 1
+      },
+      {
+        "from": "public.encounters.provider_id",
+        "to": "public.providers.provider_id",
+        "evidenceMethod": "inferred",
+        "confidence": 1
+      },
+      {
+        "from": "public.providers.department_id",
+        "to": "public.departments.department_id",
+        "evidenceMethod": "inferred",
+        "confidence": 1
+      }
+    ],
+    "sqlServer": [
+      {
+        "from": "dbo.orders.department_id",
+        "to": "dbo.departments.department_id",
+        "evidenceMethod": "declared",
+        "confidence": 1
+      },
+      {
+        "from": "dbo.orders.encounter_id",
+        "to": "dbo.encounters.encounter_id",
+        "evidenceMethod": "declared",
+        "confidence": 1
+      },
+      {
+        "from": "dbo.encounters.department_id",
+        "to": "dbo.departments.department_id",
+        "evidenceMethod": "inferred",
+        "confidence": 1
+      },
+      {
+        "from": "dbo.encounters.patient_id",
+        "to": "dbo.patients.patient_id",
+        "evidenceMethod": "inferred",
+        "confidence": 1
+      },
+      {
+        "from": "dbo.encounters.provider_id",
+        "to": "dbo.providers.provider_id",
+        "evidenceMethod": "inferred",
+        "confidence": 1
+      },
+      {
+        "from": "dbo.providers.department_id",
+        "to": "dbo.departments.department_id",
+        "evidenceMethod": "inferred",
+        "confidence": 1
+      }
+    ]
   },
   "sensitiveColumns": [
     "encounters.encounter_id",
@@ -129,6 +241,78 @@
       "targetCount": 500,
       "declared": false
     },
+    "inferredRelationships": [
+      {
+        "from": "dbo.encounters.department_id",
+        "to": "dbo.departments.department_id",
+        "matches": 700,
+        "sourceCount": 700,
+        "confidence": 1,
+        "declared": false
+      },
+      {
+        "from": "dbo.encounters.patient_id",
+        "to": "dbo.patients.patient_id",
+        "matches": 700,
+        "sourceCount": 700,
+        "confidence": 1,
+        "declared": false
+      },
+      {
+        "from": "dbo.encounters.provider_id",
+        "to": "dbo.providers.provider_id",
+        "matches": 700,
+        "sourceCount": 700,
+        "confidence": 1,
+        "declared": false
+      },
+      {
+        "from": "dbo.providers.department_id",
+        "to": "dbo.departments.department_id",
+        "matches": 24,
+        "sourceCount": 24,
+        "confidence": 1,
+        "declared": false
+      }
+    ],
+    "expectedRelationships": [
+      {
+        "from": "dbo.orders.department_id",
+        "to": "dbo.departments.department_id",
+        "evidenceMethod": "declared",
+        "confidence": 1
+      },
+      {
+        "from": "dbo.orders.encounter_id",
+        "to": "dbo.encounters.encounter_id",
+        "evidenceMethod": "declared",
+        "confidence": 1
+      },
+      {
+        "from": "dbo.encounters.department_id",
+        "to": "dbo.departments.department_id",
+        "evidenceMethod": "inferred",
+        "confidence": 1
+      },
+      {
+        "from": "dbo.encounters.patient_id",
+        "to": "dbo.patients.patient_id",
+        "evidenceMethod": "inferred",
+        "confidence": 1
+      },
+      {
+        "from": "dbo.encounters.provider_id",
+        "to": "dbo.providers.provider_id",
+        "evidenceMethod": "inferred",
+        "confidence": 1
+      },
+      {
+        "from": "dbo.providers.department_id",
+        "to": "dbo.departments.department_id",
+        "evidenceMethod": "inferred",
+        "confidence": 1
+      }
+    ],
     "sharedPatientIds": 500,
     "sharedEncounterIds": 700,
     "answerMetrics": {
