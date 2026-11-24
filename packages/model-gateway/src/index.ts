@@ -3,12 +3,13 @@ import { prepareMetadataForModel, type ModelMetadataInput } from '@scaleinsyght/
 import { withTenant } from '@scaleinsyght/db';
 import type { Pool } from 'pg';
 
-export type ModelAlias='cheap'|'default';
+export type ModelAlias='cheap'|'default'|'planning';
 export type ModelPrice={inputPerMillionUsd:number;outputPerMillionUsd:number};
-export type GatewayConfig={baseUrl:string;apiKey:string;cheapModel:string;defaultModel:string;dailyCostCapUsd:number;dailyUserCostCapUsd:number;fingerprintKey:string;prices:Record<string,ModelPrice>};
-export type GatewayRequest={tenantId:string;/** The person the call is made for; their own daily USD cap applies. */principalId?:string;alias:ModelAlias;question:string;metadata:ModelMetadataInput;identifierValues?:string[];maxOutputTokens?:number;purpose?:'answer'|'plan';responseSchema?:Record<string,unknown>};
+export type GatewayConfig={baseUrl:string;apiKey:string;cheapModel:string;defaultModel:string;planningModel:string;dailyCostCapUsd:number;dailyUserCostCapUsd:number;fingerprintKey:string;prices:Record<string,ModelPrice>};
+export type GatewayRequest={tenantId:string;/** The person the call is made for; their own daily USD cap applies. */principalId?:string;alias:ModelAlias;question:string;metadata:ModelMetadataInput;identifierValues?:string[];maxOutputTokens?:number;purpose?:'answer'|'plan'|'verify';responseSchema?:Record<string,unknown>};
 const SYSTEM_INSTRUCTIONS={
   answer:'Answer only from the disclosed metadata. Do not infer hidden row values. If metadata is insufficient, say so.',
+  verify:'You check whether a typed, read-only query plan answers a question exactly: the same subject, measure, grouping, conditions, ranking and sources. You never see row values. Respond with a single JSON object.',
   plan:'You write typed, read-only query plans from disclosed metadata. You never see row values, and you do not need to: a category, label or date named in the question is used as a filter value on the matching column, and is bound as a query parameter. Return an empty plan only when no table or column in the metadata can express the request. Never return SQL. Respond with a single JSON object.',
 } as const;
 export type GatewayResponse={text:string;requestId:string;model:string;inputTokens:number;outputTokens:number;costUsd:number};
@@ -34,7 +35,7 @@ function readConfig(env:NodeJS.ProcessEnv):GatewayConfig{
   const baseUrl=(env.MODEL_BASE_URL||'https://api.openai.com/v1').replace(/\/+$/,'');
   let prices:Record<string,ModelPrice>={};
   if(env.MODEL_PRICING_JSON){try{prices=JSON.parse(env.MODEL_PRICING_JSON) as Record<string,ModelPrice>;}catch{throw new ModelGatewayError('invalid_model_pricing_config');}}
-  return {baseUrl,apiKey:nonEmpty(env.OPENAI_API_KEY,'OPENAI_API_KEY'),cheapModel:nonEmpty(env.MODEL_CHEAP,'MODEL_CHEAP'),defaultModel:nonEmpty(env.MODEL_DEFAULT,'MODEL_DEFAULT'),dailyCostCapUsd:Number(env.MODEL_DAILY_COST_CAP_USD||DEFAULT_TENANT_DAILY_COST_CAP_USD),dailyUserCostCapUsd:Number(env.MODEL_DAILY_USER_COST_CAP_USD||DEFAULT_USER_DAILY_COST_CAP_USD),fingerprintKey:nonEmpty(env.IDENTIFIER_FINGERPRINT_KEY||env.ARTIFACT_MASTER_KEY,'IDENTIFIER_FINGERPRINT_KEY'),prices};
+  return {baseUrl,apiKey:nonEmpty(env.OPENAI_API_KEY,'OPENAI_API_KEY'),cheapModel:nonEmpty(env.MODEL_CHEAP,'MODEL_CHEAP'),defaultModel:nonEmpty(env.MODEL_DEFAULT,'MODEL_DEFAULT'),planningModel:env.MODEL_PLANNING||nonEmpty(env.MODEL_DEFAULT,'MODEL_DEFAULT'),dailyCostCapUsd:Number(env.MODEL_DAILY_COST_CAP_USD||DEFAULT_TENANT_DAILY_COST_CAP_USD),dailyUserCostCapUsd:Number(env.MODEL_DAILY_USER_COST_CAP_USD||DEFAULT_USER_DAILY_COST_CAP_USD),fingerprintKey:nonEmpty(env.IDENTIFIER_FINGERPRINT_KEY||env.ARTIFACT_MASTER_KEY,'IDENTIFIER_FINGERPRINT_KEY'),prices};
 }
 
 const sensitiveKey=/(?:raw_?values?|sample_?rows?|result_?rows?|patient_?name|email_?address|password|secret|credential)/i;
@@ -81,7 +82,7 @@ export class OpenAIModelGateway{
 
   async complete(input:GatewayRequest):Promise<GatewayResponse>{
     if(!input.tenantId||input.question.length>4000||!input.question.trim())throw new ModelGatewayError('invalid_model_request');
-    const model=input.alias==='cheap'?this.config.cheapModel:this.config.defaultModel;
+    const model=input.alias==='cheap'?this.config.cheapModel:input.alias==='planning'?this.config.planningModel:this.config.defaultModel;
     const price=priceFor(this.config,model);
     const rawIdentifiers=new Set(input.identifierValues??[]);
     const prepared=prepareMetadataForModel(input.metadata);
@@ -89,7 +90,7 @@ export class OpenAIModelGateway{
     const question=safeQuestion(input.question,rawIdentifiers);
     const fingerprints=[...rawIdentifiers].map(value=>fingerprint(this.config.fingerprintKey,input.tenantId,value));
     const maxOutputTokens=Math.min(2048,Math.max(64,input.maxOutputTokens??1000));
-    const payload={model,messages:[{role:'system',content:SYSTEM_INSTRUCTIONS[input.purpose??'answer']},{role:'user',content:JSON.stringify({question,metadata:safeMetadata,identifier_fingerprints:fingerprints})}],max_completion_tokens:maxOutputTokens,...(input.purpose==='plan'?{response_format:input.responseSchema ? {type:'json_schema',json_schema:{name:'typed_analytic_plan',strict:true,schema:input.responseSchema}} : {type:'json_object'}}:{})};
+    const payload={model,messages:[{role:'system',content:SYSTEM_INSTRUCTIONS[input.purpose??'answer']},{role:'user',content:JSON.stringify({question,metadata:safeMetadata,identifier_fingerprints:fingerprints})}],max_completion_tokens:maxOutputTokens,...(input.purpose==='plan'||input.purpose==='verify'?{response_format:input.responseSchema ? {type:'json_schema',json_schema:{name:input.purpose==='verify'?'plan_verification':'typed_analytic_plan',strict:true,schema:input.responseSchema}} : {type:'json_object'}}:{})};
     const body=JSON.stringify(payload);const estimatedInput=estimateTokens(body);const estimatedTokens=estimatedInput+maxOutputTokens;
     const reservedCost=priceTokens(price,estimatedInput,maxOutputTokens);const id=requestId();
     const reservation=await withTenant(this.pool,input.tenantId,async(client)=>{
