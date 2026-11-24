@@ -1,79 +1,60 @@
 # Real product gap audit
 
-> Audit baseline: `main` at `20f6e6c` (24 Nov 2026). Reviewed against `docs/prototype/index.html`, `apps/web/src/main.tsx`, `apps/api/src/server.ts`, connector/profiler/graph/analytic packages, migrations, and `scripts/`. Statuses describe the current product, not the target state. `Real` means the full user path completes using a real external source. A database containing fabricated hospital records is still an acceptable testbed, but fixture-backed product paths are `Fake`.
+> Updated for S1 on 24 Nov 2026. Statuses are based on the working tree and the passing local acceptance walkthrough, not the eventual target. `Real` means the listed path has run end to end against a tenant-connected source. Fixture implementations are confined to tests; no fixture runtime path is counted as product behavior.
 
-## Screen and interaction audit
+## Screens and user workflows
 
-| Prototype feature or screen | Status | Current evidence / gap |
+| Prototype feature | Status | Evidence or remaining work |
 |---|---|---|
-| Sign-in and tenant workspace | Missing | Password login authenticates a caller from a fixture-derived allowlist in `apps/api/src/main.ts`; there is no tenant registration or first-user onboarding. OIDC is implemented but is a Phase 6 capability and is not the requested source onboarding path. |
-| Workspace shell, sidebar, recent conversations | Fake | React shell uses a literal `S`, generic workspace profile, hardcoded navigation, and “No recent conversations”; no signed-in user identity or saved recent runs are wired into it. |
-| Home conversation and answer | Fake | `AnalyticWorkspace` invokes `/api/runs`, but `packages/analytic/src/executor.ts` reads `tests/golden/phase2.json`; displayed answer results are deterministic fixture aggregates. The page also displays internal source ids and raw role/type labels. |
-| Home source selection | Fake | Active connections are selected from the API, but available sources include built-in golden connectors; the user can select sources that do not connect to an external system. |
-| Connectors list | Fake | The API returns the fixture source catalogue from `listGoldenSources()` plus a fixed local sample-source entry. Connector cards only represent these fixed source references. |
-| Connector add and credential entry | Missing | Add flow selects a predefined `sourceId`; it has no host/database/user/password fields for PostgreSQL, SQL Server, or Snowflake. Workbook route accepts artifacts, but no end-to-end file selection flow is exposed here. |
-| Connection test and activation | Fake | UI invokes test/activate routes, but those routes resolve a fixed source id through `connectorFor`; most are `createGoldenConnector`, not user-supplied external endpoints. |
-| Connector agent creation | Fake | Connection activation persists an agent id, but it is bound to fixed fixture sources and does not establish arbitrary real connector credentials. |
-| Profile and profiling progress | Fake | Profile API reads persisted profiler rows, but activation calls `runGoldenProfile` against golden connector implementations for the built-in sources. The configured `local-hospital` is a special environment URL, not a user-added connection. |
-| ER explorer | Fake | ER UI reads the graph API; most available graph content is produced by golden profiler connectors and fixture structural references. No unrestricted real-source add path exists. |
-| Dictionary landing summary | Missing | The React landing page lists active connector type strings and has no imported dictionary/source summary. |
-| Dictionary tables and columns | Fake | Per-connection dictionary API reflects the graph, but the ordinary add flow fills it from fixture-backed profiling. |
-| Dictionary Standard and Custom tabs | Missing | Current React Dictionary renders a plain table list. Prototype tabs, grouped cards, procedure tabs, expand/collapse details, and source dictionary imports are absent. |
-| Dictionary views and stored procedures with SQL | Missing | Profiler metadata contract currently centers on tables/fields; the user-visible route does not display view/procedure definitions or parsed lineage from them. |
-| Lineage table view | Fake | Graph queries are database-backed, but the normal UI offers “Import synthetic …” actions that invoke `importGoldenMetadata` and fixtures. |
-| Lineage column view | Missing | Prototype’s column-grain lineage view is not implemented as a distinct React screen. |
-| ID trace | Fake | API graph trace can query stored keyed fingerprints, but the only readily available matches originate from seeded/fixture metadata; no real-source fingerprint harvest is completed through the UI. |
-| BI reports | Fake | Report records can be read from the graph, but Power BI/Tableau entries are created by fixture metadata import. No real `.twb`/`.pbit` import is implemented. |
-| Reports and evidence packs | Fake | Report APIs persist user reports, but product demonstration content and report sources include fixture-generated items; report composition has not been audited end-to-end against an unseeded tenant. |
-| Agents | Fake | Connector agents reflect registered fixed-source connections; the page also has no demonstrated real-source agent executing a completed profiling lifecycle. |
-| My agent and saved questions | Fake | Personal memory/saved-question APIs are database-backed, but this session’s seed path populated prototype questions; empty-tenant behavior and true-source answer reuse are unverified. |
-| Approval matrix | Fake | Approval routes are backed by persisted records, but the prototype run/findings and current seeded approval items are not produced by a real nightly profile on a user-connected source. |
-| Notifications | Fake | Notification panel reads API records, but the product currently obtains its demo notifications from seeded/prototype profiler activity. |
-| Controls and scope | Fake | Scope API persists controls, but selected connections come from fixed source definitions; the page requires a connection and does not provide a clear empty first-connector action. |
-| Usage | Real | Usage is computed from persisted activity and model-usage events. It can render an empty tenant without fixture data, although tenant onboarding is currently missing. |
-| Hub integrations and certified metrics | Fake | Default Hub adapters are `createGoldenHubAdapters(getGoldenHubFixtures())`; metrics and results are fixtures, not connected external products. |
-| FlowSpec and handoff | Missing | An API-backed prototype path exists, but the current default `dataStudio` adapter is fixture-backed. This is not a real product integration and must not be represented as real. |
+| Tenant creation, login, and workspace membership | Real | `pnpm tenant:create`; database-backed sign-in and one-use, expiring invite link accepted in `tests/e2e/real-product-s1.spec.ts`. |
+| Workspace shell, navigation, recent conversations | Missing | Authenticated user identity is shown; prototype-faithful shell and recent conversation history remain to be implemented. |
+| Home chat and source selection | Real | Count question runs through selected real PostgreSQL source and typed plan; S1 Playwright test checks answer, SQL, source, and row-count evidence. Remaining query-shape coverage is S7. |
+| Connectors list and PostgreSQL add flow | Real | UI credential entry, connection test, activation, and real profile are exercised by the S1 Playwright test. Credentials are encrypted and not returned after submission. |
+| PostgreSQL profile and sensitive-field classification | Real | Real metadata/profile route exercised; test asserts MRN classification and compares profile to `testbed/truth.json`. |
+| ER explorer | Real | Declared and inferred references are returned from the real graph; S1 checks the patient relationship from the live source. |
+| Dictionary landing, import summary, tables and columns | Real | CSV importer adds descriptions to harvested metadata; UI reports documented coverage and the S1 walkthrough checks the real source. |
+| Dictionary Standard/Custom tabs and procedure SQL interactions | Missing | Routine metadata and SQL are discovered and tested, but the full prototype interaction set is not yet complete. |
+| Lineage table and column views | Missing | No seeded metadata route remains; real dbt and SQL lineage arrives in S4. |
+| ID trace | Missing | Real cross-source fingerprints and matches arrive in S5. |
+| BI reports | Missing | Real Tableau import is S8; Power BI remains missing pending a supplied `.pbit`. |
+| Reports, saved questions, exports, evidence packs | Missing | Real-data report creation and PDF/XLSX/PPTX/Markdown/Word exports are S7. |
+| Agents and My agent | Missing | Connector activation creates a real connector agent; prototype views and saved-question behavior are not yet complete. |
+| Approval matrix, findings, notifications | Missing | Real nightly snapshot comparison and notification workflow are S6. |
+| Controls and Usage | Missing | Empty-tenant and real-source product flows still need prototype-faithful screen completion. |
+| Hub integrations | Real | Disconnected empty state is the approved behavior; no fixture adapter or sample metric is exposed. |
+| Profile, Dictionary, ER empty states | Real | Empty tenant begins with no source content and directs the user to add a connector. |
 
-## Source and feature audit
+## Sources and product capabilities
 
-| Feature | Status | Current evidence / gap |
+| Capability | Status | Evidence or remaining work |
 |---|---|---|
-| PostgreSQL connector through arbitrary UI credentials | Missing | `createPostgresConnector` accepts a connection string, but `/api/connections` only accepts a catalog `sourceId`; it cannot accept or securely persist a user's connection parameters. |
-| PostgreSQL profiler against a live database | Real | `packages/connectors/src/postgres.ts` introspects a configured PostgreSQL URL; `local-hospital` provides a narrow environment-configured real database path. The product UI cannot create that connection from credentials yet. |
-| SQL Server connector | Missing | No real SQL Server driver/credential setup is connected to the current user-facing connector route. |
-| Snowflake connector | Missing | No user-configurable real Snowflake connector path or credentials are present. |
-| Excel `.xlsx` connector | Missing | Artifact storage primitives exist, but the required user-facing workbook upload, real ExcelJS harvest and profile flow is not exposed end to end. |
-| dbt manifest/catalog import | Fake | Import route supports real manifest-shaped payloads, but current UI/source catalogue invokes golden fixture keys; real user file upload and end-to-end model profiling are missing. |
-| Tableau `.twb` metadata import | Missing | Current Tableau path is fixture import only; there is no documented-format parser/import path. |
-| Power BI `.pbit` metadata import | Missing | Current Power BI path is fixture import only; there is no `.pbit` parser/import path. |
-| View/procedure SQL parsing into lineage | Missing | SQLGlot service exists, but no complete real-source discovery-to-parse-to-graph user workflow is wired for these objects. |
-| Cross-source ID fingerprinting and trace | Fake | Storage/query mechanisms exist, but no UI-configured real systems with shared testbed identifiers are harvested and matched. |
-| OpenAI model answers through planner/validator/runner | Fake | Planner and durable runner exist, but execution delegates to the deterministic `executeGoldenStep` corpus. It is not real-source SQL execution. |
-| Source-constrained planning | Fake | Selected source ids reach `/api/runs`; a contract test exists, but the answer path is still golden execution and the end-to-end real-source behavior is absent. |
-| Answer evidence: executed query, source, row counts | Fake | The UI shows evidence fields from the result envelope, but the ordinary answer flow uses golden result references rather than queries executed on connected real sources. |
-| Empty tenant behavior | Missing | No sign-up/bootstrap flow exists. Several views show empty values, but initial setup cannot create a tenant and add its first real connector. |
-| PostgreSQL testbed and truth oracle | Missing | No `testbed/` build or `testbed/truth.json` workflow exists. |
-| Local SQL Server 2022 testbed | Missing | No Colima-based source setup or real connector acceptance walkthrough exists. |
-| Snowflake testbed | Missing | No setup SQL/load script; must stay marked untested until `SNOWFLAKE_*` is supplied. |
-| Excel overlap workbook | Missing | No real testbed workbook generator. |
-| dbt testbed project and artifacts | Missing | A generated sample dbt helper exists, but not the specified isolated `testbed/` project/artifact contract. |
-| Tableau and Power BI published-format test files | Missing | No real `.twb` or `.pbit` artifacts and parsers for the testbed marts. |
-| End-to-end testbed walkthrough/video/screenshots | Missing | Playwright suites currently seed golden tenants and do not start from empty tenant, connect each source through UI, compare against SQL truth, or save the required acceptance artifacts. |
+| PostgreSQL connector and read-only activation | Real | Local testbed walkthrough creates connection from user-supplied credentials, verifies read-only access, activates it, and profiles it. |
+| PostgreSQL profiling, procedures, and SQL metadata | Real | Real tables, columns, views, functions/procedures, SQL definitions, and profile values are read from `si_testbed_pg`. |
+| PostgreSQL declared and inferred ER relationships | Real | The testbed truth oracle includes a relationship without a declared foreign key; profiler marks inferred edges separately. |
+| Sensitive-column classification | Real | `testbed/truth.json` carries expected classifications; S1 acceptance verifies the live PostgreSQL metadata labels. |
+| Dictionary CSV/XLSX import | Real | S1 imports a real testbed CSV dictionary and checks documented-versus-harvested coverage. |
+| Typed analytic plan query shapes | Real | Contract test executes count, filtered count, group-by, within-source join, and two-source comparison against PostgreSQL and verifies SQL-derived truth. UI end-to-end coverage expands in S7. |
+| Live OpenAI answer over PostgreSQL | Real | S1 Home walkthrough runs one aggregate question via configured gateway and checks value, executed SQL, source, and returned-row evidence. |
+| SQL Server connector and testbed | Missing | S2 will add SQL Server 2022 under Colima; no server has been installed or run yet. |
+| Excel workbook connector | Missing | S3 will add and profile the three-sheet overlapping workbook. |
+| dbt manifest/catalog lineage | Missing | S4 will import real generated artifacts. |
+| View/procedure SQL lineage | Missing | SQL is discovered in S1; graph lineage from parsed definitions is S4. |
+| Cross-system ID trace | Missing | S5 will verify common patient and encounter fingerprints without storing raw identifiers. |
+| Nightly refresh, change detection, approvals, notifications | Missing | S6 will mutate the testbed and verify snapshot-difference findings. |
+| Saved questions, reports, exports | Missing | S7 will generate and check outputs against the truth oracle. |
+| Tableau `.twb` parsing | Missing | S8 will parse a real published-format workbook. |
+| Power BI `.pbit` parsing | Missing | No real export exists in `testbed/bi/real/`; the parser will become real when one is supplied and validated. |
+| Snowflake connector and testbed | Missing — untested | Requires `SNOWFLAKE_*` credentials. No signup or credit-consuming action has been taken. |
 
-## Fixture-backed product paths found
+## Product runtime fixture audit
 
-These are product imports or routes outside `tests/` that must be removed or replaced with real connector implementations. Golden fixtures may remain under `tests/` for CI only.
+S1 removed fixture-backed connector, profile, analytic-result, metadata-import, Hub-adapter, demo-seed, and demo-data runtime paths. Fixture implementations remain inside `tests/` and `tests/support/`; the `tests/unit/no-runtime-fixtures.test.ts` guard checks that runtime code does not import them. No product route can return seeded connector/profile/finding/question/approval/conversation records.
 
-- `apps/api/src/main.ts`: loads `tests/golden/phase*.json` to construct allowed login accounts.
-- `apps/api/src/server.ts`: imports `createGoldenConnector`, `listGoldenSources`, `runGoldenProfile`, `importGoldenMetadata`, and `createGoldenHubAdapters(getGoldenHubFixtures())`; exposes fixed source and fixture import routes.
-- `packages/connectors/src/index.ts` and `packages/connectors/src/metadata.ts`: runtime golden connectors, source catalogue, structural references, and metadata fixture loaders.
-- `packages/profiler/src/index.ts`: runtime `runGoldenProfile` and golden structural-reference fallback.
-- `packages/graph/src/index.ts`: runtime `importGoldenMetadata`.
-- `packages/analytic/src/executor.ts` and `packages/analytic/src/index.ts`: deterministic golden result executor exported into the application runtime.
-- `packages/hub-adapters/src/index.ts`: default fixture adapters and metrics.
-- `scripts/seed-golden.ts`, `scripts/demo-phase0.ts`, `scripts/test-live.ts`, plus `package.json` scripts: seed/demo paths; seed commands must remain test-only or be deleted from product use as appropriate.
-- `apps/web/src/main.tsx`: synthetic import buttons, fixture language, seeded evaluation display, static demo FlowSpec payload, and seeded-source-oriented empty-state wording.
+## S1 acceptance evidence
 
-## Acceptance status
-
-The target is for every applicable screen and feature above to become `Real`; source setup requiring unavailable Snowflake credentials remains `Missing — untested` until credentials are configured. This audit will be updated as each end-to-end test passes. A feature is not relabelled `Real` based only on a driver, parser, route, or screenshot existing.
+- `tests/contracts/c1_tenant_create_empty_workspace_and_single_use_invite.test.ts`: tenant creation and invite contract cases.
+- `tests/contracts/c3_real_postgres_query_intents.test.ts`: five typed query shapes against real local PostgreSQL and SQL-derived truth.
+- `tests/contracts/c6_real_postgres_metadata.test.ts`: source safety, profile metadata, inferred relationship, and routine metadata.
+- `tests/e2e/real-product-s1.spec.ts`: empty tenant, UI invite, PostgreSQL connection, profile, ER, dictionary import, and real Home answer.
+- Screenshots and video are saved under `docs/acceptance/s1/` by the local `pnpm test:testbed` command.
+- The isolated click-through instructions and recorded gate results are in [`docs/phases/real-product-s1-demo.md`](phases/real-product-s1-demo.md) and [`docs/phases/real-product-s1-report.md`](phases/real-product-s1-report.md).

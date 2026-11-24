@@ -76,9 +76,11 @@ async function runCli(): Promise<void> {
     rl.close();
     const password = await askHiddenPassword();
     const tenantId = normalizeTenantSlug(name);
-    const databaseUrl = process.env.DATABASE_URL_MIGRATE;
+    const configuredDatabaseUrl = process.env.DATABASE_URL_MIGRATE;
+    const databaseUrl = configuredDatabaseUrl ? new URL(configuredDatabaseUrl) : null;
     if (!databaseUrl) throw new Error('DATABASE_URL_MIGRATE is required; run pnpm db:setup first.');
-    const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+    if (process.argv.includes('--test')) databaseUrl.pathname = '/si_test';
+    const pool = new Pool({ connectionString: databaseUrl.toString(), max: 1 });
     try {
       const created = await createTenant(pool, { tenantId, name, displayName, email, password });
       process.stdout.write(`Workspace ID: ${created.tenantId}\nFirst user: ${email}\n`);

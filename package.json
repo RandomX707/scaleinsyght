@@ -9,6 +9,8 @@
   "scripts": {
     "db:setup": "tsx scripts/db-setup.ts",
     "tenant:create": "tsx scripts/tenant-create.ts",
+    "tenant:create:test": "tsx scripts/tenant-create.ts --test",
+    "demo:s1": "pnpm testbed:up && pnpm db:test:reset && pnpm db:migrate:test && pnpm exec concurrently -k -n api,worker,web \"pnpm exec tsx scripts/testbed-api-main.ts\" \"pnpm exec tsx scripts/testbed-worker-main.ts\" \"API_PROXY_TARGET=http://127.0.0.1:3310 pnpm --filter @scaleinsyght/web dev --host 127.0.0.1 --port 4184\"",
     "db:setup:sample": "tsx scripts/setup-sample-source.ts",
     "testbed:up": "tsx testbed/up.ts && pnpm testbed:truth",
     "testbed:truth": "tsx testbed/truth.ts",
@@ -30,6 +32,7 @@
     "test:integration": "pnpm db:test:reset && pnpm db:migrate:test && vitest run tests/integration",
     "test:contracts": "pnpm db:test:reset && pnpm db:migrate:test && pnpm db:setup:sample && pnpm dbt:sample && vitest run tests/contracts",
     "test:e2e": "pnpm db:test:reset && pnpm db:migrate:test && pnpm test:seed:golden -- --test && playwright test",
+    "test:testbed": "pnpm testbed:up && pnpm db:test:reset && pnpm db:migrate:test && pnpm exec vitest run tests/contracts/c3_real_postgres_query_intents.test.ts tests/contracts/c6_real_postgres_metadata.test.ts && pnpm exec playwright test --config=playwright.testbed.config.ts",
     "lint": "eslint .",
     "typecheck": "tsc -b"
   },

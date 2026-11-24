@@ -135,3 +135,11 @@ The current contract schema has an open `inputs` record, but the current runtime
 - Use test-only provider/connector injection without product runtime fixture branches.
 - Treat the Hub screen as a real disconnected/empty state with no fixture adapters or metrics; Hub integration is out of scope.
 - Generate `.pbit` only through documented Power BI template behavior and validate it; read real exports only from `testbed/bi/real/`. Microsoft documents export via Power BI Desktop and the template contents in [its report-template guide](https://learn.microsoft.com/en-us/power-bi/create-reports/desktop-templates). If no real export exists, Power BI remains `Missing`; do not fabricate a package.
+
+## Approved design amendments — 24 Nov 2026
+
+- Keep the agreed S1–S9 order as independent merges. Each slice includes its click-through demo, the corresponding `pnpm test:testbed` coverage, and an updated `docs/gap-audit.md`; do not proceed to the next slice before the current one is merged.
+- S1 covers CLI tenant creation, login and UI invite acceptance as well as fixture-path removal and a real PostgreSQL connection/profile/ER/Dictionary/Home-answer path. The testbed truth oracle includes one undeclared relationship, the expected personal/regulated classifications for name, date of birth, MRN and phone, and a real CSV/XLSX dictionary. S6 adds refresh/change detection and exact findings checks; S7 adds real-data exports and the full five-question walkthrough.
+- The frozen outer plan contract can carry the typed intent variants `count`, `filtered_count`, `group_by`, `join_aggregate` and `compare_aggregates`. Their SQL compilation and contract validation are exercised against local PostgreSQL; the real UI-answer walkthrough grows by slice and covers every shape by S7. This wording does not claim that a shape has passed its real answer acceptance before its slice does.
+- Every connector query is read-only, statement-limited and row-limited. Activation fails if credentials can write. Snowflake must use a small auto-suspending warehouse and a statement timeout before any test can run.
+- Power BI source artifacts are read only from `testbed/bi/real/`. Until a real `.pbit` is supplied and parsed, Power BI stays `Missing` with that reason; Tableau remains S8's deliverable.
