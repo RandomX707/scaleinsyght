@@ -3,7 +3,7 @@ import { withTenant } from '@scaleinsyght/db';
 import { OpenAIModelGateway } from '@scaleinsyght/model-gateway';
 import type { QueryIntent } from '@scaleinsyght/contracts';
 import { selectSources,type CandidateSource } from './source-selection.js';
-import { decodePlannerOutput,plannerSchema } from './structured-planner.js';
+import { decodePlannerOutput,hasNamedCountSubject,normalizeCatalogMentions,plannerSchema } from './structured-planner.js';
 
 export type PlanningSource = {source_id:string;agent_id:string;group_id:string;group_version:number;display_name:string;connector_type:string};
 
@@ -21,10 +21,14 @@ export async function planLiveQuestion(pool:Pool, tenantId:string, question:stri
     FROM graph.dictionary_descriptions WHERE tenant_id=$1 AND source_id=ANY($2::uuid[]) ORDER BY term LIMIT 60`,[tenantId,candidates.map(row=>row.source_id)]));
   const metadata={classification:'METADATA_DESCRIPTIVE' as const,structural:{sources:candidates.map((row,index)=>({index,name:row.display_name||row.connector_type,type:row.connector_type,assets:catalogById.get(row.source_id)??[]})),relationships:relationships.rows},descriptive:Object.fromEntries(glossary.rows.map(row=>[row.term,row.description])),statistical:{},sensitivityTags:[]};
   const catalog=metadata.structural.sources;
+  if (!hasNamedCountSubject(question,catalog,glossary.rows.map(row=>row.description))) {
+    return {kind:'rejected' as const,reason:'analytic_query_unsupported',attempts:[]};
+  }
   const schema=plannerSchema(catalog,relationships.rows);
+  const normalize = (text:string) => normalizeCatalogMentions(text,catalog,catalog.flatMap(source=>[source.name,...(source.type==='sql_server'?['SQL Server']:[])]));
   const prompt=`Plan the exact question using the catalog and the typed response schema. Refuse with an empty intents array if its subject is absent. A loosely related object is insufficient. Use the source and subject from earlier turns only when resolving a follow-up. Count records for quantities, order totals, volume or "how many". Sum a numeric column only for a requested amount. Use the exact display header to resolve workbook columns. For a date range use gte and upperExclusive with the next calendar boundary. Ranked groups use value sort and a limit. For join operations select a catalog join and its left table. Use null for unused fields.
-on: ${question}
-turns: ${priorTurns.map(turn=>`${turn.role}: ${turn.content}`).join('\n').slice(-900)}`;
+Question: ${normalize(question)}
+Prior turns: ${priorTurns.map(turn=>`${turn.role}: ${normalize(turn.content)}`).join('\n').slice(-900)}`;
   const attempts:Array<{model:string;inputTokens:number;outputTokens:number;error?:string}>=[];
   let repair='';
   for(let attempt=0;attempt<3;attempt++){

@@ -16,6 +16,33 @@ const OPERATORS = ['eq','neq','gt','gte','lt','lte','is_not_null'];
 const joinKey = (join: PlannerJoin) => join.from_name + ' = ' + join.to_name;
 const scalar = nullable({anyOf:[{type:'boolean'},{type:'number'},{type:'string'}]});
 
+/** Preserve known catalog names through the model gateway's title-case name scrubber.
+ * Only strings matched to the catalog are changed. Other names still go through normal redaction. */
+export function normalizeCatalogMentions(question: string, catalog: PlannerCatalog, sourceNames: string[] = []): string {
+  const terms = [...new Set([...sourceNames, ...catalog.flatMap(source => source.assets.flatMap(asset =>
+    asset.columns.flatMap(column => column.label && column.label !== column.name ? [column.label] : [])))])]
+    .filter(term => /^[a-z][a-z0-9_ -]{1,70}[a-z0-9]$/i.test(term) && term.includes(' '))
+    .sort((a,b) => b.length-a.length);
+  if (!terms.length) return question;
+  const alternatives = terms.join('|');
+  return question.replace(new RegExp('\\b(?:' + alternatives + ')(?=s?\\b)', 'gi'), term => term.toLowerCase());
+}
+
+/** A direct count of a named subject requires that subject's head noun in the catalog.
+ * A tenant glossary may explicitly map a business term to a differently named table. */
+export function hasNamedCountSubject(question: string, catalog: PlannerCatalog, glossary: string[]): boolean {
+  const subject = /^how many ([a-z][a-z -]{1,60}?) (?:are|were|was|is)\b/i.exec(question)?.[1];
+  if (!subject) return true;
+  const singular = (word: string) => word.toLowerCase().replace(/ies$/, 'y').replace(/(?<!s)s$/, '');
+  const generic = new Set(['record','row','entry','item','one']);
+  const tokens = (value: string) => value.match(/[a-z]+/gi)?.map(singular) ?? [];
+  const noun = tokens(subject).filter(word => !generic.has(word)).at(-1);
+  if (!noun) return true;
+  const catalogTerms = catalog.flatMap(source => source.assets.flatMap(asset =>
+    [asset.qualified_name, ...asset.columns.flatMap(column => [column.name,column.label ?? ''])]));
+  return [...catalogTerms,...glossary].some(term => tokens(term).includes(noun));
+}
+
 export function plannerSchema(catalog: PlannerCatalog, joins: PlannerJoin[]): Schema {
   const branches = catalog.flatMap(({assets}, sourceIndex) => {
     const connections = joins.filter(join => join.source_index === sourceIndex);

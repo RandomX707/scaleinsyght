@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodePlannerOutput, plannerSchema } from '../../apps/api/src/structured-planner.js';
+import { decodePlannerOutput, hasNamedCountSubject, normalizeCatalogMentions, plannerSchema } from '../../apps/api/src/structured-planner.js';
 
 const catalog = [{assets: [{qualified_name:'Charges',columns:[{name:'charge_type',label:'Charge Type'},{name:'charged_on'}]}]}];
 const payload = {
@@ -13,6 +13,13 @@ describe('structured planner', () => {
     expect(decodePlannerOutput(wrap(payload), catalog, [], 'Which groups have the smallest counts?')[0]?.intent).toEqual({
       kind:'group_by',table:'Charges',groupBy:'charge_type',order:'asc',orderBy:'value',limit:2,aggregate:{operation:'count'},
     });
+  });
+  it('preserves catalog headings through redaction without normalizing arbitrary names', () => {
+    expect(normalizeCatalogMentions('Show Charge Types for Jane Doe',catalog)).toBe('Show charge types for Jane Doe');
+  });
+  it('refuses a direct count of a subject absent from the catalog', () => {
+    expect(hasNamedCountSubject('How many insurance claims were denied?',catalog,[])).toBe(false);
+    expect(hasNamedCountSubject('How many Charges were cancelled?',catalog,[])).toBe(true);
   });
   it('rejects a column outside the selected table', () => {
     expect(() => decodePlannerOutput(wrap({...payload,groupBy:'Visits.charge_type'}), catalog, [], 'Count records')).toThrow('column_does_not_belong_to_selected_table');

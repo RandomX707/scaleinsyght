@@ -5,7 +5,7 @@ import { config } from 'dotenv';
 import { Pool } from 'pg';
 import { withTenant } from '@scaleinsyght/db';
 import { createTenant } from '../../scripts/tenant-create.js';
-import { runSqlServerAdminQuery } from '../../testbed/sqlserver/admin-query.js';
+import { createDisposableSqlServerWriter } from '../support/sqlserver-writer.js';
 
 config({ path: '.env' });
 const tenantUrl = () => { const value = process.env.DATABASE_URL_MIGRATE; if (!value) throw new Error('DATABASE_URL_MIGRATE is required for local S2 acceptance.'); const url = new URL(value); url.pathname = '/si_test'; return url.toString(); };
@@ -25,14 +25,14 @@ test('s2_empty_tenant_adds_real_sql_server_profiles_and_relationships', async ({
   await expect(page.getByRole('heading', { name: 'Good afternoon, Test Analyst' })).toBeVisible();
   const remoteTrustOverride = await page.request.post('/api/connections', { data: { connectorType: 'sql_server', displayName: 'Remote certificate override', credential: { host: 'sql.example.invalid', port: Number(process.env.SQLSERVER_TESTBED_PORT), database: process.env.SQLSERVER_TESTBED_DATABASE, username: process.env.SQLSERVER_TESTBED_USERNAME, password: process.env.SQLSERVER_TESTBED_PASSWORD, trustServerCertificate: true } } });
   expect(remoteTrustOverride.status()).toBe(400); expect(await remoteTrustOverride.json()).toMatchObject({ error: 'sqlserver_certificate_override_local_only' });
-  runSqlServerAdminQuery('ALTER ROLE [db_datawriter] ADD MEMBER [si_testbed_reader];', 'si_testbed_sqlserver');
+  const writerCredential = createDisposableSqlServerWriter();
   try {
-    const draft = await page.request.post('/api/connections', { data: { connectorType: 'sql_server', displayName: 'Writable role must be refused', credential: { host: process.env.SQLSERVER_TESTBED_HOST, port: Number(process.env.SQLSERVER_TESTBED_PORT), database: process.env.SQLSERVER_TESTBED_DATABASE, username: process.env.SQLSERVER_TESTBED_USERNAME, password: process.env.SQLSERVER_TESTBED_PASSWORD, trustServerCertificate: true } } });
+    const draft = await page.request.post('/api/connections', { data: { connectorType: 'sql_server', displayName: 'Writable role must be refused', credential: { host: process.env.SQLSERVER_TESTBED_HOST, port: Number(process.env.SQLSERVER_TESTBED_PORT), database: process.env.SQLSERVER_TESTBED_DATABASE, username: writerCredential.username, password: writerCredential.password, trustServerCertificate: true } } });
     expect(draft.status()).toBe(201);
     const draftId = (await draft.json() as { connectionId: string }).connectionId;
     const refused = await page.request.post(`/api/connections/${draftId}/test`);
     expect(refused.status()).toBe(400); expect(await refused.json()).toMatchObject({ error: 'sqlserver_connector_role_not_read_only' });
-  } finally { runSqlServerAdminQuery('ALTER ROLE [db_datawriter] DROP MEMBER [si_testbed_reader];', 'si_testbed_sqlserver'); }
+  } finally { writerCredential.remove(); }
   await page.goto('/connectors'); await expect(page.getByText(/No sources connected/)).toBeVisible();
   await page.screenshot({ path: 'docs/acceptance/s2/empty-connectors.png', fullPage: true });
   await page.locator('.page-heading').getByRole('button', { name: /Add connector/ }).click();

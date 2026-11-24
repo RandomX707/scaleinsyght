@@ -36,7 +36,7 @@
     "test:integration": "pnpm db:test:reset && pnpm db:migrate:test && vitest run tests/integration",
     "test:contracts": "pnpm db:test:reset && pnpm db:migrate:test && pnpm db:setup:sample && pnpm dbt:sample && vitest run tests/contracts",
     "test:e2e": "pnpm db:test:reset && pnpm db:migrate:test && pnpm test:seed:golden -- --test && playwright test",
-    "test:testbed": "pnpm testbed:up && pnpm db:test:reset && pnpm db:migrate:test && pnpm exec vitest run tests/testbed && pnpm exec playwright test --config=playwright.testbed.config.ts",
+    "test:testbed": "pnpm db:test:reset && pnpm db:migrate:test && pnpm exec vitest run tests/testbed && pnpm exec playwright test --config=playwright.testbed.config.ts",
     "lint": "eslint .",
     "typecheck": "tsc -b"
   },

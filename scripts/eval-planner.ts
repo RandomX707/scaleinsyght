@@ -25,9 +25,12 @@ const pool = new Pool({ connectionString: database.toString() });
 type Case = {id: string; sources: Source[]; turns: string[]};
 type Item = {id: string; status: 'correct' | 'refused correctly' | 'wrong' | 'failed'; costUsd: number; latencyMs: number; turns: unknown[]};
 const truth = await load('truth.json') as Record<string, Expected>;
+const smoke = process.argv.includes('--smoke');
+const selectedDevelopmentCases = process.argv.find(arg=>arg.startsWith('--questions='))?.slice('--questions='.length).split(',');
+if (selectedDevelopmentCases?.some(id=>!/^Q[0-9]{2}$/.test(id))) throw new Error('Select development case IDs only');
 const sets = [
   {name: 'questions', cases: await load('questions.json') as Case[], items: [] as Item[]},
-  ...(process.argv.includes('--smoke') ? [] : [{name: 'heldout', cases: await load('heldout.json') as Case[], items: [] as Item[]}]),
+  ...(smoke || selectedDevelopmentCases ? [] : [{name: 'heldout', cases: await load('heldout.json') as Case[], items: [] as Item[]}]),
 ];
 const catalog = {p: 'postgres', s: 'sql_server', x: 'excel'};
 const ids = {} as Record<Source, string>;
@@ -147,7 +150,11 @@ async function evaluate(test: Case): Promise<Item> {
 }
 function summary(items: Item[]) {
   const counts = Object.fromEntries(['correct', 'refused correctly', 'wrong', 'failed'].map(status => [status, items.filter(item => item.status === status).length]));
-  return {...counts, total: items.length, score: counts.correct! + counts['refused correctly']! - counts.failed! - 2 * counts.wrong!};
+  const average = (sum:number) => items.length ? sum / items.length : 0;
+  return {...counts,total:items.length,
+    averageLatencyMs:Math.round(average(items.reduce((total,item)=>total+item.latencyMs,0))),
+    averageCostUsd:Number(average(items.reduce((total,item)=>total+item.costUsd,0)).toFixed(8)),
+    score: counts.correct! + counts['refused correctly']! - counts.failed! - 2 * counts.wrong!};
 }
 async function save() {
   await writeFile(output, JSON.stringify({started: started.toISOString(), tenantId, costUsd: spend, sets: sets.map(set => ({
@@ -161,7 +168,9 @@ try {
   await checked('/auth/login', 'POST', {tenantId, email, password});
   await connect();
   for (const set of sets) {
-    for (const test of (process.argv.includes('--smoke') ? set.cases.slice(0,1) : set.cases)) {
+    const cases = smoke ? set.cases.slice(0,1) : selectedDevelopmentCases
+      ? set.cases.filter(test=>selectedDevelopmentCases.includes(test.id)) : set.cases;
+    for (const test of cases) {
       const item = await evaluate(test);
       set.items.push(item);
       if (set.name !== 'heldout') console.log(set.name, item.id, item.status, item.latencyMs + 'ms', '$' + item.costUsd);

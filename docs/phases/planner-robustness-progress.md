@@ -63,3 +63,20 @@ async POST through hosted planning, PostgreSQL query and answer composition.
 The first batch attempt exposed mixed uuid/text inference on the planning-step
 INSERT and never reached the model. The cast is fixed and the smoke query
 passed after that fix. The full two-model results and gates are still pending.
+
+## Step 4 in progress
+
+A diagnostic Luna run after the async change scored 27/30 acceptable on
+development (23 correct, 4 correct refusals, 1 wrong, 2 failed) and 10/10
+acceptable on held-out. The development failures showed that the disclosure
+scrubber treated title-cased exact workbook headers as names. Catalog-matched
+headers now reach the planner in lowercase with the original label in the
+schema. A direct named count now requires its subject to exist in the catalog
+or tenant glossary. Targeted development verification passed Q12 and Q15 and
+correctly refused Q28. The complete comparison is running on both models.
+
+The testbed command now reuses initialized sources. SQL Server writer-refusal
+tests use a disposable writer rather than granting write access to the
+shared reader. The four SQL Server connector contract cases passed. Local
+lint, typecheck, SQL parsing and golden evaluation also passed at prior
+checkpoints. Three full testbed gates and PR/CI are still pending.

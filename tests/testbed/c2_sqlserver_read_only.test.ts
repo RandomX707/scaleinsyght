@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { config } from 'dotenv';
 import { resolve } from 'node:path';
 import { createSqlServerConnector } from '@scaleinsyght/connectors';
-import { runSqlServerAdminQuery } from '../../testbed/sqlserver/admin-query.js';
+import { createDisposableSqlServerWriter } from '../support/sqlserver-writer.js';
 
 config({ path: resolve('.env') });
 const required = ['SQLSERVER_TESTBED_HOST','SQLSERVER_TESTBED_PORT','SQLSERVER_TESTBED_DATABASE','SQLSERVER_TESTBED_USERNAME','SQLSERVER_TESTBED_PASSWORD'] as const;
@@ -19,15 +19,15 @@ describe('SQL Server connector read-only contract', () => {
   afterAll(async () => { await connector.close(); });
   it('sqlserver_connector_rejects_effective_write_permissions', async () => {
     await expect(connector.test()).resolves.toMatchObject({ ok: true, readOnly: true });
-    runSqlServerAdminQuery(`ALTER ROLE [db_datawriter] ADD MEMBER [si_testbed_reader];`, 'si_testbed_sqlserver');
+    const writerCredential = createDisposableSqlServerWriter();
     const writer = createSqlServerConnector({
       server: process.env.SQLSERVER_TESTBED_HOST!, port: Number(process.env.SQLSERVER_TESTBED_PORT), database: process.env.SQLSERVER_TESTBED_DATABASE!,
-      username: process.env.SQLSERVER_TESTBED_USERNAME!, password: process.env.SQLSERVER_TESTBED_PASSWORD!, encrypt: true, trustServerCertificate: true,
+      username: writerCredential.username, password: writerCredential.password, encrypt: true, trustServerCertificate: true,
     });
     try { await expect(writer.test()).rejects.toThrow('sqlserver_connector_role_not_read_only'); }
     finally {
       await writer.close();
-      runSqlServerAdminQuery(`ALTER ROLE [db_datawriter] DROP MEMBER [si_testbed_reader];`, 'si_testbed_sqlserver');
+      writerCredential.remove();
     }
   });
   it('sqlserver_catalog_discovery_includes_views_and_routines', async () => {
