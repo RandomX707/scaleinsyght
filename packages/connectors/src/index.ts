@@ -55,4 +55,5 @@ export interface ReadOnlyConnector {
 }
 
 export { PostgresConnector, createPostgresConnector, type PostgresStructuralReference } from './postgres.js';
+export { SqlServerConnector, createSqlServerConnector, type SqlServerConnection } from './sql-server.js';
 export { encryptConnectionSecret, decryptConnectionSecret, type EncryptedConnectionSecret } from './connection-secrets.js';

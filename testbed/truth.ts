@@ -2,6 +2,7 @@ import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { config } from 'dotenv';
 import { Client } from 'pg';
+import { collectSqlServerTruth } from './sqlserver/truth.js';
 
 config({ path: resolve('.env') });
 const connectionString = process.env.DATABASE_URL_TESTBED;
@@ -54,6 +55,7 @@ try {
     (SELECT count(DISTINCT patient_id) FROM encounters)::text AS source_count,
     (SELECT count(DISTINCT patient_id) FROM patients)::text AS target_count
     FROM encounters e JOIN patients p ON p.patient_id=e.patient_id`);
+  const sqlServer = await collectSqlServerTruth(client);
   const truth = {
     source: 'si_testbed_pg',
     generatedAt: new Date().toISOString(),
@@ -70,6 +72,7 @@ try {
     sensitiveColumns,
     nullRates,
     metrics,
+    sqlServer,
   };
   writeFileSync(resolve('testbed/truth.json'), `${JSON.stringify(truth, null, 2)}\n`, { mode: 0o644 });
   process.stdout.write('SQL-derived truth written for 5 tables, 2 declared relationships, and the undeclared patient key.\n');
