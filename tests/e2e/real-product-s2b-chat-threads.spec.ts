@@ -50,14 +50,14 @@ test('s2b_one_thread_per_chat_with_every_turn_and_one_recent_entry', async ({ pa
   await page.getByRole('button', { name: 'Send question' }).dblclick();
   await answerLatest(page, 1);
   // Second question in the same chat.
-  await page.getByLabel('Ask a question').fill('and how many of them were cancelled?');
+  await page.getByLabel('Ask a question').fill('and how many orders are there in total?');
   await page.getByRole('button', { name: 'Send question' }).click();
   await answerLatest(page, 2);
 
   // One conversation, every turn oldest first, scrolled to the newest.
   await expect(page).toHaveURL(/\/conversations\/[0-9a-f-]{36}$/);
   const conversationId = new URL(page.url()).pathname.split('/').at(-1)!;
-  await expect(page.locator('.question-bubble')).toHaveText(['what are Orders per department', 'and how many of them were cancelled?']);
+  await expect(page.locator('.question-bubble')).toHaveText(['what are Orders per department', 'and how many orders are there in total?']);
   await expect.poll(() => page.locator('.chat-scroll').evaluate((element) => Math.abs(element.scrollHeight - element.clientHeight - element.scrollTop) <= 4)).toBe(true);
   await expect(page.locator('.answer-claim').last()).toBeInViewport();
   const stored = await withTenant(adminPool, tenantId, (client) => client.query<{ conversation_id: string; runs: string; answered: string }>(
@@ -70,13 +70,14 @@ test('s2b_one_thread_per_chat_with_every_turn_and_one_recent_entry', async ({ pa
 
   // Recent conversations: one entry per real thread, titled from its first question.
   const recent = page.locator('.recent-list button');
-  await expect(recent).toHaveText(['what are Orders per department']);
+  await expect(recent).toHaveCount(1);
+  await expect(recent).toHaveText([/^\W*what are Orders per department$/]);
   await page.getByRole('button', { name: 'New chat' }).click();
   await expect(page.locator('.question-bubble')).toHaveCount(0);
   for (let index = 0; index < await recent.count(); index++) {
     await recent.nth(index).click();
     await expect(page).toHaveURL(new RegExp(`/conversations/${conversationId}$`));
-    await expect(page.locator('.question-bubble')).toHaveText(['what are Orders per department', 'and how many of them were cancelled?']);
+    await expect(page.locator('.question-bubble')).toHaveText(['what are Orders per department', 'and how many orders are there in total?']);
   }
   await page.reload();
   await expect(page.locator('.question-bubble')).toHaveCount(2);
