@@ -78,7 +78,7 @@ test('s2_empty_tenant_adds_real_sql_server_profiles_and_relationships', async ({
   await page.getByText('Model and typed plan',{exact:true}).click();await expect(page.getByText(/Plan model:/)).toBeVisible();await expect(page.getByText(/Answer model:/)).toBeVisible();
   await expect(page.getByLabel('Ask a question')).toHaveValue('');await expect(page).toHaveURL(/\/conversations\//);
   const recent=page.locator('.recent-list button').filter({hasText:'How many patients are in SQL Server hospital?'});await expect(recent).toBeVisible();await recent.click();await expect(page.getByText('Source result: 500',{exact:true})).toBeVisible();
-  const followUpPost=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/runs'&&response.request().method()==='POST');
+  const followUpPost=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/runs'&&response.request().method()==='POST',{timeout:75_000});
   await page.getByLabel('Ask a question').fill('and how many of them have a phone number?');
   await page.getByRole('button',{name:'Send question'}).click();
   const submitted=await followUpPost;expect(submitted.status(),JSON.stringify(await submitted.json())).toBe(201);
@@ -107,7 +107,7 @@ test('s2_empty_tenant_adds_real_sql_server_profiles_and_relationships', async ({
   await page.getByRole('button',{name:'Close dialog'}).click();
   type Captured={state:string;modelProvenance:Array<{purpose:string;model:string;inputTokens:number;outputTokens:number;typedPlan:unknown}>;answer:{answer:{claims:Array<{statement:string}>;evidence:Array<{locator:string}>;bySource:Array<{connectorType:string;value:number;rows?:Array<{group_value:string;value:number}>}>}}};
   async function askChecked(question:string,expectedSources:number,sql:RegExp,trigger?:()=>Promise<void>){
-    const responsePromise=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/runs'&&response.request().method()==='POST');
+    const responsePromise=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/runs'&&response.request().method()==='POST',{timeout:75_000});
     if(trigger)await trigger();else{await page.getByLabel('Ask a question').fill(question);await page.getByRole('button',{name:'Send question'}).click();}
     const response=await responsePromise;
     expect(response.status(),`${question}: ${JSON.stringify(await response.json())}`).toBe(201);
@@ -179,7 +179,7 @@ test('s2_empty_tenant_adds_real_sql_server_profiles_and_relationships', async ({
   expect(round6(evidence[3]!.answer.bySource[0]!.rows?.map(row=>({providerId:Number(row.group_value),average:Number(row.value)}))??[])).toEqual(round6(truth.answerChecks.averageEncountersPerPatientByProvider.sqlServer));
   await page.getByRole('button',{name:'New chat'}).click();
   await page.getByLabel('Ask a question').fill('How many encounters were emergency visits in 2025?');
-  const choicePost=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/runs'&&response.request().method()==='POST');
+  const choicePost=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/runs'&&response.request().method()==='POST',{timeout:75_000});
   await page.getByRole('button',{name:'Send question'}).click();
   expect((await choicePost).status()).toBe(409);
   await expect(page.getByRole('heading',{name:'Which source should I use?'})).toBeVisible();

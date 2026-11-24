@@ -7,13 +7,14 @@
     "dev": "tsx watch src/main.ts"
   },
   "dependencies": {
-    "@scaleinsyght/db": "workspace:*",
-    "@scaleinsyght/runner": "workspace:*",
     "@scaleinsyght/analytic": "workspace:*",
+    "@scaleinsyght/artifacts": "workspace:*",
     "@scaleinsyght/connectors": "workspace:*",
-    "@scaleinsyght/model-gateway": "workspace:*",
     "@scaleinsyght/contracts": "workspace:*",
+    "@scaleinsyght/db": "workspace:*",
+    "@scaleinsyght/model-gateway": "workspace:*",
     "@scaleinsyght/policy": "workspace:*",
-    "@scaleinsyght/reports": "workspace:*"
+    "@scaleinsyght/reports": "workspace:*",
+    "@scaleinsyght/runner": "workspace:*"
   }
 }

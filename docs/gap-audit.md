@@ -1,70 +1,42 @@
 # Real product gap audit
 
-> Updated for the S2 fix-up on 24 Nov 2026 (skewed testbed data, grouped answers, source choice). Statuses are based on the passing local acceptance walkthrough, not the eventual target. `Real` means the listed path has run end to end against a tenant-connected source. Fixture implementations are confined to tests; no fixture runtime path is counted as product behavior.
+> Last updated 24 Nov 2026 for S3. One row per item; rows are edited in place, never appended. `Real` means the path has passed its end-to-end walkthrough against a tenant-connected source, and the row names that test. `Missing` means it has not. `tests/unit/gap-audit.test.ts` fails if an item appears twice, a status is unknown, or a `Real` row names no test.
 
-## Screens and user workflows
-
-| Prototype feature | Status | Evidence or remaining work |
+| Item | Status | Evidence or remaining work |
 |---|---|---|
-| Tenant creation, login, and workspace membership | Real | `pnpm tenant:create`; database-backed sign-in and one-use, expiring invite link accepted in `tests/e2e/real-product-s1.spec.ts`. |
-| Workspace shell, navigation, recent conversations | Real | `tests/e2e/real-product-s2.spec.ts` asks a question, finds it in Recent conversations, reopens it, starts a New chat and reopens the thread after a page reload; the thread keeps both turns. |
-| Home chat and source selection | Real | The S2 walkthrough clears the composer after sending, deselects a source in the All sources picker, and resolves the follow-up “and how many of them have a phone number?” from the earlier turn. Every answer shows the source it used and why. When an unnamed question fits more than one selected source, Home asks which one to use. Grouped answers summarise highest, lowest, spread and ties, show the full table, and add a bar chart for 2 to 20 groups. |
-| Connectors list and PostgreSQL add flow | Real | UI credential entry, connection test, activation, and real profile are exercised by the S1 Playwright test. Credentials are encrypted and not returned after submission. |
-| PostgreSQL profile and sensitive-field classification | Real | Real metadata/profile route exercised; test asserts MRN classification and compares profile to `testbed/truth.json`. |
-| ER explorer | Real | Declared and inferred references are returned from the real graph. S1 checks the PostgreSQL patient relationship; S2 checks that the SQL Server ER matches the 6 relationships in `testbed/truth.json` (declared and inferred, with confidence), and that views are drawn with a dashed border. |
-| Dictionary landing, import summary, tables and columns | Real | CSV importer adds descriptions to harvested metadata; UI reports documented coverage and the S1 walkthrough checks the real source. |
-| Dictionary Standard/Custom tabs and procedure SQL interactions | Missing | Routine metadata and SQL are discovered and tested, but the full prototype interaction set is not yet complete. |
-| Lineage table and column views | Missing | No seeded metadata route remains; real dbt and SQL lineage arrives in S4. |
-| ID trace | Missing | Real cross-source fingerprints and matches arrive in S5. |
-| BI reports | Missing | Real Tableau import is S8; Power BI remains missing pending a supplied `.pbit`. |
-| Reports, saved questions, exports, evidence packs | Missing | Real-data report creation and PDF/XLSX/PPTX/Markdown/Word exports are S7. |
-| Agents and My agent | Missing | Connector activation creates a real connector agent; prototype views and saved-question behavior are not yet complete. |
-| Approval matrix, findings, notifications | Missing | Real nightly snapshot comparison and notification workflow are S6. |
-| Controls and Usage | Missing | Empty-tenant and real-source product flows still need prototype-faithful screen completion. |
-| Hub integrations | Real | Disconnected empty state is the approved behavior; no fixture adapter or sample metric is exposed. |
-| Profile, Dictionary, ER empty states | Real | Empty tenant begins with no source content and directs the user to add a connector. |
-
-## Sources and product capabilities
-
-| Capability | Status | Evidence or remaining work |
-|---|---|---|
-| PostgreSQL connector and read-only activation | Real | Local testbed walkthrough creates connection from user-supplied credentials, verifies read-only access, activates it, and profiles it. |
-| PostgreSQL profiling, procedures, and SQL metadata | Real | Real tables, columns, views, functions/procedures, SQL definitions, and profile values are read from `si_testbed_pg`. |
-| PostgreSQL declared and inferred ER relationships | Real | The testbed truth oracle includes a relationship without a declared foreign key; profiler marks inferred edges separately. |
-| Sensitive-column classification | Real | `testbed/truth.json` carries expected classifications; S1 acceptance verifies the live PostgreSQL metadata labels. |
-| Dictionary CSV/XLSX import | Real | S1 imports a real testbed CSV dictionary and checks documented-versus-harvested coverage. |
-| Typed analytic plan query shapes | Real | Contract test executes count, filtered count, group-by, within-source join, and two-source comparison against PostgreSQL and verifies SQL-derived truth. The S2 walkthrough covers filtered join, ranked grouped join, per-group average, two-source count comparison and a two-source filtered count through the UI. Saved-question and export coverage is S7. |
-| Live OpenAI planning and answer provenance | Real | The S2 walkthrough asks five questions and one follow-up through the configured model gateway. Each answer records the plan model, answer model, token counts and typed plan, shows the executed SQL per source, and matches `testbed/truth.json`. The answer sentence is model-written and validated against the returned values. Passed 3 consecutive `pnpm test:testbed` runs. |
-| SQL Server connector and testbed | Real | SQL Server 2022 runs in Colima as a local test source; UI acceptance tests cover writer refusal, encrypted credential storage, real profiling, view/routine metadata, inferred ER, Dictionary, and a real Home answer. SQL-derived counts and shared-key counts match `testbed/truth.json`. |
-| Excel workbook connector | Missing | S3 will add and profile the three-sheet overlapping workbook. |
-| dbt manifest/catalog lineage | Missing | S4 will import real generated artifacts. |
-| View/procedure SQL lineage | Missing | SQL is discovered in S1; graph lineage from parsed definitions is S4. |
-| Cross-system ID trace | Missing | S5 will verify common patient and encounter fingerprints without storing raw identifiers. |
-| Nightly refresh, change detection, approvals, notifications | Missing | S6 will mutate the testbed and verify snapshot-difference findings. |
-| Saved questions, reports, exports | Missing | S7 will generate and check outputs against the truth oracle. |
-| Tableau `.twb` parsing | Missing | S8 will parse a real published-format workbook. |
-| Power BI `.pbit` parsing | Missing | No real export exists in `testbed/bi/real/`; the parser will become real when one is supplied and validated. |
-| Snowflake connector and testbed | Missing — untested | Requires `SNOWFLAKE_*` credentials. No signup or credit-consuming action has been taken. |
-| Lake and CRM read connectors (Phase 6) | Missing | Decision 36's synthetic local providers exist only in `tests/support/test-generic-connectors.ts`. They are not reachable at runtime: production entry points inject no test sources, `POST /api/connections` accepts only PostgreSQL and SQL Server, and `tests/unit/no-runtime-fixtures.test.ts` forbids runtime imports of them. Migration `020_phase6_generic_connectors` only widens the allowed connector-type values. Phase 6 is not started. |
+| Tenant creation, login and invites | Real | `pnpm tenant:create`; database-backed sign-in and a one-use, expiring invite link accepted in `tests/e2e/real-product-s1.spec.ts`. No public signup. |
+| Workspace shell, navigation and recent conversations | Real | `tests/e2e/real-product-s2.spec.ts` finds a question in Recent conversations, reopens it, starts a New chat and reopens the thread after a reload; both turns are kept. |
+| Home chat, follow-ups and source choice | Real | `tests/e2e/real-product-s2.spec.ts` and `tests/e2e/real-product-s3.spec.ts`: the composer clears after sending, a follow-up resolves from the earlier turn, every answer shows the source used and why, and an unnamed question that fits more than one selected source asks which one to use. |
+| Live model planning, answers and provenance | Real | `tests/e2e/real-product-s2.spec.ts` and `tests/e2e/real-product-s3.spec.ts`: each answer records the plan and answer models, token counts and typed plan, shows the executed SQL per source, and matches `testbed/truth.json`. Planning uses JSON mode; the answer sentence is checked against the returned values. |
+| Typed query shapes | Real | `tests/testbed/c3_real_postgres_query_intents.test.ts` and `tests/testbed/c7_s2_question_queries.test.ts` against PostgreSQL and SQL Server; `tests/unit/excel-connector.test.ts` against a workbook. Covers count, filtered count, ordered and limited group-by (decision 40), joins, ranked grouped joins, per-group averages and two-source comparison. |
+| Grouped answers: summary, table and chart | Real | `tests/e2e/real-product-s2.spec.ts`: highest, lowest, spread and ties are computed in code and stated, the full table appears under the answer, and a bar chart is drawn for 2 to 20 groups (none for 24). |
+| PostgreSQL connector | Real | `tests/e2e/real-product-s1.spec.ts`: UI credential entry, read-only test, activation with agent creation, profiling of tables, views and routines. Credentials are encrypted and never returned. |
+| SQL Server connector | Real | `tests/e2e/real-product-s2.spec.ts`, `tests/testbed/c2_sqlserver_read_only.test.ts`: SQL Server 2022 in Colima; writer refusal, encrypted credentials, profiling, views and routines, inferred ER, Dictionary and answers. |
+| Excel workbook connector | Real | `tests/e2e/real-product-s3.spec.ts` uploads `testbed/excel/hospital-operations.xlsx` through Add connector, creates the agent, and checks Profile, ER and Dictionary against truth, showing original header text ("Patient ID"). Five questions and a follow-up run as DuckDB SQL in memory in the worker and match truth. A non-`.xlsx` upload is refused and nothing is stored. Connector cases run in CI in `tests/unit/excel-connector.test.ts`. Not covered: `.xls` or `.csv` workbooks, formula recalculation. |
+| Snowflake connector | Missing — untested | Requires `SNOWFLAKE_*` credentials. No signup or credit-consuming action has been taken. |
+| Sensitive-column classification | Real | Declared tags (column comment, extended property, workbook header note) plus tags inferred from column names and value formats (decision 41). `tests/e2e/real-product-s3.spec.ts` checks an untagged workbook sheet still classifies name, date of birth, MRN and phone; `tests/testbed/c6_real_postgres_metadata.test.ts` checks the detector adds no tags to the PostgreSQL testbed. Review of inferred tags in the Approval matrix waits for that screen (S6). |
+| ER explorer | Real | `tests/e2e/real-product-s1.spec.ts`, `tests/e2e/real-product-s2.spec.ts`, `tests/e2e/real-product-s3.spec.ts`: declared and inferred relationships with measured confidence match truth; views are drawn differently; sheet relationships are never proposed on personal or regulated columns. |
+| Dictionary tables, columns, statistics and import | Real | `tests/e2e/real-product-s1.spec.ts` imports a CSV dictionary and checks documented coverage; `tests/e2e/real-product-s3.spec.ts` checks null rates and that tagged columns show statistics withheld. |
+| Dictionary Standard and Custom tabs, procedure interactions | Missing | Routine definitions are discovered and listed; the prototype's full Standard/Custom and procedure tab interactions are not built. |
+| Lineage views, dbt and view or procedure SQL lineage | Missing | S4. View and procedure SQL is discovered; graph lineage from parsed definitions and dbt artifacts is not built. |
+| ID trace | Missing | S5. Cross-system fingerprints and matching without storing raw identifiers. |
+| Nightly refresh, Approval matrix, findings and notifications | Missing | S6. Snapshot comparison, findings, review of inferred sensitive columns, and notifications. |
+| Saved questions, reports, exports and evidence packs | Missing | S7. Exports on real data checked against truth. |
+| Tableau workbooks | Missing | S8. Parse a real `.twb` in its published format. |
+| Power BI templates | Missing | No real export exists in `testbed/bi/real/`; stays Missing until one is supplied and parsed. |
+| Agents and My agent screens | Missing | Connector activation creates a real agent; the prototype screens and saved-question behaviour are not built. |
+| Controls and Usage screens | Missing | Not yet built to the prototype for real sources. |
+| Hub integrations | Real | Disconnected empty state is the approved behaviour; `tests/unit/no-runtime-fixtures.test.ts` checks no fixture adapter or sample metric is reachable. |
+| Empty states for Profile, Dictionary and ER | Real | `tests/e2e/real-product-s1.spec.ts` starts from an empty tenant; each page explains itself and links to Add connector. |
+| Lake and CRM read connectors (Phase 6) | Missing | Decision 36's synthetic providers exist only in `tests/support/test-generic-connectors.ts` and are not reachable at runtime; `POST /api/connections` accepts only PostgreSQL, SQL Server and Excel. Phase 6 is not started. |
 | Customer-side gateway and SSO (Phase 6) | Missing | Code and contract tests exist; no walkthrough has run against a real private-network source or identity provider. |
 
-## Product runtime fixture audit
+## Runtime fixture check
 
-Rechecked for the S2 review fixes: no synthetic or fixture provider, including the Phase 6 lake and CRM test providers, is reachable from the product runtime.
+No synthetic or fixture provider is reachable from the product runtime. Fixtures live only in `tests/` and `tests/support/`; `tests/unit/no-runtime-fixtures.test.ts` fails if runtime code imports them.
 
+## Testbed and evidence
 
-S1 removed fixture-backed connector, profile, analytic-result, metadata-import, Hub-adapter, demo-seed, and demo-data runtime paths. Fixture implementations remain inside `tests/` and `tests/support/`; the `tests/unit/no-runtime-fixtures.test.ts` guard checks that runtime code does not import them. No product route can return seeded connector/profile/finding/question/approval/conversation records.
-
-## S1 acceptance evidence
-
-- `tests/contracts/c1_tenant_create_empty_workspace_and_single_use_invite.test.ts`: tenant creation and invite contract cases.
-- `tests/testbed/c3_real_postgres_query_intents.test.ts`: five typed query shapes against real local PostgreSQL and SQL-derived truth.
-- `tests/testbed/c6_real_postgres_metadata.test.ts`: source safety, profile metadata, inferred relationship, and routine metadata.
-- `tests/e2e/real-product-s1.spec.ts`: empty tenant, UI invite, PostgreSQL connection, profile, ER, dictionary import, and real Home answer.
-- `tests/testbed/c2_sqlserver_read_only.test.ts`, `tests/testbed/c6_sqlserver_truth.test.ts`: real SQL Server role safety, catalog metadata, relationship classification, and SQL-derived truth.
-- `tests/e2e/real-product-s2.spec.ts`: empty tenant, writer rejection, SQL Server UI connection, profile, inferred ER, routine Dictionary, conversation threads, five model-planned questions and a follow-up checked against truth, with model, tokens and SQL evidence written to `docs/acceptance/s2/answer-evidence.json`.
-- Testbed data is generated by `testbed/generate.ts` with skewed distributions: order counts per department range from 388 to 25 with no ties in the top five and one tie in the tail, most patients have one encounter and 18 have ten or more, and provider loads differ. The S2 walkthrough checks the top five, all twelve departments with the tie, and the per-provider averages against truth.
-- Testbed phone numbers are empty for some patients (429 of 500 in PostgreSQL, 445 of 500 in SQL Server), so the phone follow-up distinguishes a filtered count from a total.
-- Screenshots and video are saved under `docs/acceptance/s1/` by the local `pnpm test:testbed` command.
-- SQL Server screenshots and the walkthrough video are saved under `docs/acceptance/s2/`.
-- The isolated click-through instructions and recorded gate results are in [`docs/phases/real-product-s1-demo.md`](phases/real-product-s1-demo.md), [`docs/phases/real-product-s1-report.md`](phases/real-product-s1-report.md), and [`docs/phases/real-product-s2-demo.md`](phases/real-product-s2-demo.md).
+- Data comes from `testbed/generate.ts` (skewed distributions shared by PostgreSQL and SQL Server) and `testbed/excel/generate.ts` (a four-sheet workbook from the same rows). `testbed/truth.json` is computed from the databases and read from the workbook independently of the product.
+- `pnpm test:testbed` runs the testbed contract tests and the S1, S2 and S3 walkthroughs. Screenshots, video and answer evidence are saved under `docs/acceptance/s1/`, `docs/acceptance/s2/` and `docs/acceptance/s3/`.
+- Click-through instructions and gate results: [`phases/real-product-s1-demo.md`](phases/real-product-s1-demo.md), [`phases/real-product-s1-report.md`](phases/real-product-s1-report.md), [`phases/real-product-s2-demo.md`](phases/real-product-s2-demo.md), [`phases/real-product-s3-report.md`](phases/real-product-s3-report.md).

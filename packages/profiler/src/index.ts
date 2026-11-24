@@ -127,11 +127,12 @@ export async function runProfile(
         const fieldVersion = await ensureAssetVersion(client, input.tenantId, fieldAssetId, fieldStructural, {});
         if (fieldVersion.created) createdVersions += 1;
         await client.query(
-          `INSERT INTO profiler.field_profiles(tenant_id,asset_id,profile_version,field_name,data_type,is_nullable,sensitivity_tags,null_rate,distinct_count)
-           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
+          `INSERT INTO profiler.field_profiles(tenant_id,asset_id,profile_version,field_name,data_type,is_nullable,sensitivity_tags,null_rate,distinct_count,display_name,sensitivity_evidence)
+           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)
            ON CONFLICT(tenant_id,asset_id,profile_version,field_name) DO NOTHING`,
           [input.tenantId, fieldAssetId, fieldVersion.version, column.name, column.dataType, column.isNullable,
-            column.sensitivityTags, column.statistics.nullRate, column.statistics.distinctCount],
+            column.sensitivityTags, column.statistics.nullRate, column.statistics.distinctCount,
+            column.label && column.label !== column.name ? column.label : null, JSON.stringify(column.sensitivityEvidence ?? column.sensitivityTags.map((tag) => ({ tag, detection: 'declared', reason: 'declared by the source' })))],
         );
         await client.query(
           `INSERT INTO graph.relationships(tenant_id,family,relationship_type,from_asset_id,to_asset_id,granularity)
@@ -325,10 +326,10 @@ export async function storeWorkbook(
   input: { tenantId: string; connectionId: string; bytes: Buffer },
 ): Promise<{ artifactId: string; encryptedSize: number }> {
   const connection = await withTenant(pool, input.tenantId, async (client) => client.query(
-    `SELECT 1 FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2 AND connector_type='excel' AND status='active'`,
+    `SELECT 1 FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2 AND connector_type='excel' AND status IN ('draft','active')`,
     [input.tenantId, input.connectionId],
   ));
-  if (!connection.rowCount) throw new Error('active_excel_connection_not_found');
+  if (!connection.rowCount) throw new Error('excel_connection_not_found');
   const encrypted: StoredArtifact = await store.put(input.tenantId, input.bytes);
   try {
     await withTenant(pool, input.tenantId, async (client) => {
@@ -353,7 +354,7 @@ export async function readWorkbook(
   const metadata = await withTenant(pool, input.tenantId, async (client) => client.query<{ key_salt: Buffer }>(
     `SELECT w.key_salt FROM artifacts.workbooks w JOIN registry.connections c
       ON c.tenant_id=w.tenant_id AND c.connection_id=w.connection_id
-     WHERE w.tenant_id=$1 AND w.connection_id=$2 AND w.artifact_id=$3 AND c.status='active'`,
+     WHERE w.tenant_id=$1 AND w.connection_id=$2 AND w.artifact_id=$3 AND c.status IN ('draft','active')`,
     [input.tenantId, input.connectionId, input.artifactId],
   ));
   const keySalt = metadata.rows[0]?.key_salt;

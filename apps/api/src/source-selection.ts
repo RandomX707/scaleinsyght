@@ -15,6 +15,7 @@ const typeAliases: Record<string, string[]> = {
   postgres: ['postgres', 'postgresql'],
   sql_server: ['sql server', 'sqlserver', 'mssql'],
   snowflake: ['snowflake'],
+  excel: ['excel', 'workbook', 'spreadsheet'],
 };
 
 export function mentionsSource(text: string, source: Pick<CandidateSource, 'name' | 'connectorType'>): boolean {

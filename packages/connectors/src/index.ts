@@ -25,9 +25,13 @@ export interface ObjectProfile {
   version: string;
   columns: Array<{
     name: string;
+    /** Original column text when it differs from the SQL identifier (for example a workbook header). */
+    label?: string;
     dataType: string;
     isNullable: boolean;
     sensitivityTags: string[];
+    /** Why each tag applies: declared by the source or inferred by the detector (decision 41). */
+    sensitivityEvidence?: Array<{ tag: string; detection: 'declared' | 'inferred'; reason: string }>;
     statistics: { nullRate: number | null; distinctCount: number | null };
   }>;
   rowCount: number;
@@ -51,9 +55,12 @@ export interface ReadOnlyConnector {
   structuralReferences?(): Promise<Array<{from:string;to:string;fromColumn:string;toColumn:string;evidenceMethod?:'declared'|'inferred';confidence?:number;matchedCount?:number;sourceCount?:number}>>;
   routines?():Promise<Array<{qualifiedName:string;kind:'function'|'procedure';definition:string}>>;
   executeQueryIntent?(intent:unknown,includeCellSize?:boolean):Promise<{sql:string;rows:Array<Record<string,unknown>>}>;
+  /** Original text of a column (for example a workbook header) when it differs from its SQL identifier. */
+  columnLabels?(table:string):Promise<Record<string,string>>;
   close?(): Promise<void>;
 }
 
 export { PostgresConnector, createPostgresConnector, type PostgresStructuralReference } from './postgres.js';
 export { SqlServerConnector, createSqlServerConnector, type SqlServerConnection } from './sql-server.js';
 export { encryptConnectionSecret, decryptConnectionSecret, type EncryptedConnectionSecret } from './connection-secrets.js';
+export { ExcelConnector, createExcelConnector, parseWorkbook, normaliseIdentifier, type WorkbookSheet, type WorkbookColumn } from './excel.js';
