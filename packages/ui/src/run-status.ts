@@ -15,3 +15,15 @@ export function runStatusLabel(state: string, sourceNames: string[]): string {
     default: return 'In progress';
   }
 }
+
+/** "1 read-only step", "3 new updates". */
+export function plural(count: number, noun: string): string {
+  return `${count.toLocaleString('en-US')} ${noun}${count === 1 ? '' : 's'}`;
+}
+
+/** Answer cards are titled from the question, never from the plan type. */
+export function answerTitle(question: string): string {
+  const text = question.trim().replace(/[?.!]+$/, '');
+  const short = text.length > 90 ? `${text.slice(0, 87).trimEnd()}…` : text;
+  return short.charAt(0).toUpperCase() + short.slice(1);
+}

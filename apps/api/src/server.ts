@@ -753,7 +753,9 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const result=await withTenant(options.pool,current.tenantId,client=>client.query<{conversation_id:string;title:string;updated_at:Date;turn_count:number}>(
       `SELECT c.conversation_id,c.title,c.updated_at,count(r.run_id)::integer AS turn_count
        FROM runs.conversations c LEFT JOIN runs.runs r ON r.tenant_id=c.tenant_id AND r.conversation_id=c.conversation_id
-       WHERE c.tenant_id=$1 AND c.principal_id=$2 GROUP BY c.tenant_id,c.conversation_id
+       WHERE c.tenant_id=$1 AND c.principal_id=$2
+         AND EXISTS(SELECT 1 FROM runs.runs answered JOIN runs.analytic_answers a USING(tenant_id,run_id) WHERE answered.tenant_id=c.tenant_id AND answered.conversation_id=c.conversation_id)
+       GROUP BY c.tenant_id,c.conversation_id
        ORDER BY c.updated_at DESC,c.conversation_id LIMIT 100`,[current.tenantId,current.userId]));
     return reply.send({conversations:result.rows.map(row=>({conversationId:row.conversation_id,title:row.title,updatedAt:row.updated_at.toISOString(),turnCount:row.turn_count}))});
   });
@@ -774,7 +776,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const row=conversation.rows[0]!;
     return reply.send({conversation:{conversationId:row.conversation_id,title:row.title,createdAt:row.created_at.toISOString(),updatedAt:row.updated_at.toISOString()},turns:result.rows.map(turn=>({runId:turn.run_id,state:turn.state,question:turn.question,plan:turn.plan,answer:turn.answer,createdAt:turn.created_at.toISOString()}))});
   });
-  app.post<{Body:{question?:string;sourceIds?:string[];conversationId?:string}}>('/api/runs',async(request,reply)=>{
+  app.post<{Body:{question?:string;sourceIds?:string[];conversationId?:string;requestId?:string}}>('/api/runs',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const question=request.body?.question;const sourceIds=request.body?.sourceIds;
     if(typeof question!=='string'||!question.trim()||!Array.isArray(sourceIds)||sourceIds.length===0||sourceIds.some((id)=>typeof id!=='string'||! /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))||new Set(sourceIds).size!==sourceIds.length)return reply.code(400).send({error:'invalid_analytic_request'});
@@ -783,6 +785,19 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
        FROM registry.connections c WHERE c.tenant_id=$1 AND c.status='active' AND c.connection_id=ANY($2::uuid[]) AND EXISTS(
         SELECT 1 FROM core.entitlements e WHERE e.tenant_id=c.tenant_id AND e.principal_id=$3 AND e.capability_id='analytic.read' AND e.allowed AND (e.resource_id IS NULL OR e.resource_id=c.connection_id::text))`,[current.tenantId,sourceIds,current.userId]));
     if(sources.rowCount!==new Set(sourceIds).size)return reply.code(403).send({error:'source_not_active_or_available'});
+    // Idempotent submission: the first send claims its request id; a duplicate gets the same run and conversation.
+    const requestId=request.body?.requestId;
+    if(requestId!==undefined&&(typeof requestId!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)))return reply.code(400).send({error:'invalid_request_id'});
+    if(requestId){
+      const claimed=await withTenant(options.pool,current.tenantId,client=>client.query('INSERT INTO runs.run_requests(tenant_id,principal_id,request_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING RETURNING request_id',[current.tenantId,current.userId,requestId]));
+      if(!claimed.rowCount){
+        const existing=await withTenant(options.pool,current.tenantId,client=>client.query<{run_id:string|null;conversation_id:string|null}>('SELECT run_id,conversation_id FROM runs.run_requests WHERE tenant_id=$1 AND principal_id=$2 AND request_id=$3',[current.tenantId,current.userId,requestId]));
+        const row=existing.rows[0];
+        if(row?.run_id)return reply.code(200).send({runId:row.run_id,conversationId:row.conversation_id,replayed:true});
+        return reply.code(409).send({error:'analytic_request_in_progress'});
+      }
+    }
+    const recordRequest=async(runId:string,threadId:string)=>{if(requestId)await withTenant(options.pool,current.tenantId,client=>client.query('UPDATE runs.run_requests SET run_id=$4,conversation_id=$5 WHERE tenant_id=$1 AND principal_id=$2 AND request_id=$3',[current.tenantId,current.userId,requestId,runId,threadId]));};
     try{
       let conversationId=request.body?.conversationId;
       if(conversationId!==undefined&&!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(conversationId))return reply.code(400).send({error:'invalid_conversation_id'});
@@ -805,11 +820,10 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
           if(summary)messages.push({role:'assistant',content:summary.slice(0,2000)});
           return messages;
         });
-      }else{
-        const created=await withTenant(options.pool,current.tenantId,client=>client.query<{conversation_id:string}>(
-          'INSERT INTO runs.conversations(tenant_id,principal_id,title) VALUES($1,$2,$3) RETURNING conversation_id',[current.tenantId,current.userId,question.trim().slice(0,200)]));
-        conversationId=created.rows[0]!.conversation_id;
       }
+      // A new conversation is created only together with its first run, never ahead of planning.
+      const createConversation=async(client:{query:(sql:string,values:unknown[])=>Promise<{rows:Array<{conversation_id:string}>}>})=>(await client.query(
+        'INSERT INTO runs.conversations(tenant_id,principal_id,title) VALUES($1,$2,$3) RETURNING conversation_id',[current.tenantId,current.userId,question.trim().slice(0,200)])).rows[0]!.conversation_id;
       const candidates=sources.rows;
       const plannerInput=priorTurns.length?`${priorTurns.map(turn=>`${turn.role}: ${turn.content}`).join('\n')}\nuser: ${question}`:question;
       const planned=options.testAnalyticPlanner?await options.testAnalyticPlanner(plannerInput,candidates.length):null;
@@ -820,6 +834,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
       }else if(!options.testAnalyticPlanner){
         const runId=randomUUID();
         await withTenant(options.pool,current.tenantId,async client=>{
+          if(!conversationId)conversationId=await createConversation(client);
           const thread = await client.query(`SELECT 1 FROM runs.conversations
             WHERE tenant_id=$1 AND principal_id=$2 AND conversation_id=$3 FOR UPDATE`, [current.tenantId,current.userId,conversationId]);
           if (!thread.rowCount) throw new Error('conversation_not_found');
@@ -837,12 +852,15 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
           await client.query(`INSERT INTO runs.events(tenant_id,run_id,sequence,event_type,safe_payload)
             VALUES($1,$2,1,'run_created','{"state":"CREATED","state_version":0}'),($1,$2,2,'run_state_changed','{"state":"PLANNING","state_version":1}')`,[current.tenantId,runId]);
         });
+        await recordRequest(runId,conversationId!);
         return reply.code(201).send({runId,conversationId});
       }
       const plan=await createAnalyticPlan({question,runId:randomUUID(),sources:selected.map(row=>({sourceId:row.source_id,agentId:row.agent_id,groupId:row.group_id,groupVersion:row.group_version})),...(intents?{queryIntents:intents}:{})});
+      if(!conversationId)conversationId=await withTenant(options.pool,current.tenantId,client=>createConversation(client));
       const run=await startAnalyticRun(options.pool,{tenantId:current.tenantId,principalId:current.userId,plan,conversationId});
+      await recordRequest(run.runId,conversationId);
       return reply.code(201).send({...run,conversationId});
-    }catch(error){const code=error instanceof Error?error.message:'analytic_request_rejected';if(['principal_not_entitled','source_not_active','source_group_version_not_pinned'].includes(code))return reply.code(403).send({error:code});if(code.startsWith('analytic_plan')||code.startsWith('analytic_query'))return reply.code(400).send({error:code});if(code.startsWith('MODEL_')||code.startsWith('model_'))return reply.code(503).send({error:code.toLowerCase()});throw error;}
+    }catch(error){if(requestId)await withTenant(options.pool,current.tenantId,client=>client.query('DELETE FROM runs.run_requests WHERE tenant_id=$1 AND principal_id=$2 AND request_id=$3 AND run_id IS NULL',[current.tenantId,current.userId,requestId])).catch(()=>undefined);const code=error instanceof Error?error.message:'analytic_request_rejected';if(['principal_not_entitled','source_not_active','source_group_version_not_pinned'].includes(code))return reply.code(403).send({error:code});if(code.startsWith('analytic_plan')||code.startsWith('analytic_query'))return reply.code(400).send({error:code});if(code.startsWith('MODEL_')||code.startsWith('model_'))return reply.code(503).send({error:code.toLowerCase()});throw error;}
   });
   app.get<{Params:{runId:string}}>('/api/runs/:runId',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
