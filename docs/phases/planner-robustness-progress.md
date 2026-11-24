@@ -74,19 +74,21 @@ heldout2 (`testbed/eval/heldout2.json`, 10 new questions, truth from
 evaluation and after the last planner or prompt change. It is run once, after
 tuning is finished.
 
-## Step 5: declared intent (in progress, overnight 25 Nov)
+## Step 5: declared intent (stopped at the overnight spend cap, 25 Nov)
 
-Done: decision 44 (gpt-6.2-sol plans through the `planning` alias; Luna via
-`MODEL_PLANNING=gpt-6-luna`), declared intent in the plan schema checked by
-the decoder (question-text checks removed), a verification call with repair,
-Q31 to Q40 paraphrases, `.env` caps at USD 5 and 1 with a defaults test.
-The first full run regressed (8 development refusals on both models): the
-verifier saw an incomplete plan description (no date end bound, title-case
-headers redacted by the gateway, the default 100-row bound read as a
-ranking, no tie-break) and too small an output budget.
-Fixed in `20274f8` and replayed: all affected cases correct with Sol.
+Done: decision 44 (gpt-6.2-sol through the `planning` alias; Luna via
+`MODEL_PLANNING`), declared intent checked by the decoder with no
+question-text checks, a verification call with repair, Q31 to Q40,
+USD caps with a defaults test, never grouping by a tagged column. heldout2
+ran once at `e408df4`: 9 correct, 1 wrong (N06, which led to the
+tagged-column guard).
 
-Next: full both-model evaluation on the final revision, gates, three
-`pnpm test:testbed` runs, heldout2 once, PR and merge. Then chat-threads.
-Overnight model spend is logged in the run notes and reported in
-`docs/overnight-report.md`.
+Status: draft PR #17, not merged. `e408df4` met every criterion (0 wrong
+on both sets, three testbed passes). The final code (`68fe854`, reverted
+experiment in `6ae4e5a`) has three testbed passes but scored Q31 wrong in
+its one evaluation (grouped by department ID instead of name). Q31 has passed
+and failed on identical instructions, so it is likely nondeterministic.
+Next: decide how "each department" should label groups (a declared
+display-label column is the deterministic option), re-run the evaluation,
+then merge #17 and #18. The full account is in `docs/overnight-report.md` on
+the `chat-threads` branch.
