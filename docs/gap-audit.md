@@ -1,6 +1,6 @@
 # Real product gap audit
 
-> Updated for S1 on 24 Nov 2026. Statuses are based on the working tree and the passing local acceptance walkthrough, not the eventual target. `Real` means the listed path has run end to end against a tenant-connected source. Fixture implementations are confined to tests; no fixture runtime path is counted as product behavior.
+> Updated for S2 on 24 Nov 2026. Statuses are based on the passing local acceptance walkthrough, not the eventual target. `Real` means the listed path has run end to end against a tenant-connected source. Fixture implementations are confined to tests; no fixture runtime path is counted as product behavior.
 
 ## Screens and user workflows
 
@@ -35,7 +35,7 @@
 | Dictionary CSV/XLSX import | Real | S1 imports a real testbed CSV dictionary and checks documented-versus-harvested coverage. |
 | Typed analytic plan query shapes | Real | Contract test executes count, filtered count, group-by, within-source join, and two-source comparison against PostgreSQL and verifies SQL-derived truth. UI end-to-end coverage expands in S7. |
 | Live OpenAI answer over PostgreSQL | Real | S1 Home walkthrough runs one aggregate question via configured gateway and checks value, executed SQL, source, and returned-row evidence. |
-| SQL Server connector and testbed | Missing | S2 will add SQL Server 2022 under Colima; no server has been installed or run yet. |
+| SQL Server connector and testbed | Real | SQL Server 2022 runs in Colima as a local test source; UI acceptance tests cover writer refusal, encrypted credential storage, real profiling, view/routine metadata, inferred ER, Dictionary, and a real Home answer. SQL-derived counts and shared-key counts match `testbed/truth.json`. |
 | Excel workbook connector | Missing | S3 will add and profile the three-sheet overlapping workbook. |
 | dbt manifest/catalog lineage | Missing | S4 will import real generated artifacts. |
 | View/procedure SQL lineage | Missing | SQL is discovered in S1; graph lineage from parsed definitions is S4. |
@@ -56,5 +56,8 @@ S1 removed fixture-backed connector, profile, analytic-result, metadata-import, 
 - `tests/testbed/c3_real_postgres_query_intents.test.ts`: five typed query shapes against real local PostgreSQL and SQL-derived truth.
 - `tests/testbed/c6_real_postgres_metadata.test.ts`: source safety, profile metadata, inferred relationship, and routine metadata.
 - `tests/e2e/real-product-s1.spec.ts`: empty tenant, UI invite, PostgreSQL connection, profile, ER, dictionary import, and real Home answer.
+- `tests/testbed/c2_sqlserver_read_only.test.ts`, `tests/testbed/c6_sqlserver_truth.test.ts`: real SQL Server role safety, catalog metadata, relationship classification, and SQL-derived truth.
+- `tests/e2e/real-product-s2.spec.ts`: empty tenant, writer rejection, SQL Server UI connection, profile, inferred ER, routine Dictionary, and model-backed Home answer with query evidence.
 - Screenshots and video are saved under `docs/acceptance/s1/` by the local `pnpm test:testbed` command.
-- The isolated click-through instructions and recorded gate results are in [`docs/phases/real-product-s1-demo.md`](phases/real-product-s1-demo.md) and [`docs/phases/real-product-s1-report.md`](phases/real-product-s1-report.md).
+- SQL Server screenshots and the walkthrough video are saved under `docs/acceptance/s2/`.
+- The isolated click-through instructions and recorded gate results are in [`docs/phases/real-product-s1-demo.md`](phases/real-product-s1-demo.md), [`docs/phases/real-product-s1-report.md`](phases/real-product-s1-report.md), and [`docs/phases/real-product-s2-demo.md`](phases/real-product-s2-demo.md).

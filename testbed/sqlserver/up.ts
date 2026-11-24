@@ -91,20 +91,17 @@ CREATE DATABASE [${databaseName}];
 `, 'master');
 runSqlServerAdminQuery(readFileSync(resolve('testbed/sqlserver/schema.sql'), 'utf8'), databaseName);
 runSqlServerAdminQuery(readFileSync(resolve('testbed/sqlserver/data.sql'), 'utf8'), databaseName);
-runSqlServerAdminQuery(`
-USE [master];
-IF SUSER_ID(N'${readerName}') IS NULL
+runSqlServerAdminQuery(`IF SUSER_ID(N'${readerName}') IS NULL
   CREATE LOGIN [${readerName}] WITH PASSWORD=${sqlLiteral(readerPassword)}, CHECK_POLICY=OFF, CHECK_EXPIRATION=OFF;
 ELSE
-  ALTER LOGIN [${readerName}] WITH PASSWORD=${sqlLiteral(readerPassword)}, CHECK_POLICY=OFF, CHECK_EXPIRATION=OFF;
-GO
-USE [${databaseName}];
+  ALTER LOGIN [${readerName}] WITH PASSWORD=${sqlLiteral(readerPassword)}, CHECK_POLICY=OFF, CHECK_EXPIRATION=OFF;`, 'master');
+runSqlServerAdminQuery(`
 IF USER_ID(N'${readerName}') IS NOT NULL DROP USER [${readerName}];
 CREATE USER [${readerName}] FOR LOGIN [${readerName}];
 ALTER ROLE [db_datareader] ADD MEMBER [${readerName}];
 GRANT VIEW DEFINITION TO [${readerName}];
 DENY INSERT, UPDATE, DELETE, ALTER, REFERENCES, TAKE OWNERSHIP ON DATABASE::[${databaseName}] TO [${readerName}];
-`);
+`, databaseName);
 const total = runSqlServerAdminQuery(`SET NOCOUNT ON; SELECT COUNT_BIG(*) FROM (
   SELECT patient_id AS id FROM dbo.patients UNION ALL SELECT encounter_id FROM dbo.encounters
   UNION ALL SELECT order_id FROM dbo.orders UNION ALL SELECT department_id FROM dbo.departments

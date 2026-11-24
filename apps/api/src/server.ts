@@ -1020,6 +1020,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const input=request.body?.credential;
     if(connectorType==='sql_server'){
       if(!input?.host||input.host.length>253||!Number.isInteger(input.port)||input.port!<1||input.port!>65535||!input.database||input.database.length>128||!input.username||input.username.length>128||!input.password||input.password.length>1024||typeof input.trustServerCertificate!=='boolean')return reply.code(400).send({error:'sqlserver_credentials_invalid'});
+      if(input.trustServerCertificate&&!['localhost','127.0.0.1','::1'].includes(input.host.toLowerCase()))return reply.code(400).send({error:'sqlserver_certificate_override_local_only'});
     }else{
       const sslMode=input?.sslMode??'require';
       if(!input?.host||input.host.length>253||!Number.isInteger(input.port)||input.port!<1||input.port!>65535||!input.database||input.database.length>63||!input.username||input.username.length>128||!input.password||input.password.length>1024||!['disable','require','verify-full'].includes(sslMode))return reply.code(400).send({error:'postgres_credentials_invalid'});

@@ -3,7 +3,9 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { config } from 'dotenv';
 import { Pool } from 'pg';
+import { withTenant } from '@scaleinsyght/db';
 import { createTenant } from '../../scripts/tenant-create.js';
+import { runSqlServerAdminQuery } from '../../testbed/sqlserver/admin-query.js';
 
 config({ path: '.env' });
 const tenantUrl = () => { const value = process.env.DATABASE_URL_MIGRATE; if (!value) throw new Error('DATABASE_URL_MIGRATE is required for local S2 acceptance.'); const url = new URL(value); url.pathname = '/si_test'; return url.toString(); };
@@ -18,6 +20,16 @@ test('s2_empty_tenant_adds_real_sql_server_profiles_and_relationships', async ({
   await createTenant(adminPool, { tenantId: slug, name: 'SQL Server test workspace', displayName: 'Test Analyst', email, password });
   await page.goto(`/login?tenant=${slug}`); await page.getByLabel('Email').fill(email); await page.getByLabel('Password').fill(password); await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Good afternoon, Test Analyst' })).toBeVisible();
+  const remoteTrustOverride = await page.request.post('/api/connections', { data: { connectorType: 'sql_server', displayName: 'Remote certificate override', credential: { host: 'sql.example.invalid', port: Number(process.env.SQLSERVER_TESTBED_PORT), database: process.env.SQLSERVER_TESTBED_DATABASE, username: process.env.SQLSERVER_TESTBED_USERNAME, password: process.env.SQLSERVER_TESTBED_PASSWORD, trustServerCertificate: true } } });
+  expect(remoteTrustOverride.status()).toBe(400); expect(await remoteTrustOverride.json()).toMatchObject({ error: 'sqlserver_certificate_override_local_only' });
+  runSqlServerAdminQuery('ALTER ROLE [db_datawriter] ADD MEMBER [si_testbed_reader];', 'si_testbed_sqlserver');
+  try {
+    const draft = await page.request.post('/api/connections', { data: { connectorType: 'sql_server', displayName: 'Writable role must be refused', credential: { host: process.env.SQLSERVER_TESTBED_HOST, port: Number(process.env.SQLSERVER_TESTBED_PORT), database: process.env.SQLSERVER_TESTBED_DATABASE, username: process.env.SQLSERVER_TESTBED_USERNAME, password: process.env.SQLSERVER_TESTBED_PASSWORD, trustServerCertificate: true } } });
+    expect(draft.status()).toBe(201);
+    const draftId = (await draft.json() as { connectionId: string }).connectionId;
+    const refused = await page.request.post(`/api/connections/${draftId}/test`);
+    expect(refused.status()).toBe(400); expect(await refused.json()).toMatchObject({ error: 'sqlserver_connector_role_not_read_only' });
+  } finally { runSqlServerAdminQuery('ALTER ROLE [db_datawriter] DROP MEMBER [si_testbed_reader];', 'si_testbed_sqlserver'); }
   await page.goto('/connectors'); await expect(page.getByText(/No sources connected/)).toBeVisible();
   await page.screenshot({ path: 'docs/acceptance/s2/empty-connectors.png', fullPage: true });
   await page.locator('.page-heading').getByRole('button', { name: /Add connector/ }).click();
@@ -35,9 +47,12 @@ test('s2_empty_tenant_adds_real_sql_server_profiles_and_relationships', async ({
   await page.getByRole('button', { name: 'Start profiling' }).click();
   await expect(page.getByRole('heading', { name: 'Discovery complete' })).toBeVisible();
   const response = await page.request.get('/api/connections'); expect(response.ok()).toBeTruthy();
-  const connections = (await response.json() as { connections: Array<{ connectionId: string; connectorType: string; status: string }> }).connections;
+  const connections = (await response.json() as { connections: Array<{ connectionId: string; connectorType: string; status: string; agentId: string | null }> }).connections;
   const source = connections.find((item) => item.status === 'active' && item.connectorType === 'sql_server'); expect(source).toBeTruthy();
+  expect(source!.agentId).toBeTruthy();
   const connectionId = source!.connectionId;
+  const savedSecret = await withTenant(adminPool, slug, (client) => client.query<{ ciphertext: Buffer }>('SELECT ciphertext FROM registry.connection_secrets WHERE tenant_id=$1 AND connection_id=$2 ORDER BY secret_version DESC LIMIT 1', [slug, connectionId]));
+  expect(savedSecret.rows[0]?.ciphertext.length).toBeGreaterThan(16); expect(savedSecret.rows[0]?.ciphertext.equals(Buffer.from(process.env.SQLSERVER_TESTBED_PASSWORD!))).toBe(false);
   await page.goto(`/profile/${connectionId}`);
   await expect(page.getByText('Objects profiled')).toBeVisible(); await expect(page.locator('.profile-stats div').filter({ hasText: 'Objects profiled' }).locator('strong')).toHaveText('7');
   await expect(page.getByText(/patients\.name/)).toBeVisible(); await page.screenshot({ path: 'docs/acceptance/s2/profile.png', fullPage: true });
@@ -48,6 +63,10 @@ test('s2_empty_tenant_adds_real_sql_server_profiles_and_relationships', async ({
   await page.getByRole('tab', { name: /Procedures/ }).click();
   await expect(page.locator('summary').filter({ hasText: /count patient encounters/i })).toBeVisible();
   await page.screenshot({ path: 'docs/acceptance/s2/dictionary-procedures.png', fullPage: true });
+  await page.goto('/'); await page.getByLabel('Ask a question').fill('How many patients are in SQL Server hospital?'); await page.getByRole('button', { name: 'Send question' }).click();
+  await expect(page.getByText('500', { exact: true })).toBeVisible({ timeout: 120_000 });
+  await expect(page.getByText(/Executed on SQL Server hospital; returned 1 aggregate row/)).toBeVisible();
+  await page.screenshot({ path: 'docs/acceptance/s2/home-answer.png', fullPage: true });
 });
 
 test.afterAll(async () => { await adminPool.end(); });

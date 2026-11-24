@@ -1,6 +1,6 @@
 # Real Product S2: SQL Server
 
-**Status:** approved under the real-product design (Yashaswi, 24 Nov 2026); implementation in progress
+**Status:** approved and implemented under the real-product design (Yashaswi, 24 Nov 2026)
 **Branch:** `real-product-s2`
 **Scope:** Add a real SQL Server 2022 source path. The application remains native; Colima is used only for the local test source.
 
@@ -8,7 +8,7 @@
 
 S2 extends the existing connector lifecycle without adding a fixture route:
 
-- `POST /api/connections`: accepts `connectorType: "sql_server"`, display name, host, port, database, username, password, and encryption options.
+- `POST /api/connections`: accepts `connectorType: "sql_server"`, display name, host, port, database, username, password, and an explicit local certificate trust override. Credentials are encrypted before storage.
 - `POST /api/connections/:id/test`: verifies connectivity and refuses effective write or elevated privileges.
 - `POST /api/connections/:id/activate`: persists the encrypted credential, creates the connector agent, and starts real profiling.
 - Existing profile, ER, Dictionary, analytic-plan and evidence routes return SQL Server metadata and query results under the authenticated tenant.
@@ -25,12 +25,13 @@ The Connectors add flow offers SQL Server alongside PostgreSQL. Its form collect
 
 ## Acceptance cases
 
-- `sqlserver_testbed_isolated_and_matches_postgres_truth` — SQL-derived row/column counts and stable shared-key match counts agree across the two local source databases; Contract 6 (source metadata identity and evidence).
-- `sqlserver_read_only_login_can_read_but_cannot_mutate` — a source read-only login can discover data and cannot write; Contract 2 (read-only source access).
-- `sqlserver_activation_refuses_write_capable_login` — an otherwise valid writable login is rejected before it can be saved as active; Contract 2.
-- `sqlserver_profile_matches_truth_for_tables_columns_views_and_procedures` — real catalog metadata and row counts are returned and procedures/views are visible; Contract 6.
-- `sqlserver_declared_and_inferred_relationships_are_distinguished` — the known FK edges are declared and the shared patient key without a declared FK is inferred; Contracts 6 and 7 (lineage evidence and disclosure boundary).
-- `s2_empty_tenant_adds_sql_server_profiles_and_answers_with_evidence` — Playwright provisions an isolated empty tenant, adds SQL Server through the UI, tests/activates, waits for profiling, checks Profile/ER/Dictionary, and verifies one live bounded answer against `testbed/truth.json`; Contracts 2, 6, and 7.
+- `c6_sqlserver_testbed_data_matches_sql_derived_truth` — counts, column counts, declared FKs, views, routines and classifications match direct SQL; Contract 6 (source metadata identity and evidence).
+- `c6_sqlserver_and_postgres_share_patient_and_encounter_keys_without_persisting_values` — shared identifier counts and the undeclared relationship match truth while raw identifier values are not stored; Contracts 6 and 7 (lineage evidence and disclosure boundary).
+- `sqlserver_connector_rejects_effective_write_permissions` — a reader login passes, while a real testbed account temporarily granted `db_datawriter` is rejected; Contract 2 (read-only source access).
+- `sqlserver_catalog_discovery_includes_views_and_routines` — real catalog discovery includes SQL Server views and routine definitions; Contract 6.
+- `sqlserver_structural_references_label_declared_and_inferred` — declared FK edges and the un-declared patient relationship have distinct evidence labels; Contracts 6 and 7.
+- `sqlserver_connector_limits_query_time_and_rows` — typed aggregate and filtered-count queries run with a 10-second driver timeout and a 1,000-row ceiling; Contracts 2 and 6.
+- `s2_empty_tenant_adds_real_sql_server_profiles_and_relationships` — Playwright provisions an empty tenant, proves API refusal of a writer, adds SQL Server through the UI, waits for profiling, checks Profile/ER/Dictionary and a real answer of 500 with its executed SQL evidence; Contracts 2, 6, and 7.
 
 `pnpm test:testbed` grows to start SQL Server 2022 through Colima, compute its truth from the database, run source-safety/metadata contracts, and exercise the UI walkthrough. It remains local-only; CI must not require SQL Server or Docker. `docs/gap-audit.md` changes SQL Server from Missing to Real only when the S2 UI acceptance passes. Screenshots and a video belong in `docs/acceptance/s2/`.
 
