@@ -51,7 +51,7 @@ Prior turns: ${priorTurns.map(turn=>`${turn.role}: ${normalize(turn.content)}`).
     const verdict=await call('verify',`Question: ${normalize(question)}
 Prior turns: ${priorTurns.map(turn=>`${turn.role}: ${normalize(turn.content)}`).join('\n').slice(-900)}
 Plan: ${plan}
-Does this plan answer this question? A plan over a loosely related object, a single total where a breakdown is asked for, or a missing condition does not.`,verificationSchema,200);
+Does this plan answer this question? A plan over a loosely related object, a single total where a breakdown is asked for, or a missing condition does not. Counting the rows of a table counts its distinct records.`,verificationSchema,800);
     attempts.push({model:verdict.model,inputTokens:verdict.inputTokens,outputTokens:verdict.outputTokens,purpose:'verify'});
     let answers=false;let reason='no reason given';
     try{const parsed=JSON.parse(verdict.text) as {answers_question?:unknown;reason?:unknown};answers=parsed.answers_question===true;if(typeof parsed.reason==='string')reason=parsed.reason.slice(0,300);}catch{reason='invalid verification response';}
@@ -62,7 +62,7 @@ Does this plan answer this question? A plan over a loosely related object, a sin
       break;
     }
     verificationRejected=true;
-    attempts.at(-1)!.error='verification_failed';
+    attempts.at(-1)!.error='verification_failed: '+reason.slice(0,200);
     repair=`\nThe previous plan was checked and does not answer the question: ${reason} Previous plan: ${plan}`;
   }
   if(!intents)return {kind:'rejected' as const,reason:verificationRejected||!attempts.at(-1)?.error?'analytic_query_unsupported':'analytic_query_intent_invalid',attempts};

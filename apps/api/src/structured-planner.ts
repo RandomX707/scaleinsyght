@@ -185,7 +185,7 @@ export function decodePlannerOutput(text: string, catalog: PlannerCatalog, joins
 /** A plain description of an accepted plan for the verification call. Uses display headers where the source has them. */
 export function describePlan(steps: DecodedStep[], catalog: PlannerCatalog): string {
   const label = (index: number, table: string, column: string) =>
-    catalog[index]?.assets.find(asset => asset.qualified_name === table)?.columns.find(item => item.name === column)?.label ?? column;
+    (catalog[index]?.assets.find(asset => asset.qualified_name === table)?.columns.find(item => item.name === column)?.label ?? column).toLowerCase();
   return steps.map(({index, intent}) => {
     const plan = intent as unknown as Record<string, unknown> & {aggregate?: {operation: string; column?: string}};
     const source = catalog[index]?.name ?? `source ${index + 1}`;
@@ -199,9 +199,12 @@ export function describePlan(steps: DecodedStep[], catalog: PlannerCatalog): str
       parts.push(`for each ${label(index, groupTable, String(plan.groupBy))}`);
     }
     const conditions = (plan.kind === 'filtered_count' ? [plan] : Array.isArray(plan.filters) ? plan.filters as Array<Record<string, unknown>> : [])
-      .map(filter => `${String(filter.column)} ${String(filter.operator).replaceAll('_',' ')}${filter.value === undefined ? '' : ` ${JSON.stringify(filter.value)}`}`);
+      .map(filter => `${String(filter.column)} ${String(filter.operator).replaceAll('_',' ')}${filter.value === undefined ? '' : ` ${JSON.stringify(filter.value)}`}${filter.upperExclusive === undefined ? '' : ` and before ${JSON.stringify(filter.upperExclusive)}`}`);
     if (conditions.length) parts.push(`where ${conditions.join(' and ')}`);
-    if (plan.limit) parts.push(`keeping the ${plan.order === 'asc' ? 'lowest' : 'highest'} ${String(plan.limit)}`);
+    // The compiled SQL always breaks ties: by the group key when there is one, otherwise alphabetically by the group.
+    const tieBreak = plan.groupKey ? `ties broken by ${label(index, plan.groupByTable === 'right' ? String(plan.rightTable) : subject, String(plan.groupKey))}` : 'ties broken alphabetically by group';
+    if (plan.limit && Number(plan.limit) < 100) parts.push(`keeping the ${plan.order === 'asc' ? 'lowest' : 'highest'} ${String(plan.limit)} (${tieBreak})`);
+    else if (plan.order) parts.push(`all groups, sorted ${plan.order === 'asc' ? 'lowest' : 'highest'} first`);
     return parts.join(', ');
   }).join('; ');
 }
