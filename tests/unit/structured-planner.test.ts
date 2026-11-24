@@ -88,6 +88,6 @@ describe('structured planner with declared intent (decision 44)', () => {
   });
   it('describes an accepted plan in plain words for verification', () => {
     const decoded = decodePlannerOutput(wrap(grouped, {...declaration,grouping:'charge type'}), catalog, []);
-    expect(describePlan(decoded.steps, catalog)).toBe('Operations workbook: the number of Charges records, for each charge type value, keeping the lowest 2 (ties broken alphabetically by group)');
+    expect(describePlan(decoded.steps, catalog)).toBe('Operations workbook: the number of Charges records, for each charge type, keeping the lowest 2 (ties broken alphabetically by group)');
   });
 });
