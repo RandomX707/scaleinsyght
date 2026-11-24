@@ -20,6 +20,7 @@
     "dbt:sample": "tsx scripts/run-sample-dbt.ts",
     "models:list": "tsx scripts/list-models.ts",
     "test:live": "tsx scripts/test-live.ts",
+    "eval:planner": "tsx scripts/eval-planner.ts",
     "eval:golden": "vitest run tests/unit/analytic-plan.test.ts tests/contracts/c3_gateway_security.test.ts",
     "backup:drill": "tsx scripts/backup-drill.ts",
     "test:load": "tsx scripts/test-load.ts",

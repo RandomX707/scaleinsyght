@@ -1,0 +1,185 @@
+{
+  "Q01": {
+    "p": "SELECT count(*) AS value FROM providers"
+  },
+  "Q02": {
+    "s": "SELECT count(*) AS value FROM departments"
+  },
+  "Q03": {
+    "x": [
+      "Charges",
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "Q04": {
+    "p": "SELECT count(*) AS value FROM orders WHERE order_status='pending'"
+  },
+  "Q05": {
+    "s": "SELECT count(*) AS value FROM orders WHERE order_status='completed'"
+  },
+  "Q06": {
+    "x": [
+      "Charges",
+      "Status",
+      "eq",
+      "completed",
+      null
+    ]
+  },
+  "Q07": {
+    "p": "SELECT count(*) AS value FROM encounters WHERE admitted_at >= '2025-01-01' AND admitted_at < '2025-07-01'"
+  },
+  "Q08": {
+    "s": "SELECT count(*) AS value FROM orders WHERE ordered_at >= '2025-01-01' AND ordered_at < '2026-01-01'"
+  },
+  "Q09": {
+    "x": [
+      "Visits",
+      "Admitted On",
+      "gte",
+      "2025-07-01",
+      null
+    ]
+  },
+  "Q10": {
+    "p": "SELECT order_status AS label,count(*) AS value FROM orders GROUP BY order_status ORDER BY value DESC, order_status"
+  },
+  "Q11": {
+    "s": "SELECT order_type AS label,count(*) AS value FROM orders GROUP BY order_type ORDER BY value DESC, order_type"
+  },
+  "Q12": {
+    "x": [
+      "Charges",
+      "Charge Type",
+      "group",
+      null,
+      null
+    ]
+  },
+  "Q13": {
+    "p": "SELECT department_id AS label,count(*) AS value FROM orders GROUP BY department_id ORDER BY value DESC, department_id OFFSET 0 ROWS FETCH NEXT 3 ROWS ONLY"
+  },
+  "Q14": {
+    "s": "SELECT department_id AS label,count(*) AS value FROM encounters GROUP BY department_id ORDER BY value ASC, department_id OFFSET 0 ROWS FETCH NEXT 2 ROWS ONLY"
+  },
+  "Q15": {
+    "x": [
+      "Charges",
+      "Charge Type",
+      "group",
+      null,
+      -2
+    ]
+  },
+  "Q16": {
+    "p": "SELECT count(*) AS value FROM orders o JOIN departments d ON o.department_id=d.department_id WHERE d.department_name='Cardiology'"
+  },
+  "Q17": {
+    "s": "SELECT d.department_name AS label,count(*) AS value FROM orders o JOIN departments d ON o.department_id=d.department_id GROUP BY d.department_name"
+  },
+  "Q18": {
+    "x": [
+      "Charges",
+      "Visit ID",
+      "visit_join",
+      "2025-01-01",
+      null
+    ]
+  },
+  "Q19": {
+    "p": "SELECT count(*) AS value FROM orders",
+    "s": "SELECT count(*) AS value FROM orders"
+  },
+  "Q20": {
+    "p": "SELECT count(*) AS value FROM orders",
+    "x": [
+      "Charges",
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "Q21": {
+    "s": "SELECT count(*) AS value FROM orders WHERE order_status='pending'"
+  },
+  "Q22": {
+    "x": [
+      "Visits",
+      "Department",
+      "eq",
+      "Cardiology",
+      null
+    ]
+  },
+  "Q23": {
+    "p": "SELECT count(*) AS value FROM encounters WHERE discharged_at IS NOT NULL"
+  },
+  "Q24": {
+    "p": "SELECT count(*) AS value FROM orders WHERE amount >= 100"
+  },
+  "Q25": {
+    "x": [
+      "Charges",
+      "Amount",
+      "lt",
+      50,
+      null
+    ]
+  },
+  "Q26": null,
+  "Q27": null,
+  "Q28": null,
+  "Q29": null,
+  "Q30": null,
+  "H01": {
+    "s": "SELECT count(*) AS value FROM providers"
+  },
+  "H02": {
+    "p": "SELECT count(*) AS value FROM orders WHERE amount > 250"
+  },
+  "H03": {
+    "x": [
+      "Charges",
+      "Charged On",
+      "lt",
+      "2025-04-01",
+      null
+    ]
+  },
+  "H04": {
+    "s": "SELECT order_status AS label,count(*) AS value FROM orders GROUP BY order_status ORDER BY value DESC, order_status"
+  },
+  "H05": {
+    "p": "SELECT department_id AS label,count(*) AS value FROM encounters GROUP BY department_id ORDER BY value ASC, department_id OFFSET 0 ROWS FETCH NEXT 3 ROWS ONLY"
+  },
+  "H06": {
+    "s": "SELECT count(*) AS value FROM orders o JOIN departments d ON o.department_id=d.department_id WHERE d.department_name='Imaging'"
+  },
+  "H07": {
+    "s": "SELECT count(*) AS value FROM encounters",
+    "x": [
+      "Visits",
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "H08": {
+    "x": [
+      "Charges",
+      "Status",
+      "eq",
+      "pending",
+      null
+    ]
+  },
+  "H09": {
+    "s": "SELECT count(*) AS value FROM orders WHERE amount < 25"
+  },
+  "H10": null
+}
