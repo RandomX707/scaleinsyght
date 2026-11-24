@@ -2,7 +2,6 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import { EncryptedArtifactStore, type StoredArtifact } from '@scaleinsyght/artifacts';
 import type { ConnectorScope, DiscoveryResult, ObjectProfile, ReadOnlyConnector, ScopeMode } from '@scaleinsyght/connectors';
-import { listGoldenStructuralReferences } from '@scaleinsyght/connectors';
 import { withTenant } from '@scaleinsyght/db';
 
 export interface ScopeRule {
@@ -74,7 +73,7 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
-export async function runGoldenProfile(
+export async function runProfile(
   pool: Pool,
   input: { tenantId: string; connectionId: string; connector: ReadOnlyConnector; jobType: 'discovery' | 'profile' | 'nightly' },
 ): Promise<ProfileSummary> {
@@ -143,7 +142,7 @@ export async function runGoldenProfile(
       }
     }
 
-    const structuralReferences=input.connector.structuralReferences?await input.connector.structuralReferences():listGoldenStructuralReferences();
+    const structuralReferences=input.connector.structuralReferences?await input.connector.structuralReferences():[];
     for (const reference of structuralReferences) {
       const fromId = fieldAssets.get(`${reference.from}.${reference.fromColumn}`);
       const toId = fieldAssets.get(`${reference.to}.${reference.toColumn}`);
@@ -162,14 +161,14 @@ export async function runGoldenProfile(
       if (!existingAssertion.rowCount) {
         const evidence = await client.query<{ evidence_id: string }>(
           `INSERT INTO graph.evidence(tenant_id,evidence_type,safe_metadata)
-           VALUES($1,'declared_foreign_key','{"collector":"golden_schema","source":"synthetic"}'::jsonb)
+           VALUES($1,'declared_foreign_key',$2::jsonb)
            RETURNING evidence_id`,
-          [input.tenantId],
+          [input.tenantId, JSON.stringify({ collector: input.connector.name, connector_type: input.connector.type })],
         );
         await client.query(
           `INSERT INTO graph.assertions(tenant_id,relationship_id,evidence_method,evidence_ids,confidence_score,explanation,collector_version)
-           VALUES($1,$2,'declared',$3,1,'Synthetic declared field metadata','phase1-golden-v1')`,
-          [input.tenantId, relationship.rows[0]!.relationship_id, [evidence.rows[0]!.evidence_id]],
+           VALUES($1,$2,'declared',$3,1,NULL,$4)`,
+          [input.tenantId, relationship.rows[0]!.relationship_id, [evidence.rows[0]!.evidence_id], `profile-${input.connector.type}-v1`],
         );
       }
     }

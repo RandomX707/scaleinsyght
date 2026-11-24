@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createAnalyticPlan, executeGoldenStep, collateGroupResults, criticCheck } from '@scaleinsyght/analytic';
+import { createAnalyticPlan, collateGroupResults, criticCheck } from '@scaleinsyght/analytic';
+import { executeGoldenStep } from '../support/test-analytic-executor.js';
 
 const uuid = () => crypto.randomUUID();
 

@@ -3,7 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { config } from 'dotenv';
 import { Pool } from 'pg';
 import { withTenant } from '@scaleinsyght/db';
-import { buildServer, hashPassword } from '@scaleinsyght/api/server';
+import { buildTestServer as buildServer } from '../support/test-api.js';
+import { hashPassword } from '@scaleinsyght/api/server';
 import { createAnalyticPlan } from '@scaleinsyght/analytic';
 import { activateConnection } from '@scaleinsyght/registry';
 
@@ -29,7 +30,7 @@ describe('contract 1 and 5 customer gateway protocol', () => {
     const userId=user.rows[0]!.user_id;
     await withTenant(adminPool,tenantId,db=>db.query("INSERT INTO core.entitlements(tenant_id,principal_id,capability_id,allowed) VALUES($1,$2,'tenant.gateway.manage',true),($1,$2,'analytic.read',true)",[tenantId,userId]));
     const connection=await activateConnection(appPool,{tenantId,principalId:userId,connectorType:'postgres'});sourceId=connection.connectionId;
-    server = await buildServer({ pool: appPool, sessionSecret: 'phase6-gateway-contract-session-secret-0123456789', goldenAccounts: [{ tenantId, email: `${tenantId}@synthetic.invalid` }] });
+    server = await buildServer({ pool: appPool, sessionSecret: 'phase6-gateway-contract-session-secret-0123456789', testAccounts: [{ tenantId, email: `${tenantId}@synthetic.invalid` }] });
     const login = await server.inject({ method: 'POST', url: '/api/auth/login', payload: { email: `${tenantId}@synthetic.invalid`, password: 'synthetic-password' } });
     sessionCookie = String(login.headers['set-cookie']).split(';')[0]!;
   });

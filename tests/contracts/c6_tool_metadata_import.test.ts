@@ -2,9 +2,11 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { config } from 'dotenv';
 import { Pool } from 'pg';
 import { withTenant } from '@scaleinsyght/db';
-import { buildServer, hashPassword } from '@scaleinsyght/api/server';
+import { buildTestServer as buildServer } from '../support/test-api.js';
+import { hashPassword } from '@scaleinsyght/api/server';
 import { fingerprintIdentifier } from '@scaleinsyght/graph';
 import { activateConnection } from '@scaleinsyght/registry';
+import { importGoldenMetadata } from '../support/golden-graph.js';
 
 config({ path: '.env' });
 function testUrl(key: 'DATABASE_URL'|'DATABASE_URL_MIGRATE'): string {
@@ -22,16 +24,18 @@ describe('c6 synthetic metadata import',()=>{
       await client.query('INSERT INTO core.tenants(tenant_id,name) VALUES($1,$1)',[tenantId]);
       await client.query("INSERT INTO core.users(tenant_id,email,password_hash) VALUES($1,$2,$3)",[tenantId,`${tenantId}@synthetic.example`,hashPassword('synthetic-password')]);
     });
-    const server=await buildServer({pool:app,sessionSecret:'s'.repeat(64),goldenAccounts:[{tenantId,email:`${tenantId}@synthetic.example`}]});
+    const server=await buildServer({pool:app,sessionSecret:'s'.repeat(64),testAccounts:[{tenantId,email:`${tenantId}@synthetic.example`}]});
     try{
       const login=await server.inject({method:'POST',url:'/api/auth/login',payload:{email:`${tenantId}@synthetic.example`,password:'synthetic-password'}});
       const cookie=login.headers['set-cookie']!.split(';')[0]!;
+      const principalId=await withTenant(migrate,tenantId,async(client)=>(await client.query<{user_id:string}>('SELECT user_id FROM core.users WHERE tenant_id=$1',[tenantId])).rows[0]!.user_id);
       const importFixture=async()=>{
         const draft=await server.inject({method:'POST',url:'/api/metadata/connections',headers:{cookie},payload:{sourceId:'golden-powerbi'}});
         expect(draft.statusCode,draft.body).toBe(201);
         const connectionId=(draft.json() as {connectionId:string}).connectionId;
         expect((await server.inject({method:'POST',url:`/api/metadata/connections/${connectionId}/activate`,headers:{cookie}})).statusCode).toBe(200);
-        expect((await server.inject({method:'POST',url:`/api/metadata/import/${connectionId}`,headers:{cookie},payload:{fixtureKey:'power-bi-reports'}})).statusCode).toBe(200);
+        await importGoldenMetadata(app,{tenantId,principalId,connectionId,fixtureKey:'power-bi-reports'});
+        expect((await server.inject({method:'POST',url:`/api/metadata/import/${connectionId}`,headers:{cookie},payload:{fixtureKey:'power-bi-reports'}})).statusCode).toBe(400);
         return connectionId;
       };
       const firstConnection=await importFixture();
@@ -74,7 +78,7 @@ describe('c6 synthetic metadata import',()=>{
         [snowflakeConnection.connectionId,'SyntheticSnowflake.DIM_CUSTOMER'],[snowflakeConnection.connectionId,'SyntheticSnowflake.DIM_CUSTOMER.customer_key'],
       ])await client.query("INSERT INTO graph.assets(tenant_id,source_id,asset_type,qualified_name,fingerprint) VALUES($1,$2,$3,$4,decode(md5($4),'hex'))",[tenantId,connectionId,name.split('.').length>2?'field':'dataset',name]);
     });
-    const server=await buildServer({pool:app,sessionSecret:'s'.repeat(64),goldenAccounts:[{tenantId,email:`${tenantId}@synthetic.example`}]});
+    const server=await buildServer({pool:app,sessionSecret:'s'.repeat(64),testAccounts:[{tenantId,email:`${tenantId}@synthetic.example`}]});
     try{
       const login=await server.inject({method:'POST',url:'/api/auth/login',payload:{email:`${tenantId}@synthetic.example`,password:'synthetic-password'}});
       const cookie=login.headers['set-cookie']!.split(';')[0]!;
@@ -82,16 +86,15 @@ describe('c6 synthetic metadata import',()=>{
       expect(draft.statusCode,draft.body).toBe(201);
       const connectionId=(draft.json() as {connectionId:string}).connectionId;
       expect((await server.inject({method:'POST',url:`/api/metadata/connections/${connectionId}/activate`,headers:{cookie}})).statusCode).toBe(200);
-      const imported=await server.inject({method:'POST',url:`/api/metadata/import/${connectionId}`,headers:{cookie},payload:{fixtureKey:'dbt-manifest'}});
-      expect(imported.statusCode).toBe(200);
-      expect((imported.json() as {assets:number}).assets).toBeGreaterThan(0);
-      expect((await server.inject({method:'POST',url:`/api/metadata/import/${connectionId}`,headers:{cookie},payload:{fixtureKey:'dbt-manifest'}})).statusCode).toBe(200);
+      const imported=await importGoldenMetadata(app,{tenantId,principalId:principal,connectionId,fixtureKey:'dbt-manifest'});
+      expect(imported.assets).toBeGreaterThan(0);
+      expect((await server.inject({method:'POST',url:`/api/metadata/import/${connectionId}`,headers:{cookie},payload:{fixtureKey:'dbt-manifest'}})).statusCode).toBe(400);
       for(const [sourceId,fixtureKey] of [['golden-tableau','tableau-reports'],['golden-powerbi','power-bi-reports']] as const){
         const otherDraft=await server.inject({method:'POST',url:'/api/metadata/connections',headers:{cookie},payload:{sourceId}});
         expect(otherDraft.statusCode).toBe(201);
         const otherConnection=(otherDraft.json() as {connectionId:string}).connectionId;
         expect((await server.inject({method:'POST',url:`/api/metadata/connections/${otherConnection}/activate`,headers:{cookie}})).statusCode).toBe(200);
-        expect((await server.inject({method:'POST',url:`/api/metadata/import/${otherConnection}`,headers:{cookie},payload:{fixtureKey}})).statusCode).toBe(200);
+        await importGoldenMetadata(app,{tenantId,principalId:principal,connectionId:otherConnection,fixtureKey});
       }
       const notices=await server.inject({method:'GET',url:'/api/notifications',headers:{cookie}});
       expect((notices.json() as {notifications:Array<{type:string}>}).notifications.map((item)=>item.type)).toContain('report_impact');

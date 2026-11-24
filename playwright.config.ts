@@ -10,8 +10,8 @@ export default defineConfig({
  testDir:'./tests/e2e',
  use:{baseURL:`http://127.0.0.1:${e2eWebPort}`,browserName:'chromium'},
  webServer:[
-  {command:'pnpm --filter @scaleinsyght/api dev',url:`http://127.0.0.1:${e2eApiPort}/api/health`,reuseExistingServer:false,env:{DATABASE_URL:appUrl.toString(),API_PORT:String(e2eApiPort)}},
-  {command:'pnpm --filter @scaleinsyght/worker dev',url:`http://127.0.0.1:${e2eWorkerHealthPort}/health`,reuseExistingServer:false,env:{DATABASE_URL_WORKER:workerUrl.toString(),WORKER_HEALTH_PORT:String(e2eWorkerHealthPort)}},
+  {command:'pnpm exec tsx tests/support/e2e-api-main.ts',url:`http://127.0.0.1:${e2eApiPort}/api/health`,reuseExistingServer:false,env:{DATABASE_URL:appUrl.toString(),API_PORT:String(e2eApiPort)}},
+  {command:'pnpm exec tsx tests/support/e2e-worker.ts',url:`http://127.0.0.1:${e2eWorkerHealthPort}/health`,reuseExistingServer:false,env:{DATABASE_URL_WORKER:workerUrl.toString(),WORKER_HEALTH_PORT:String(e2eWorkerHealthPort)}},
   {command:`pnpm --filter @scaleinsyght/web dev --host 127.0.0.1 --port ${e2eWebPort}`,url:`http://127.0.0.1:${e2eWebPort}`,reuseExistingServer:false,env:{API_PROXY_TARGET:`http://127.0.0.1:${e2eApiPort}`}},
  ],
 });

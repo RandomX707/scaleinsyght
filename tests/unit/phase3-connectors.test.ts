@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getGoldenMetadataFixture } from '@scaleinsyght/connectors';
+import { getGoldenMetadataFixture } from '../support/golden-metadata.js';
 
 describe('phase three synthetic tool connectors', () => {
   it('c6_dbt_tableau_power_bi_golden_imports_are_fixture_key_allowlisted', () => {

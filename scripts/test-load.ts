@@ -20,7 +20,7 @@ export async function runLoadCheck(count=100):Promise<{runs:number;p50Ms:number;
     await withTenant(migratePool,tenantId,db=>db.query("INSERT INTO registry.capabilities(tenant_id,capability_id,active_version,effect_class,effect_safety,enabled) VALUES($1,'analytic.read',1,'READ','not_applicable',true)",[tenantId]));
     const source=await activateConnection(appPool,{tenantId,principalId,connectorType:'postgres'});
     await withTenant(migratePool,tenantId,db=>db.query("INSERT INTO core.entitlements(tenant_id,principal_id,capability_id,resource_id,allowed) VALUES($1,$2,'analytic.read',$3,true)",[tenantId,principalId,source.connectionId]));
-    server=await buildServer({pool:appPool,sessionSecret:'phase6-load-synthetic-session-secret-0123456789',goldenAccounts:[{tenantId,email}]});
+    server=await buildServer({pool:appPool,sessionSecret:'phase6-load-synthetic-session-secret-0123456789',testAccounts:[{tenantId,email}]});
     const login=await server.inject({method:'POST',url:'/api/auth/login',payload:{email,password:'synthetic-load-password'}});if(login.statusCode!==200)throw new Error('load_login_failed');const cookie=String(login.headers['set-cookie']).split(';')[0]!;
     const elapsed:number[]=[];
     for(let index=0;index<count;index++){

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createGoldenConnector } from '@scaleinsyght/connectors';
+import { createGoldenConnector } from '../support/golden-connectors.js';
 
 describe('synthetic read-only connectors', () => {
   it('c6_golden_500_table_schema_harvests_within_ten_minutes_without_model_calls', async () => {

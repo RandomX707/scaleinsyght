@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 
-const fixture = JSON.parse(readFileSync(new URL('../../../tests/golden/phase3.json', import.meta.url), 'utf8')) as {
+const fixture = JSON.parse(readFileSync(new URL('../golden/phase3.json', import.meta.url), 'utf8')) as {
   sources: Array<{ id:string; type:string; name:string }>;
   assets: Array<{ name: string; kind: string }>;
   flows: Array<{ from: string; to: string; grain: string; method: 'observed'|'declared'|'parsed'|'inferred'; confidence: number; change?: string }>;

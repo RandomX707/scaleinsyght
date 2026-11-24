@@ -3,22 +3,22 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { withTenant, getUsage } from '@scaleinsyght/db';
 import { activateConnection, approveGovernedVersion, createConnectionDraft, createGovernedDraft, deletePersonalMemory, getApprovedGovernedVersion, getPersonalMemory, moveConnectionToGroup, putPersonalMemory, type ConnectorType, type PersonalMemoryData } from '@scaleinsyght/registry';
-import { createCrmConnector, createGoldenConnector, createLakeConnector, createPostgresConnector, listGoldenSources, type ReadOnlyConnector } from '@scaleinsyght/connectors';
+import { type ReadOnlyConnector, type SourceConnectorType } from '@scaleinsyght/connectors';
 import { EncryptedArtifactStore } from '@scaleinsyght/artifacts';
-import { getNotifications, markNotificationRead, readConnectionScope, readWorkbook, retireConnection, runGoldenProfile, saveConnectionScope, storeWorkbook } from '@scaleinsyght/profiler';
+import { getNotifications, markNotificationRead, readConnectionScope, readWorkbook, retireConnection, runProfile, saveConnectionScope, storeWorkbook } from '@scaleinsyght/profiler';
 import { applyPersonalContext, createAnalyticPlan, startAnalyticRun, submitFeedback, type StructuredAnswer } from '@scaleinsyght/analytic';
 import { eventsAfter } from '@scaleinsyght/runner';
 import { AnalyticPlanSchema, FlowSpecSchema, hashPlan } from '@scaleinsyght/contracts';
-import { compareGraphSnapshots, getIdentifierPath, getImpactRadius, importDbtManifest, importGoldenMetadata, listGraphAssertions, listGraphAssets, listGraphSnapshots, listIdentifierFields, listReports, queryLineage, reconcileAssertion, reviewGraphAssertion, traceIdentifier, verifyAssertionFromRun } from '@scaleinsyght/graph';
-import { createGoldenHubAdapters, getGoldenHubFixtures, type FlowSpecDelivery, type SemanticsAdapter } from '@scaleinsyght/hub-adapters';
+import { compareGraphSnapshots, getIdentifierPath, getImpactRadius, importDbtManifest, listGraphAssertions, listGraphAssets, listGraphSnapshots, listIdentifierFields, listReports, queryLineage, reconcileAssertion, reviewGraphAssertion, traceIdentifier, verifyAssertionFromRun } from '@scaleinsyght/graph';
+import { type DataStudioAdapter, type SemanticsAdapter } from '@scaleinsyght/hub-adapters';
 import { nextScheduleInstant, renderEvidencePack, safeEvidencePack, type ExportFormat, type SafeEvidencePack } from '@scaleinsyght/reports';
 import { ClaimSchema, EvidenceRefSchema } from '@scaleinsyght/contracts';
 import { authorise } from '@scaleinsyght/policy';
 import { createOidcAuthorizationRequest, verifyOidcIdToken } from '@scaleinsyght/auth-oidc';
 import { createEnrollment, hashGatewaySecret, validateGatewayPlan, validateGatewayResult } from '@scaleinsyght/customer-gateway';
 
-export interface GoldenAccount { tenantId: string; email: string; }
-export interface ServerOptions { pool: Pool; sessionSecret: string; goldenAccounts?: GoldenAccount[]; artifactStore?: EncryptedArtifactStore; oidcFetch?: typeof fetch; hubAdapters?: { semantics: SemanticsAdapter; dataStudio: { product: 'data_studio'; version: number; connected: boolean; capabilities: readonly string[]; deliverFlowSpec(key: string, spec: FlowSpecDelivery): Promise<unknown>; lookupFlowSpec(key: string): Promise<unknown>; } }; }
+export interface TestSource { id: string; type: SourceConnectorType | 'dbt' | 'tableau' | 'power_bi'; name: string; }
+export interface ServerOptions { pool: Pool; sessionSecret: string; testAccounts?: Array<{ tenantId: string; email: string }>; artifactStore?: EncryptedArtifactStore; oidcFetch?: typeof fetch; testSources?: TestSource[]; testConnectorFor?: (sourceId: string) => ReadOnlyConnector | null; hubAdapters?: { semantics: SemanticsAdapter; dataStudio: DataStudioAdapter }; }
 const sessionLifetimeMs = 8 * 60 * 60 * 1000;
 export function hashPassword(password: string, salt = randomBytes(16).toString('hex')): string {
   return `${salt}:${scryptSync(password,salt,64).toString('hex')}`;
@@ -54,18 +54,11 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
   const oidcFetch=options.oidcFetch??fetch;
   const postgresConnectors=new Map<string,ReadOnlyConnector>();
   const connectorFor=(sourceId:string):ReadOnlyConnector=>{
-    if(sourceId==='synthetic-lake')return createLakeConnector();
-    if(sourceId==='synthetic-crm')return createCrmConnector();
-    if(sourceId!=='local-hospital')return createGoldenConnector(sourceId);
-    const url=process.env.DATABASE_URL_SAMPLE_SOURCE;if(!url)throw new Error('DATABASE_URL_SAMPLE_SOURCE is required for the local hospital source');
-    let connector=postgresConnectors.get(url);if(!connector){connector=createPostgresConnector(url);postgresConnectors.set(url,connector);}return connector;
+    const injectedConnector = options.testConnectorFor?.(sourceId);
+    if (injectedConnector) return injectedConnector;
+    throw new Error('source_connection_requires_credentials');
   };
-  const availableConnectorSources=()=>[
-    ...listGoldenSources(),
-    ...(process.env.DATABASE_URL_SAMPLE_SOURCE?[{id:'local-hospital',type:'postgres' as const,name:'Local synthetic hospital PostgreSQL'}]:[]),
-    {id:'synthetic-lake',type:'lake' as const,name:'Synthetic lake'},
-    {id:'synthetic-crm',type:'crm' as const,name:'Synthetic CRM'},
-  ];
+  const availableConnectorSources=()=> (options.testSources??[]).filter(source=>['postgres','sql_server','snowflake','excel','lake','crm'].includes(source.type));
   app.get('/api/gateways',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const allowed=await withTenant(options.pool,current.tenantId,client=>client.query("SELECT 1 FROM core.entitlements WHERE tenant_id=$1 AND principal_id=$2 AND capability_id='tenant.gateway.manage' AND allowed AND resource_id IS NULL LIMIT 1",[current.tenantId,current.userId]));
@@ -85,7 +78,10 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     if(!revoked)return reply.code(404).send({error:'gateway_not_found'});return reply.send({gatewayId:request.params.gatewayId,status:'revoked'});
   });
   app.addHook('onClose',async()=>{await Promise.all([...postgresConnectors.values()].map(connector=>connector.close?.()));});
-  const hubAdapters=options.hubAdapters??createGoldenHubAdapters(getGoldenHubFixtures());
+  const hubAdapters=options.hubAdapters??{
+    semantics:{product:'semantics' as const,version:0,capabilities:[],connected:false,listCertifiedMetrics:()=>[],async queryCertifiedMetric(){throw new Error('hub_adapter_disconnected');}},
+    dataStudio:{product:'data_studio' as const,version:0,capabilities:[],connected:false,async deliverFlowSpec(){throw new Error('hub_adapter_disconnected');},async lookupFlowSpec(){return null;}},
+  };
   const gatewayAuth=async(request: { headers: Record<string, string | string[] | undefined> })=>{
     const header=request.headers.authorization;
     if(typeof header!=='string'||!header.startsWith('Bearer '))return null;
@@ -268,18 +264,18 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     if(!receipt)return reply.code(202).send({handoffId:row.handoff_id,status:'unknown',accepted:false});
     if(receipt.status!=='accepted')return reply.code(202).send({handoffId:row.handoff_id,status:'unknown',accepted:false});
     await withTenant(options.pool,current.tenantId,async(client)=>{
-      const confirmed=await client.query<{run_id:string|null}>('UPDATE hub.handoffs SET status=\'confirmed\',receiver_ref=$3,confirmed_at=clock_timestamp() WHERE tenant_id=$1 AND handoff_id=$2 AND status IN (\'pending\',\'unknown\') RETURNING run_id',[current.tenantId,row.handoff_id,receipt!.receiverRef??`synthetic:${row.idempotency_key}`]);
+      const confirmed=await client.query<{run_id:string|null}>('UPDATE hub.handoffs SET status=\'confirmed\',receiver_ref=$3,confirmed_at=clock_timestamp() WHERE tenant_id=$1 AND handoff_id=$2 AND status IN (\'pending\',\'unknown\') RETURNING run_id',[current.tenantId,row.handoff_id,receipt!.receiverRef]);
       if(confirmed.rows[0]?.run_id){const run=await client.query<{state_version:number}>("UPDATE runs.runs SET state='COMPLETED',state_version=state_version+1,updated_at=clock_timestamp() WHERE tenant_id=$1 AND run_id=$2 RETURNING state_version",[current.tenantId,confirmed.rows[0].run_id]);const decision=await client.query<{decision_id:string}>('SELECT decision_id FROM runs.authz_decisions WHERE tenant_id=$1 AND run_id=$2 ORDER BY created_at DESC LIMIT 1',[current.tenantId,confirmed.rows[0].run_id]);await client.query("INSERT INTO runs.events(tenant_id,run_id,sequence,event_type,decision_id,safe_payload) VALUES($1,$2,2,'run_terminal',$3,$4::jsonb)",[current.tenantId,confirmed.rows[0].run_id,decision.rows[0]!.decision_id,JSON.stringify({state:'COMPLETED',state_version:run.rows[0]!.state_version,receiver_status:'confirmed'})]);}
       await client.query("UPDATE runs.outbox SET sent_at=clock_timestamp() WHERE tenant_id=$1 AND message_id=(SELECT outbox_message_id FROM hub.handoffs WHERE tenant_id=$1 AND handoff_id=$2)",[current.tenantId,row.handoff_id]);
     });
-    return reply.send({handoffId:row.handoff_id,status:'confirmed',accepted:true,receiverRef:receipt.receiverRef??`synthetic:${row.idempotency_key}`});
+    return reply.send({handoffId:row.handoff_id,status:'confirmed',accepted:true,receiverRef:receipt.receiverRef});
   });
   app.get<{Params:{id:string;handoffId:string}}>('/api/flowspecs/:id/handoff/:handoffId',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const found=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{handoff_id:string;idempotency_key:string;payload_hash:string;status:string;receiver_ref:string|null}>('SELECT handoff_id,idempotency_key,payload_hash,status,receiver_ref FROM hub.handoffs WHERE tenant_id=$1 AND flowspec_id=$2 AND handoff_id=$3',[current.tenantId,request.params.id,request.params.handoffId]));
     const row=found.rows[0];if(!row)return reply.code(404).send({error:'handoff_not_found'});if(row.status==='confirmed'||row.status==='reconciled')return reply.send({handoffId:row.handoff_id,status:row.status,accepted:true,receiverRef:row.receiver_ref});
     const receipt=await hubAdapters.dataStudio.lookupFlowSpec(row.idempotency_key) as {status?:string;receiverRef?:string}|null;
-    if(receipt?.status==='accepted'){await withTenant(options.pool,current.tenantId,async(client)=>{const reconciled=await client.query<{run_id:string|null}>('UPDATE hub.handoffs SET status=\'reconciled\',receiver_ref=$3,confirmed_at=clock_timestamp() WHERE tenant_id=$1 AND handoff_id=$2 AND status IN (\'pending\',\'unknown\') RETURNING run_id',[current.tenantId,row.handoff_id,receipt.receiverRef??`synthetic:${row.idempotency_key}`]);if(reconciled.rows[0]?.run_id){const run=await client.query<{state_version:number}>("UPDATE runs.runs SET state='COMPLETED',state_version=state_version+1,updated_at=clock_timestamp() WHERE tenant_id=$1 AND run_id=$2 RETURNING state_version",[current.tenantId,reconciled.rows[0].run_id]);const decision=await client.query<{decision_id:string}>('SELECT decision_id FROM runs.authz_decisions WHERE tenant_id=$1 AND run_id=$2 ORDER BY created_at DESC LIMIT 1',[current.tenantId,reconciled.rows[0].run_id]);await client.query("INSERT INTO runs.events(tenant_id,run_id,sequence,event_type,decision_id,safe_payload) VALUES($1,$2,2,'run_terminal',$3,$4::jsonb)",[current.tenantId,reconciled.rows[0].run_id,decision.rows[0]!.decision_id,JSON.stringify({state:'COMPLETED',state_version:run.rows[0]!.state_version,receiver_status:'reconciled'})]);}});return reply.send({handoffId:row.handoff_id,status:'reconciled',accepted:true,receiverRef:receipt.receiverRef});}
+    if(receipt?.status==='accepted'){await withTenant(options.pool,current.tenantId,async(client)=>{const reconciled=await client.query<{run_id:string|null}>('UPDATE hub.handoffs SET status=\'reconciled\',receiver_ref=$3,confirmed_at=clock_timestamp() WHERE tenant_id=$1 AND handoff_id=$2 AND status IN (\'pending\',\'unknown\') RETURNING run_id',[current.tenantId,row.handoff_id,receipt.receiverRef]);if(reconciled.rows[0]?.run_id){const run=await client.query<{state_version:number}>("UPDATE runs.runs SET state='COMPLETED',state_version=state_version+1,updated_at=clock_timestamp() WHERE tenant_id=$1 AND run_id=$2 RETURNING state_version",[current.tenantId,reconciled.rows[0].run_id]);const decision=await client.query<{decision_id:string}>('SELECT decision_id FROM runs.authz_decisions WHERE tenant_id=$1 AND run_id=$2 ORDER BY created_at DESC LIMIT 1',[current.tenantId,reconciled.rows[0].run_id]);await client.query("INSERT INTO runs.events(tenant_id,run_id,sequence,event_type,decision_id,safe_payload) VALUES($1,$2,2,'run_terminal',$3,$4::jsonb)",[current.tenantId,reconciled.rows[0].run_id,decision.rows[0]!.decision_id,JSON.stringify({state:'COMPLETED',state_version:run.rows[0]!.state_version,receiver_status:'reconciled'})]);}});return reply.send({handoffId:row.handoff_id,status:'reconciled',accepted:true,receiverRef:receipt.receiverRef});}
     await withTenant(options.pool,current.tenantId,(client)=>client.query("UPDATE hub.handoffs SET status='unknown' WHERE tenant_id=$1 AND handoff_id=$2 AND status='pending'",[current.tenantId,row.handoff_id]));return reply.code(202).send({handoffId:row.handoff_id,status:'unknown',accepted:false});
   });
   app.get('/api/hub/adapters',async(request,reply)=>{
@@ -318,13 +314,13 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const selected=metric.rows[0];if(!selected)return reply.code(404).send({error:'certified_metric_not_found'});
     if(!selected.adapter_connected||!hubAdapters.semantics.connected)return reply.code(503).send({error:'hub_adapter_disconnected'});
     if(selected.adapter_current_version!==selected.adapter_version||selected.adapter_current_version!==hubAdapters.semantics.version)return reply.code(409).send({error:'semantic_adapter_version_changed'});
-    const decision=await authorise(options.pool,{principal:{tenant_id:current.tenantId,principal_id:current.userId,kind:'user',roles:[],groups:[],attributes:{}},capability_id:'semantics.metric.read',resources:[selected.metric_id],purpose:'certified_metric_query',environment:'synthetic_golden'});
+    const decision=await authorise(options.pool,{principal:{tenant_id:current.tenantId,principal_id:current.userId,kind:'user',roles:[],groups:[],attributes:{}},capability_id:'semantics.metric.read',resources:[selected.metric_id],purpose:'certified_metric_query',environment:'production'});
     if(decision.outcome!=='allow')return reply.code(403).send({error:'metric_not_authorized'});
     let answerResult;
     try{answerResult=await hubAdapters.semantics.queryCertifiedMetric(selected.metric_id);}
     catch(error){if(error instanceof Error&&error.message==='hub_adapter_disconnected')return reply.code(503).send({error:error.message});if(error instanceof Error&&error.message==='unknown_certified_metric')return reply.code(404).send({error:'certified_metric_not_found'});throw error;}
     const runId=randomUUID();const claimId=randomUUID();const evidenceId=randomUUID();
-    const evidence=EvidenceRefSchema.parse({evidence_id:evidenceId,kind:'api_call',source_id:selected.adapter_id,asset_ids:[],locator:`hub://semantics/metrics/${selected.metric_id}`,content_hash:answerResult.evidence.contentHash,captured_at:new Date().toISOString(),collector_version:`semantics-v${answerResult.adapterVersion}`,redacted_summary:`Certified synthetic metric ${selected.metric_id} returned by Semantics`});
+    const evidence=EvidenceRefSchema.parse({evidence_id:evidenceId,kind:'api_call',source_id:selected.adapter_id,asset_ids:[],locator:`hub://semantics/metrics/${selected.metric_id}`,content_hash:answerResult.evidence.contentHash,captured_at:new Date().toISOString(),collector_version:`semantics-v${answerResult.adapterVersion}`,redacted_summary:`Certified metric ${selected.metric_id} returned by Semantics`});
     const claim=ClaimSchema.parse({claim_id:claimId,kind:'metric',statement:`Certified metric ${answerResult.name}: ${answerResult.value} ${answerResult.unit}`,evidence_ids:[evidence.evidence_id]});
     const answer={metric:answerResult.metricId,bySource:[{sourceId:selected.adapter_id,connectorType:'semantics',value:answerResult.value}],claims:[claim],evidence:[evidence],trust:{groupCount:1,sourceCount:1,joins:['group']},metricDefinition:{name:answerResult.name,unit:answerResult.unit,certified:answerResult.certified,adapter:'semantics',adapterVersion:answerResult.adapterVersion}};
     try{
@@ -355,7 +351,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
         await client.query(`INSERT INTO hub.metric_results(tenant_id,run_id,metric_id,adapter_version,result_value,unit,evidence_metadata)
           VALUES($1,$2,$3,$4,$5,$6,$7::jsonb)`,[current.tenantId,runId,selected.metric_id,answerResult.adapterVersion,answerResult.value,answerResult.unit,JSON.stringify(evidence)]);
         await client.query(`INSERT INTO runs.analytic_answers(tenant_id,run_id,status,answer) VALUES($1,$2,'COMPLETED',$3::jsonb)`,[current.tenantId,runId,JSON.stringify(answer)]);
-        await event('evidence_added',{result_ref:`golden://semantics/${runId}/${selected.metric_id}`,result_classification:'AGGREGATE',capability_id:'semantics.metric.read',capability_version:1});
+        await event('evidence_added',{result_ref:`hub://semantics/${runId}/${selected.metric_id}`,result_classification:'AGGREGATE',capability_id:'semantics.metric.read',capability_version:1});
         for(const state of ['FINALISING','COMPLETED'] as const){
           const next=await client.query<{state_version:number}>(`UPDATE runs.runs SET state=$3,state_version=state_version+1,updated_at=clock_timestamp() WHERE tenant_id=$1 AND run_id=$2 RETURNING state_version`,[current.tenantId,runId,state]);
           await event(state==='COMPLETED'?'run_terminal':'run_state_changed',{state,state_version:next.rows[0]!.state_version});
@@ -368,17 +364,11 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
   });
   app.get('/api/metadata/sources',async(request,reply)=>{
     if(!await authenticatedSession(request))return reply.code(401).send({error:'unauthorized'});
-    return reply.send({sources:[
-      {id:'golden-dbt',type:'dbt',name:'Synthetic dbt manifest',fixtureKey:'dbt-manifest'},
-      ...(process.env.DATABASE_URL_SAMPLE_SOURCE?[{id:'local-dbt-manifest',type:'dbt',name:'Local generated dbt manifest',fixtureKey:null}]:[]),
-      {id:'golden-tableau',type:'tableau',name:'Synthetic Tableau reports',fixtureKey:'tableau-reports'},
-      {id:'golden-powerbi',type:'power_bi',name:'Synthetic Power BI reports',fixtureKey:'power-bi-reports'},
-    ]});
+    return reply.send({sources:(options.testSources??[]).filter(source=>['dbt','tableau','power_bi'].includes(source.type))});
   });
   app.post<{Body:{sourceId?:string}}>('/api/metadata/connections',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
-    const sources=[{id:'golden-dbt',type:'dbt' as const},{...(process.env.DATABASE_URL_SAMPLE_SOURCE?{id:'local-dbt-manifest',type:'dbt' as const}: {})},{id:'golden-tableau',type:'tableau' as const},{id:'golden-powerbi',type:'power_bi' as const}];
-    const source=sources.find((item)=>item.id===request.body?.sourceId);if(!source)return reply.code(400).send({error:'unknown_synthetic_source'});
+    const source=(options.testSources??[]).find((item)=>['dbt','tableau','power_bi'].includes(item.type)&&item.id===request.body?.sourceId);if(!source)return reply.code(400).send({error:'metadata_source_not_found'});
     const connection=await withTenant(options.pool,current.tenantId,async(client)=>{
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[JSON.stringify([current.tenantId,source.id])]);
       const existing=await client.query<{connection_id:string;status:'draft'|'active'}>(
@@ -398,24 +388,20 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const draft=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{source_ref:string|null;connector_type:string;status:string}>(
       'SELECT source_ref,connector_type,status FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2',[current.tenantId,request.params.connectionId]));
     const row=draft.rows[0];if(!row||!row.source_ref)return reply.code(404).send({error:'metadata_connection_not_found'});
-    const valid=(row.connector_type==='dbt'&&(row.source_ref==='golden-dbt'||row.source_ref==='local-dbt-manifest'))||(row.connector_type==='tableau'&&row.source_ref==='golden-tableau')||(row.connector_type==='power_bi'&&row.source_ref==='golden-powerbi');
+    const valid=(options.testSources??[]).some(source=>source.id===row.source_ref&&source.type===row.connector_type);
     if(!valid)return reply.code(400).send({error:'metadata_connection_mismatch'});
     if(row.status==='active')return reply.send({connectionId:request.params.connectionId,status:'active',connectorType:row.connector_type});
     if(row.status!=='draft')return reply.code(404).send({error:'metadata_connection_not_found'});
     const connection=await activateConnection(options.pool,{tenantId:current.tenantId,principalId:current.userId,connectorType:row.connector_type as ConnectorType,connectionId:request.params.connectionId,sourceRef:row.source_ref});
     return reply.send({connectionId:connection.connectionId,status:'active',connectorType:row.connector_type});
   });
-  app.post<{Params:{connectionId:string};Body:{fixtureKey?:string;manifest?:unknown;sourceConnectionId?:string}}>('/api/metadata/import/:connectionId',async(request,reply)=>{
+  app.post<{Params:{connectionId:string};Body:{manifest?:unknown;sourceConnectionId?:string}}>('/api/metadata/import/:connectionId',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
-    if(typeof request.body?.fixtureKey==='string'){
-      try{return reply.send(await importGoldenMetadata(options.pool,{tenantId:current.tenantId,principalId:current.userId,connectionId:request.params.connectionId,fixtureKey:request.body.fixtureKey}));}
-      catch(error){const code=error instanceof Error?error.message:'metadata_import_failed';if(code==='unknown_golden_metadata_fixture')return reply.code(400).send({error:'invalid_golden_metadata_fixture'});if(code==='metadata_connection_not_found')return reply.code(404).send({error:code});throw error;}
-    }
     if(request.body?.manifest&&typeof request.body.sourceConnectionId==='string'){
       try{return reply.send(await importDbtManifest(options.pool,{tenantId:current.tenantId,connectionId:request.params.connectionId,sourceConnectionId:request.body.sourceConnectionId,manifest:request.body.manifest}));}
       catch(error){const code=error instanceof Error?error.message:'dbt_manifest_import_failed';if(code==='invalid_dbt_manifest')return reply.code(400).send({error:code});if(code==='dbt_connection_not_found')return reply.code(404).send({error:code});throw error;}
     }
-    return reply.code(400).send({error:'dbt_manifest_or_fixture_required'});
+    return reply.code(400).send({error:'metadata_file_required'});
   });
   app.get<{Querystring:{assetId?:string;direction?:'upstream'|'downstream'|'both';asOf?:string}}>('/api/lineage',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
@@ -490,7 +476,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     if(typeof rawEmail!=='string'||typeof password!=='string'||password.length>1024)return reply.code(400).send({error:'invalid_credentials'});
     const email=rawEmail.trim().toLowerCase();if(!email||email.length>254||!password)return reply.code(400).send({error:'invalid_credentials'});
     const tenantId=typeof request.body?.tenantId==='string'?request.body.tenantId.trim():'';
-    const legacyAccount=!tenantId?options.goldenAccounts?.find(item=>item.email.toLowerCase()===email):undefined;
+    const legacyAccount=!tenantId?options.testAccounts?.find(item=>item.email.toLowerCase()===email):undefined;
     const scopedTenantId=tenantId||legacyAccount?.tenantId;
     if(!scopedTenantId)return reply.code(401).send({error:'invalid_credentials'});
     const token=randomBytes(32).toString('base64url');const sessionId=randomUUID();
@@ -911,7 +897,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
 
   app.get('/api/sources',async(request,reply)=>{
     if(!await authenticatedSession(request))return reply.code(401).send({error:'unauthorized'});
-    return reply.send({sources:[...listGoldenSources(),...(process.env.DATABASE_URL_SAMPLE_SOURCE?[{id:'local-hospital',type:'postgres' as const,name:'Local synthetic hospital PostgreSQL'}]:[])]});
+    return reply.send({sources:availableConnectorSources()});
   });
   app.get('/api/agents',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
@@ -985,7 +971,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
   app.post<{Body:{sourceId?:string}}>('/api/connections',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const source=availableConnectorSources().find((item)=>item.id===request.body?.sourceId);
-    if(!source)return reply.code(400).send({error:'unknown_synthetic_source'});
+    if(!source)return reply.code(400).send({error:'connector_source_not_found'});
     const draft=await createConnectionDraft(options.pool,{tenantId:current.tenantId,connectorType:source.type as ConnectorType,sourceRef:source.id});
     return reply.code(201).send({connectionId:draft.connectionId,status:'draft',connectorType:source.type,sourceName:source.name});
   });
@@ -1012,7 +998,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
       const existing=await client.query("SELECT 1 FROM core.entitlements WHERE tenant_id=$1 AND principal_id=$2 AND capability_id='analytic.read' AND resource_id=$3 AND allowed",[current.tenantId,current.userId,activated.connectionId]);
       if(!existing.rowCount)await client.query("INSERT INTO core.entitlements(tenant_id,principal_id,capability_id,resource_id,allowed) VALUES($1,$2,'analytic.read',$3,true)",[current.tenantId,current.userId,activated.connectionId]);
     });
-    const profile=await runGoldenProfile(options.pool,{tenantId:current.tenantId,connectionId:activated.connectionId,connector,jobType:'discovery'});
+    const profile=await runProfile(options.pool,{tenantId:current.tenantId,connectionId:activated.connectionId,connector,jobType:'discovery'});
     return reply.send({connectionId:activated.connectionId,agentId:activated.agentId,sourceName:source.name,profile});
   });
   app.post<{Params:{connectionId:string};Body:{jobType?:'profile'|'nightly'}}>('/api/connections/:connectionId/discover',async(request,reply)=>{
@@ -1021,7 +1007,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
       'SELECT source_ref,status FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2',[current.tenantId,request.params.connectionId]));
     const row=connection.rows[0];if(!row||row.status!=='active'||!row.source_ref)return reply.code(404).send({error:'active_connection_not_found'});
     if(request.body?.jobType&&!['profile','nightly'].includes(request.body.jobType))return reply.code(400).send({error:'invalid_job_type'});
-    const result=await runGoldenProfile(options.pool,{tenantId:current.tenantId,connectionId:request.params.connectionId,connector:connectorFor(row.source_ref),jobType:request.body?.jobType??'profile'});
+    const result=await runProfile(options.pool,{tenantId:current.tenantId,connectionId:request.params.connectionId,connector:connectorFor(row.source_ref),jobType:request.body?.jobType??'profile'});
     return reply.send(result);
   });
   app.get<{Params:{connectionId:string}}>('/api/connections/:connectionId/profile',async(request,reply)=>{

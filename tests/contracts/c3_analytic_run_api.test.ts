@@ -1,7 +1,8 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { config } from 'dotenv';
 import { Pool } from 'pg';
-import { buildServer, hashPassword } from '@scaleinsyght/api/server';
+import { buildTestServer as buildServer } from '../support/test-api.js';
+import { hashPassword } from '@scaleinsyght/api/server';
 import { activateConnection } from '@scaleinsyght/registry';
 import { withTenant } from '@scaleinsyght/db';
 
@@ -34,7 +35,7 @@ describe('contract 3 authenticated analytic run routes', () => {
     await withTenant(migrate, tenantId, async (db) => {
       await db.query(`INSERT INTO core.entitlements(tenant_id,principal_id,capability_id,resource_id) VALUES($1,$2,'analytic.read',$3)`, [tenantId, principalId, source.connectionId]);
     });
-    const server = await buildServer({ pool: appPool, sessionSecret: 's'.repeat(64), goldenAccounts: [
+    const server = await buildServer({ pool: appPool, sessionSecret: 's'.repeat(64), testAccounts: [
       { tenantId, email: `${tenantId}@synthetic.example` }, { tenantId, email: `${tenantId}-other@synthetic.example` },
     ] });
     try {

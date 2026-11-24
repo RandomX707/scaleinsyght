@@ -1,10 +1,12 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { config } from 'dotenv';
 import { Pool } from 'pg';
-import { buildServer, hashPassword } from '@scaleinsyght/api/server';
+import { buildTestServer as buildServer } from '../support/test-api.js';
+import { hashPassword } from '@scaleinsyght/api/server';
 import { activateConnection } from '@scaleinsyght/registry';
-import { executeGoldenStep, finalizeAnalyticRun } from '@scaleinsyght/analytic';
+import { finalizeAnalyticRun } from '@scaleinsyght/analytic';
 import { completeStep, type StepClaim } from '@scaleinsyght/runner';
+import { executeGoldenStep } from '../support/test-analytic-executor.js';
 import { withTenant } from '@scaleinsyght/db';
 import type { AnalyticPlan } from '@scaleinsyght/contracts';
 
@@ -30,7 +32,7 @@ describe('contract 2 governed agent lifecycle', () => {
     const source=await activateConnection(app,{tenantId,principalId:ownerId,connectorType:'postgres'});
     await activateConnection(app,{tenantId,principalId:ownerId,connectorType:'postgres'});
     await withTenant(migrate,tenantId,async(db)=>db.query("INSERT INTO core.entitlements(tenant_id,principal_id,capability_id,resource_id) VALUES($1,$2,'analytic.read',$3)",[tenantId,ownerId,source.connectionId]));
-    const server=await buildServer({pool:app,sessionSecret:'s'.repeat(64),goldenAccounts:[{tenantId,email:`${tenantId}@synthetic.example`},{tenantId,email:`${tenantId}-approver@synthetic.example`}]});
+    const server=await buildServer({pool:app,sessionSecret:'s'.repeat(64),testAccounts:[{tenantId,email:`${tenantId}@synthetic.example`},{tenantId,email:`${tenantId}-approver@synthetic.example`}]});
     try{
       const ownerLogin=await server.inject({method:'POST',url:'/api/auth/login',payload:{email:`${tenantId}@synthetic.example`,password:'synthetic-password'}});
       const approverLogin=await server.inject({method:'POST',url:'/api/auth/login',payload:{email:`${tenantId}-approver@synthetic.example`,password:'synthetic-password'}});

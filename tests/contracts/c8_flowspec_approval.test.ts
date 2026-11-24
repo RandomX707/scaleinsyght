@@ -1,8 +1,9 @@
 import { afterAll,beforeAll,describe,expect,it } from 'vitest';
 import { config } from 'dotenv';
 import { Pool } from 'pg';
-import { buildServer,hashPassword } from '@scaleinsyght/api/server';
-import { createGoldenHubAdapters,getGoldenHubFixtures } from '@scaleinsyght/hub-adapters';
+import { buildTestServer as buildServer } from '../support/test-api.js';
+import { hashPassword } from '@scaleinsyght/api/server';
+import { createGoldenHubAdapters,getGoldenHubFixtures } from '../support/golden-hub-adapters.js';
 import { withTenant } from '@scaleinsyght/db';
 
 config({path:'.env'});
@@ -13,7 +14,7 @@ const spec=(name='Synthetic handoff')=>({name,sourceSnapshotIds:['00000000-0000-
 describe('contract 8 immutable FlowSpec approval',()=>{
  beforeAll(async()=>{
   await withTenant(migrate,tenantId,async(db)=>{await db.query('INSERT INTO core.tenants(tenant_id,name) VALUES($1,$1)',[tenantId]);for(const email of ['owner','reviewer'])await db.query('INSERT INTO core.users(tenant_id,email,password_hash) VALUES($1,$2,$3)',[tenantId,`${email}@synthetic.example`,hashPassword('synthetic-password')]);const studio=getGoldenHubFixtures().adapters.find(item=>item.product==='data_studio')!;await db.query("INSERT INTO hub.adapters(tenant_id,product,connected,current_version) VALUES($1,'data_studio',true,$2)",[tenantId,studio.version]);await db.query("INSERT INTO hub.adapter_versions(tenant_id,product,version,fixture_key,capabilities) VALUES($1,'data_studio',$2,$3,$4::jsonb)",[tenantId,studio.version,studio.fixtureKey,JSON.stringify(studio.capabilities)]);});
-  server=await buildServer({pool:appPool,sessionSecret:'s'.repeat(64),goldenAccounts:[{tenantId,email:'owner@synthetic.example'},{tenantId,email:'reviewer@synthetic.example'}]});
+  server=await buildServer({pool:appPool,sessionSecret:'s'.repeat(64),testAccounts:[{tenantId,email:'owner@synthetic.example'},{tenantId,email:'reviewer@synthetic.example'}]});
   ownerCookie=String((await server.inject({method:'POST',url:'/api/auth/login',payload:{email:'owner@synthetic.example',password:'synthetic-password'}})).headers['set-cookie']);
   approverCookie=String((await server.inject({method:'POST',url:'/api/auth/login',payload:{email:'reviewer@synthetic.example',password:'synthetic-password'}})).headers['set-cookie']);
  });
@@ -41,7 +42,7 @@ describe('contract 8 immutable FlowSpec approval',()=>{
  it('c8_confirmed_handoff_reuses_the_same_receiver_record_and_outbox',async()=>{
   const created=await server.inject({method:'POST',url:'/api/flowspecs',headers:{cookie:ownerCookie},payload:spec('Idempotent receiver')});const {flowspecId}=created.json() as {flowspecId:string};
   expect((await server.inject({method:'POST',url:`/api/flowspecs/${flowspecId}/approve`,headers:{cookie:approverCookie},payload:{version:1}})).statusCode).toBe(200);
-  const first=await server.inject({method:'POST',url:`/api/flowspecs/${flowspecId}/handoff`,headers:{cookie:ownerCookie},payload:{version:1}});expect(first.statusCode).toBe(200);expect(first.json()).toMatchObject({status:'confirmed',accepted:true});
+  const first=await server.inject({method:'POST',url:`/api/flowspecs/${flowspecId}/handoff`,headers:{cookie:ownerCookie},payload:{version:1}});expect(first.statusCode,first.body).toBe(200);expect(first.json()).toMatchObject({status:'confirmed',accepted:true});
   const replay=await server.inject({method:'POST',url:`/api/flowspecs/${flowspecId}/handoff`,headers:{cookie:ownerCookie},payload:{version:1}});expect(replay.json()).toMatchObject({handoffId:first.json().handoffId,status:'confirmed',accepted:true});
   const rows=await withTenant(migrate,tenantId,async(db)=>{const counts=await db.query<{handoffs:string;outboxes:string;sent:string}>(`SELECT count(DISTINCT h.handoff_id)::text AS handoffs,count(DISTINCT o.message_id)::text AS outboxes,count(DISTINCT o.message_id) FILTER(WHERE o.sent_at IS NOT NULL)::text AS sent FROM hub.handoffs h JOIN runs.outbox o ON o.tenant_id=h.tenant_id AND o.message_id=h.outbox_message_id WHERE h.tenant_id=$1 AND h.flowspec_id=$2`,[tenantId,flowspecId]);const run=await db.query<{run_id:string}>('SELECT run_id::text FROM hub.handoffs WHERE tenant_id=$1 AND flowspec_id=$2',[tenantId,flowspecId]);return {counts:counts.rows[0]!,runId:run.rows[0]!.run_id};});expect(rows.counts).toMatchObject({handoffs:'1',outboxes:'1',sent:'1'});
   const events=await withTenant(migrate,tenantId,(db)=>db.query<{sequence:string;event_type:string;safe_payload:Record<string,unknown>}>('SELECT sequence,event_type,safe_payload FROM runs.events WHERE tenant_id=$1 AND run_id=$2 ORDER BY sequence',[tenantId,rows.runId]));expect(events.rows.map(event=>event.event_type)).toEqual(['handoff_intent_created','run_terminal']);expect(events.rows.map(event=>Number(event.sequence))).toEqual([1,2]);expect(JSON.stringify(events.rows)).not.toMatch(/synthetic handoff|sourceSnapshotIds|deliver_report/i);
@@ -53,7 +54,7 @@ describe('contract 8 immutable FlowSpec approval',()=>{
  });
  it('c8_dropped_receiver_response_reconciles_by_key_without_duplicate_flowspec',async()=>{
   const golden=createGoldenHubAdapters(getGoldenHubFixtures());let deliveries=0;const dataStudio={...golden.dataStudio,async deliverFlowSpec(key:string,payload:Parameters<typeof golden.dataStudio.deliverFlowSpec>[1]){deliveries+=1;const receipt=await golden.dataStudio.deliverFlowSpec(key,payload);if(deliveries===1)throw new Error('synthetic_receiver_response_dropped');return receipt;}};
-  const recoveryServer=await buildServer({pool:appPool,sessionSecret:'s'.repeat(64),goldenAccounts:[{tenantId,email:'owner@synthetic.example'},{tenantId,email:'reviewer@synthetic.example'}],hubAdapters:{semantics:golden.semantics,dataStudio}} as Parameters<typeof buildServer>[0]);
+  const recoveryServer=await buildServer({pool:appPool,sessionSecret:'s'.repeat(64),testAccounts:[{tenantId,email:'owner@synthetic.example'},{tenantId,email:'reviewer@synthetic.example'}],hubAdapters:{semantics:golden.semantics,dataStudio}} as Parameters<typeof buildServer>[0]);
   try{
    const created=await recoveryServer.inject({method:'POST',url:'/api/flowspecs',headers:{cookie:ownerCookie},payload:spec('Lost response recovery')});const {flowspecId}=created.json() as {flowspecId:string};expect((await recoveryServer.inject({method:'POST',url:`/api/flowspecs/${flowspecId}/approve`,headers:{cookie:approverCookie},payload:{version:1}})).statusCode).toBe(200);
    const lost=await recoveryServer.inject({method:'POST',url:`/api/flowspecs/${flowspecId}/handoff`,headers:{cookie:ownerCookie},payload:{version:1}});expect(lost.statusCode).toBe(500);
@@ -63,7 +64,7 @@ describe('contract 8 immutable FlowSpec approval',()=>{
  });
  it('c8_crash_after_grant_claim_reuses_key_and_delivers_once',async()=>{
   const golden=createGoldenHubAdapters(getGoldenHubFixtures());let attempts=0;const dataStudio={...golden.dataStudio,async deliverFlowSpec(key:string,payload:Parameters<typeof golden.dataStudio.deliverFlowSpec>[1]){attempts+=1;if(attempts===1)throw new Error('synthetic_worker_crash_before_receiver');return golden.dataStudio.deliverFlowSpec(key,payload);}};
-  const recoveryServer=await buildServer({pool:appPool,sessionSecret:'s'.repeat(64),goldenAccounts:[{tenantId,email:'owner@synthetic.example'},{tenantId,email:'reviewer@synthetic.example'}],hubAdapters:{semantics:golden.semantics,dataStudio}} as Parameters<typeof buildServer>[0]);
+  const recoveryServer=await buildServer({pool:appPool,sessionSecret:'s'.repeat(64),testAccounts:[{tenantId,email:'owner@synthetic.example'},{tenantId,email:'reviewer@synthetic.example'}],hubAdapters:{semantics:golden.semantics,dataStudio}} as Parameters<typeof buildServer>[0]);
   try{const created=await recoveryServer.inject({method:'POST',url:'/api/flowspecs',headers:{cookie:ownerCookie},payload:spec('Crash recovery')});const {flowspecId}=created.json() as {flowspecId:string};expect((await recoveryServer.inject({method:'POST',url:`/api/flowspecs/${flowspecId}/approve`,headers:{cookie:approverCookie},payload:{version:1}})).statusCode).toBe(200);const first=await recoveryServer.inject({method:'POST',url:`/api/flowspecs/${flowspecId}/handoff`,headers:{cookie:ownerCookie},payload:{version:1}});expect(first.statusCode).toBe(500);const second=await recoveryServer.inject({method:'POST',url:`/api/flowspecs/${flowspecId}/handoff`,headers:{cookie:ownerCookie},payload:{version:1}});expect(second.statusCode).toBe(200);expect(second.json()).toMatchObject({status:'confirmed',accepted:true});expect(attempts).toBe(2);const count=await withTenant(migrate,tenantId,(db)=>db.query('SELECT handoff_id FROM hub.handoffs WHERE tenant_id=$1 AND flowspec_id=$2',[tenantId,flowspecId]));expect(count.rowCount).toBe(1);}finally{await recoveryServer.close();}
  });
 });

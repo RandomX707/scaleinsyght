@@ -25,7 +25,7 @@ async function createTenant(tenantId:string,withReviewer=false){
  return{tenantId,ownerEmail,reviewerEmail,sourceId:source.connectionId};
 }
 async function signIn(page:Page,email:string){await signInToTestWorkspace(page,email);}
-async function signOut(page:Page){await page.getByRole('button',{name:'Workspace profile'}).click();await page.getByRole('menuitem',{name:'Sign out'}).click();await page.waitForURL(url=>url.pathname==='/login');}
+async function signOut(page:Page){await page.getByRole('button',{name:'User'}).click();await page.getByRole('menuitem',{name:'Sign out'}).click();await page.waitForURL(url=>url.pathname==='/login');}
 async function openWorkspace(page:Page){const toggle=page.getByRole('button',{name:/WORKSPACE/});if(await toggle.getAttribute('aria-expanded')!=='true')await toggle.click();}
 
 test('c1_saved_question_requires_accepted_answer_and_can_be_reused_or_removed',async({page})=>{

@@ -1,7 +1,8 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { config } from 'dotenv';
 import { Pool } from 'pg';
-import { buildServer, hashPassword } from '@scaleinsyght/api/server';
+import { buildTestServer as buildServer } from '../support/test-api.js';
+import { hashPassword } from '@scaleinsyght/api/server';
 import { activateConnection, approveGovernedVersion, createGovernedDraft } from '@scaleinsyght/registry';
 import { createAnalyticPlan } from '@scaleinsyght/analytic';
 import { claimDueSchedule, markScheduleSlotSkipped, markScheduleSlotStarted, nextScheduleInstant, persistReportSnapshot, startScheduledReportRun } from '@scaleinsyght/reports';
@@ -33,7 +34,7 @@ describe('contract 5 governed reports and schedule slots', () => {
     const draft = await createGovernedDraft(app, { tenantId, principalId: users.ownerId, name: 'Daily catalog report', plan });
     await approveGovernedVersion(app, { tenantId, principalId: users.reviewerId, governedId: draft.governedId, version: draft.version });
 
-    const server = await buildServer({ pool: app, sessionSecret: 's'.repeat(64), goldenAccounts: [
+    const server = await buildServer({ pool: app, sessionSecret: 's'.repeat(64), testAccounts: [
       { tenantId, email: `${tenantId}@synthetic.example` }, { tenantId, email: `${tenantId}-reviewer@synthetic.example` },
     ] });
     try {

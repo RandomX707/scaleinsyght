@@ -3,8 +3,8 @@ import { config } from 'dotenv';
 import { Pool } from 'pg';
 import { withTenant } from '@scaleinsyght/db';
 import { activateConnection } from '@scaleinsyght/registry';
-import { createGoldenConnector } from '@scaleinsyght/connectors';
-import { getNotifications, markNotificationRead, runGoldenProfile, saveConnectionScope } from '@scaleinsyght/profiler';
+import { createGoldenConnector } from '../support/golden-connectors.js';
+import { getNotifications, markNotificationRead, runProfile, saveConnectionScope } from '@scaleinsyght/profiler';
 
 config({ path: '.env' });
 
@@ -45,7 +45,7 @@ describe('contract 6 profiler persistence and graph', () => {
     const userId = await createTenant(tenantId);
     const connectionId = await connectionFor(tenantId, userId, 'sql_server');
     const connector = createGoldenConnector('golden-sqlserver');
-    const result = await runGoldenProfile(app, { tenantId, connectionId, connector, jobType: 'discovery' });
+    const result = await runProfile(app, { tenantId, connectionId, connector, jobType: 'discovery' });
     expect(result.elapsedMs).toBeLessThan(600_000);
     expect(result).toMatchObject({ listed: 500, profiled: 499, inaccessible: 1 });
     expect(connector.modelRequests).toBe(0);
@@ -63,8 +63,8 @@ describe('contract 6 profiler persistence and graph', () => {
     const tenantId = `profile-repeat-${crypto.randomUUID()}`;
     const userId = await createTenant(tenantId);
     const connectionId = await connectionFor(tenantId, userId);
-    await runGoldenProfile(app, { tenantId, connectionId, connector: createGoldenConnector('golden-postgres'), jobType: 'profile' });
-    await runGoldenProfile(app, { tenantId, connectionId, connector: createGoldenConnector('golden-postgres'), jobType: 'profile' });
+    await runProfile(app, { tenantId, connectionId, connector: createGoldenConnector('golden-postgres'), jobType: 'profile' });
+    await runProfile(app, { tenantId, connectionId, connector: createGoldenConnector('golden-postgres'), jobType: 'profile' });
     const snapshot = await withTenant(migrate, tenantId, async (client) => client.query<{ versions: number; references: number; flows: number; assertions: number }>(
       `SELECT
         (SELECT count(*)::int FROM graph.asset_versions v JOIN graph.assets a USING(tenant_id,asset_id) WHERE v.tenant_id=$1 AND a.qualified_name='X_Golden.Table_001') AS versions,
@@ -81,8 +81,8 @@ describe('contract 6 profiler persistence and graph', () => {
     const userId = await createTenant(tenantId);
     const connectionId = await connectionFor(tenantId, userId);
     const connector = createGoldenConnector('golden-postgres');
-    await runGoldenProfile(app, { tenantId, connectionId, connector, jobType: 'discovery' });
-    const nightly = await runGoldenProfile(app, { tenantId, connectionId, connector, jobType: 'nightly' });
+    await runProfile(app, { tenantId, connectionId, connector, jobType: 'discovery' });
+    const nightly = await runProfile(app, { tenantId, connectionId, connector, jobType: 'nightly' });
     expect(nightly).toMatchObject({ profiled: 1, unchanged: 11 });
     const versions = await withTenant(migrate, tenantId, async (client) => client.query<{ name: string; version_count: number }>(
       `SELECT a.qualified_name AS name,count(v.version)::int AS version_count
@@ -106,7 +106,7 @@ describe('contract 6 profiler persistence and graph', () => {
     const userId=await createTenant(tenantId);
     const connectionId=await connectionFor(tenantId,userId);
     const connector=createGoldenConnector('golden-postgres');
-    await runGoldenProfile(app,{tenantId,connectionId,connector,jobType:'discovery'});
+    await runProfile(app,{tenantId,connectionId,connector,jobType:'discovery'});
     const droppedName='X_Golden.Table_002';
     await withTenant(migrate,tenantId,async(client)=>{
       const assets=await client.query<{asset_id:string;qualified_name:string}>("SELECT asset_id,qualified_name FROM graph.assets WHERE tenant_id=$1 AND asset_type='dataset' AND qualified_name=ANY($2::text[])",[tenantId,['X_Golden.Table_001',droppedName]]);
@@ -122,7 +122,7 @@ describe('contract 6 profiler persistence and graph', () => {
       const present=(item:{qualifiedName:string})=>item.qualifiedName!==droppedName;
       return {...result,objects:result.objects.filter(present),unchangedObjects:result.unchangedObjects.filter(present),coverage:{...result.coverage,listed:result.coverage.listed-1,accessible:result.coverage.accessible-1}};
     };
-    await runGoldenProfile(app,{tenantId,connectionId,connector:droppedConnector,jobType:'discovery'});
+    await runProfile(app,{tenantId,connectionId,connector:droppedConnector,jobType:'discovery'});
     const history=await withTenant(migrate,tenantId,async(client)=>client.query<{active:boolean;versions:number;stale_assertions:number}> (
       `SELECT a.active,(SELECT count(*)::int FROM graph.asset_versions v WHERE v.tenant_id=a.tenant_id AND v.asset_id=a.asset_id) versions,
        (SELECT count(*)::int FROM graph.assertions assertion JOIN graph.relationships r USING(tenant_id,relationship_id)
@@ -141,7 +141,7 @@ describe('contract 6 profiler persistence and graph', () => {
       { qualifiedName: 'X_Golden.Table_002', objectType: 'table', scopeMode: 'list_only' },
       { qualifiedName: 'X_Golden.Table_001', objectType: 'table', scopeMode: 'exclude' },
     ]);
-    const result = await runGoldenProfile(app, { tenantId, connectionId, connector: createGoldenConnector('golden-postgres'), jobType: 'discovery' });
+    const result = await runProfile(app, { tenantId, connectionId, connector: createGoldenConnector('golden-postgres'), jobType: 'discovery' });
     expect(result.profiled).toBe(1);
     expect(result.listOnly).toBe(1);
     expect(result.excluded).toBe(10);

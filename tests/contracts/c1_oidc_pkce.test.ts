@@ -3,7 +3,8 @@ import { createHash, generateKeyPairSync, randomUUID, sign } from 'node:crypto';
 import { config } from 'dotenv';
 import { Pool } from 'pg';
 import { withTenant } from '@scaleinsyght/db';
-import { buildServer, hashPassword } from '@scaleinsyght/api/server';
+import { buildTestServer as buildServer } from '../support/test-api.js';
+import { hashPassword } from '@scaleinsyght/api/server';
 
 config({ path: '.env' });
 function testUrl(key: 'DATABASE_URL' | 'DATABASE_URL_MIGRATE') {
@@ -63,7 +64,7 @@ describe('contract 1 OIDC with PKCE', () => {
       const user = await db.query<{user_id:string}>('SELECT user_id FROM core.users WHERE tenant_id=$1',[tenantId]);
       await db.query("INSERT INTO core.entitlements(tenant_id,principal_id,capability_id,allowed) VALUES($1,$2,'tenant.sso.configure',true)",[tenantId,user.rows[0]!.user_id]);
     });
-    server = await buildServer({ pool: appPool, sessionSecret: 'phase6-oidc-contract-session-secret-0123456789', goldenAccounts: [{ tenantId, email: 'analyst@synthetic.invalid' }], oidcFetch });
+    server = await buildServer({ pool: appPool, sessionSecret: 'phase6-oidc-contract-session-secret-0123456789', testAccounts: [{ tenantId, email: 'analyst@synthetic.invalid' }], oidcFetch });
     const login = await server.inject({ method: 'POST', url: '/api/auth/login', payload: { email: 'analyst@synthetic.invalid', password: 'synthetic-login-password' } });
     sessionCookie = String(login.headers['set-cookie']).split(';')[0]!;
   });

@@ -3,8 +3,9 @@ import { afterAll, beforeAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { config } from 'dotenv';
 import { Pool } from 'pg';
-import { createCrmConnector, createLakeConnector } from '@scaleinsyght/connectors';
-import { buildServer, hashPassword } from '@scaleinsyght/api/server';
+import { createCrmConnector, createLakeConnector } from '../support/test-generic-connectors.js';
+import { buildTestServer as buildServer } from '../support/test-api.js';
+import { hashPassword } from '@scaleinsyght/api/server';
 import { withTenant } from '@scaleinsyght/db';
 
 config({path:'.env'});
@@ -16,7 +17,7 @@ let server:Awaited<ReturnType<typeof buildServer>>;let cookie='';
 describe('contract 2 generic enterprise read connectors', () => {
   beforeAll(async()=>{
     await withTenant(adminPool,tenantId,async(db)=>{await db.query('INSERT INTO core.tenants(tenant_id,name) VALUES($1,$1)',[tenantId]);await db.query('INSERT INTO core.users(tenant_id,email,password_hash) VALUES($1,$2,$3)',[tenantId,email,hashPassword('synthetic-enterprise-password')]);});
-    server=await buildServer({pool:appPool,sessionSecret:'phase6-enterprise-connector-session-secret-0123456789',goldenAccounts:[{tenantId,email}]});
+    server=await buildServer({pool:appPool,sessionSecret:'phase6-enterprise-connector-session-secret-0123456789',testAccounts:[{tenantId,email}]});
     const login=await server.inject({method:'POST',url:'/api/auth/login',payload:{email,password:'synthetic-enterprise-password'}});cookie=String(login.headers['set-cookie']).split(';')[0]!;
   });
   afterAll(async()=>{await server?.close();await appPool.end();await adminPool.end();});

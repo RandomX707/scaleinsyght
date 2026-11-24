@@ -24,7 +24,7 @@ describe('contract 1 tenant creation and invitation', () => {
   beforeAll(async () => {
     await provisionTestTenant(migratePool, { tenantId: workspaceA, displayName: 'Workspace Owner', email: 'owner@example.invalid', password: 'First-User-Password-A1!' });
     await provisionTestTenant(migratePool, { tenantId: workspaceB, displayName: 'Workspace Owner', email: 'owner@example.invalid', password: 'First-User-Password-B2!' });
-    server = await buildServer({ pool: appPool, sessionSecret: 't'.repeat(64), goldenAccounts: [] });
+    server = await buildServer({ pool: appPool, sessionSecret: 't'.repeat(64), testAccounts: [] });
     const a = await server.inject({ method: 'POST', url: '/api/auth/login', payload: { tenantId: workspaceA, email: 'owner@example.invalid', password: 'First-User-Password-A1!' } });
     const b = await server.inject({ method: 'POST', url: '/api/auth/login', payload: { tenantId: workspaceB, email: 'owner@example.invalid', password: 'First-User-Password-B2!' } });
     expect(a.statusCode).toBe(200);

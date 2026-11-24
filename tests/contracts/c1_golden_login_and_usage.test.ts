@@ -2,7 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { config } from 'dotenv';
 import { Pool } from 'pg';
 import { withTenant } from '@scaleinsyght/db';
-import { buildServer, hashPassword } from '@scaleinsyght/api/server';
+import { buildTestServer as buildServer } from '../support/test-api.js';
+import { hashPassword } from '@scaleinsyght/api/server';
 
 config({ path: '.env' });
 function testUrl(key: 'DATABASE_URL'|'DATABASE_URL_MIGRATE') {
@@ -19,7 +20,7 @@ describe('phase 0 login and Usage',()=>{
    await db.query('INSERT INTO core.tenants(tenant_id,name) VALUES($1,$2)',[tenant,'Meridian North Synthetic']);
    await db.query('INSERT INTO core.users(tenant_id,email,password_hash) VALUES($1,$2,$3)',[tenant,'analyst@north.example',hashPassword('golden-local-only')]);
   });
-  server=await buildServer({pool:appPool,sessionSecret:'s'.repeat(64),goldenAccounts:[{tenantId:tenant,email:'analyst@north.example'}]});
+  server=await buildServer({pool:appPool,sessionSecret:'s'.repeat(64),testAccounts:[{tenantId:tenant,email:'analyst@north.example'}]});
  });
  afterAll(async()=>{await server.close();await appPool.end();await migrate.end();});
  it('c1_golden_user_login_creates_revocable_tenant_session_and_usage_route',async()=>{

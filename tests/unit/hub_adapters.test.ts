@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createGoldenHubAdapters, getGoldenHubFixtures } from '@scaleinsyght/hub-adapters';
+import { createGoldenHubAdapters, getGoldenHubFixtures } from '../support/golden-hub-adapters.js';
 
 describe('synthetic Scale Data Hub adapters', () => {
   it('hub_semantics_adapter_returns_certified_metric_and_safe_evidence', async () => {

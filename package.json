@@ -21,8 +21,7 @@
     "gateway:start": "tsx scripts/customer-gateway.ts",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:migrate:test": "tsx scripts/migrate.ts --test",
-    "db:seed:golden": "tsx scripts/seed-golden.ts",
-    "demo:phase0": "tsx scripts/demo-phase0.ts",
+    "test:seed:golden": "tsx tests/support/seed-golden.ts",
     "db:test:reset": "tsx scripts/prepare-test-db.ts",
     "dev": "concurrently -k -n api,worker,web,sqlparse \"pnpm --filter @scaleinsyght/api dev\" \"pnpm --filter @scaleinsyght/worker dev\" \"pnpm --filter @scaleinsyght/web dev --host 127.0.0.1\" \"pnpm dev:sqlparse\"",
     "dev:sqlparse": "node scripts/sqlparse-dev.mjs",
@@ -30,7 +29,7 @@
     "test": "vitest run tests/unit",
     "test:integration": "pnpm db:test:reset && pnpm db:migrate:test && vitest run tests/integration",
     "test:contracts": "pnpm db:test:reset && pnpm db:migrate:test && pnpm db:setup:sample && pnpm dbt:sample && vitest run tests/contracts",
-    "test:e2e": "pnpm db:test:reset && pnpm db:migrate:test && pnpm db:seed:golden -- --test && playwright test",
+    "test:e2e": "pnpm db:test:reset && pnpm db:migrate:test && pnpm test:seed:golden -- --test && playwright test",
     "lint": "eslint .",
     "typecheck": "tsc -b"
   },

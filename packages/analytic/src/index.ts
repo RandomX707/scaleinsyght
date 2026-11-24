@@ -41,7 +41,7 @@ export async function createAnalyticPlan(input: { question: string; runId: strin
   return AnalyticPlanSchema.parse(parsed);
 }
 
-export { collateGroupResults, criticCheck, executeGoldenStep, finalizeAnalyticRun, type StructuredAnswer, type StructuredResult } from './executor.js';
+export { collateGroupResults, criticCheck, finalizeAnalyticRun, type StructuredAnswer, type StructuredResult } from './executor.js';
 export { applyPersonalContext, type PersonalizedAnswer } from './personal-context.js';
 export { submitFeedback, type SafeCorrection } from './feedback.js';
 

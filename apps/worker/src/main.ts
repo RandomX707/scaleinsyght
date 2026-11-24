@@ -1,17 +1,15 @@
 import { config } from 'dotenv';
 import { createServer } from 'node:http';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { Pool } from 'pg';
 import { withRunTenant } from '@scaleinsyght/db';
-import { claimNextStep, completeStep, failStep } from '@scaleinsyght/runner';
-import { executeGoldenStep, finalizeAnalyticRun } from '@scaleinsyght/analytic';
+import { claimNextStep, failStep } from '@scaleinsyght/runner';
+import { finalizeAnalyticRun } from '@scaleinsyght/analytic';
 import type { AnalyticPlan } from '@scaleinsyght/contracts';
 import { authorise } from '@scaleinsyght/policy';
 import { claimDueSchedule, markScheduleSlotSkipped, markScheduleSlotStarted, persistReportSnapshot, startScheduledReportRun } from '@scaleinsyght/reports';
 
 config({path:fileURLToPath(new URL('../../../.env',import.meta.url))});
-const golden=JSON.parse(readFileSync(new URL('../../../tests/golden/phase0.json',import.meta.url),'utf8')) as {scriptedRun:{resultRefs:string[]}};
 const pool=new Pool({connectionString:process.env.DATABASE_URL_WORKER});
 const workerId=`worker-${process.pid}`;
 const healthServer=createServer((request,response)=>{if(request.url==='/health'){response.writeHead(200,{'content-type':'application/json'});response.end('{"status":"ok"}');return;}response.writeHead(404);response.end();});
@@ -45,20 +43,17 @@ while(!stopping){
    try{
     const plan=task.plan;const step=plan.steps[task.order-1];
     if(!step||step.step_id!==claim.stepId)throw new Error('worker_plan_step_mismatch');
-    const decision=await authorise(pool,{principal:{tenant_id:claim.tenantId,principal_id:task.principalId,kind:'user',roles:[],groups:[],attributes:{}},capability_id:step.capability_id,resources:[step.source_id],purpose:'analytic_query',environment:'synthetic_golden'},claim.runId);
+    const decision=await authorise(pool,{principal:{tenant_id:claim.tenantId,principal_id:task.principalId,kind:'user',roles:[],groups:[],attributes:{}},capability_id:step.capability_id,resources:[step.source_id],purpose:'analytic_query',environment:'production'},claim.runId);
     if(decision.outcome!=='allow')throw new Error('policy_revoked');
-    const result=await executeGoldenStep({step,question:plan.question,connectorType:task.connectorType,groupId:task.groupId,timeoutMs:step.timeout_s*1000});
-    await completeStep(pool,claim,{resultRef:`golden://analytic/${claim.runId}/${claim.stepId}`,analyticResult:result});
+    throw new Error('source_query_executor_unavailable');
    }catch(error){
-    const reason=error instanceof Error&&error.message==='synthetic_timeout'?'source_timeout':error instanceof Error&&error.message==='policy_revoked'?'authorization_revoked':'golden_execution_failed';
+    const reason=error instanceof Error&&error.message==='source_timeout'?'source_timeout':error instanceof Error&&error.message==='policy_revoked'?'authorization_revoked':'source_query_executor_unavailable';
     await failStep(pool,claim,{reasonCode:reason});
    }
    await finalizeAnalyticRun(pool,claim.runId);
    await persistReportSnapshot(pool,claim.runId);
   }else{
-   const ref=golden.scriptedRun.resultRefs[task.order-1];
-   if(!ref)throw new Error(`No synthetic golden result reference for step order ${task.order}`);
-   await completeStep(pool,claim,{resultRef:ref});
+   await failStep(pool,claim,{reasonCode:'source_query_executor_unavailable'});
   }
  }catch(error){console.error('Worker iteration failed:',error);process.exitCode=1;stopping=true;}
 }
