@@ -763,8 +763,10 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
       'SELECT conversation_id,title,created_at,updated_at FROM runs.conversations WHERE tenant_id=$1 AND principal_id=$2 AND conversation_id=$3',[current.tenantId,current.userId,request.params.conversationId]));
     if(!conversation.rowCount)return reply.code(404).send({error:'conversation_not_found'});
     const result=await withTenant(options.pool,current.tenantId,client=>client.query<{run_id:string;state:string;question:string;plan:Record<string,unknown>;answer:Record<string,unknown>|null;created_at:Date}>(
-      `SELECT r.run_id,r.state,p.plan->>'question' AS question,p.plan,a.answer,r.created_at
-       FROM runs.runs r JOIN runs.analytic_plans p USING(tenant_id,run_id)
+      `SELECT r.run_id,r.state,coalesce(p.plan->>'question',pending.question) AS question,
+         coalesce(p.plan,jsonb_build_object('question',pending.question,'steps','[]'::jsonb)) AS plan,a.answer,r.created_at
+       FROM runs.runs r LEFT JOIN runs.analytic_plans p USING(tenant_id,run_id)
+       LEFT JOIN runs.planning_requests pending USING(tenant_id,run_id)
        LEFT JOIN runs.analytic_answers a USING(tenant_id,run_id)
        WHERE r.tenant_id=$1 AND r.principal_id=$2 AND r.conversation_id=$3
        ORDER BY r.created_at,r.run_id`,[current.tenantId,current.userId,request.params.conversationId]));
@@ -817,6 +819,13 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
       }else if(!options.testAnalyticPlanner){
         const runId=randomUUID();
         await withTenant(options.pool,current.tenantId,async client=>{
+          const thread = await client.query(`SELECT 1 FROM runs.conversations
+            WHERE tenant_id=$1 AND principal_id=$2 AND conversation_id=$3 FOR UPDATE`, [current.tenantId,current.userId,conversationId]);
+          if (!thread.rowCount) throw new Error('conversation_not_found');
+          await client.query(`UPDATE runs.conversations SET updated_at=clock_timestamp(),
+            title=CASE WHEN NOT EXISTS(SELECT 1 FROM runs.runs WHERE tenant_id=$1 AND conversation_id=$3) THEN $4 ELSE title END
+            WHERE tenant_id=$1 AND principal_id=$2 AND conversation_id=$3`,
+            [current.tenantId,current.userId,conversationId,question.trim().slice(0,200)]);
           await client.query(`INSERT INTO runs.runs(tenant_id,run_id,principal_id,state,state_version,conversation_id)
             VALUES($1,$2,$3,'PLANNING',1,$4)`,[current.tenantId,runId,current.userId,conversationId]);
           await client.query(`INSERT INTO runs.planning_requests(tenant_id,run_id,question,sources,context)
