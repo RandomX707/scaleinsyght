@@ -103,7 +103,7 @@ IF USER_ID(N'${readerName}') IS NOT NULL DROP USER [${readerName}];
 CREATE USER [${readerName}] FOR LOGIN [${readerName}];
 ALTER ROLE [db_datareader] ADD MEMBER [${readerName}];
 GRANT VIEW DEFINITION TO [${readerName}];
-DENY INSERT, UPDATE, DELETE, ALTER, CONTROL, REFERENCES, TAKE OWNERSHIP ON DATABASE::[${databaseName}] TO [${readerName}];
+DENY INSERT, UPDATE, DELETE, ALTER, REFERENCES, TAKE OWNERSHIP ON DATABASE::[${databaseName}] TO [${readerName}];
 `);
 const total = runSqlServerAdminQuery(`SET NOCOUNT ON; SELECT COUNT_BIG(*) FROM (
   SELECT patient_id AS id FROM dbo.patients UNION ALL SELECT encounter_id FROM dbo.encounters

@@ -7,7 +7,7 @@ import { withRunTenant } from '@scaleinsyght/db';
 import { claimNextStep, completeStep, failStep } from '@scaleinsyght/runner';
 import { finalizeAnalyticRun } from '@scaleinsyght/analytic';
 import type { AnalyticPlan } from '@scaleinsyght/contracts';
-import { createPostgresConnector, decryptConnectionSecret } from '@scaleinsyght/connectors';
+import { createPostgresConnector, createSqlServerConnector, decryptConnectionSecret, type ReadOnlyConnector } from '@scaleinsyght/connectors';
 import { OpenAIModelGateway } from '@scaleinsyght/model-gateway';
 import { authorise } from '@scaleinsyght/policy';
 import { claimDueSchedule, markScheduleSlotSkipped, markScheduleSlotStarted, persistReportSnapshot, startScheduledReportRun } from '@scaleinsyght/reports';
@@ -50,22 +50,23 @@ while(!stopping){
     const decision=await authorise(pool,{principal:{tenant_id:claim.tenantId,principal_id:task.principalId,kind:'user',roles:[],groups:[],attributes:{}},capability_id:step.capability_id,resources:[step.source_id],purpose:'analytic_query',environment:'production'},claim.runId);
     if(decision.outcome!=='allow')throw new Error('policy_revoked');
     const intent=step.inputs.query_intent;
-    if(!intent||task.connectorType!=='postgres'||!task.ciphertext||!task.nonce||!task.authTag||!process.env.CONNECTION_SECRET_KEY)throw new Error('source_query_executor_unavailable');
-    const credentials=decryptConnectionSecret<{host:string;port:number;database:string;username:string;password:string;sslMode:'disable'|'require'|'verify-full'}>({version:1,ciphertext:task.ciphertext.toString('base64'),nonce:task.nonce.toString('base64'),authTag:task.authTag.toString('base64')});
-    const sourceUrl=new URL('postgresql://placeholder');sourceUrl.hostname=credentials.host;sourceUrl.port=String(credentials.port);sourceUrl.username=credentials.username;sourceUrl.password=credentials.password;sourceUrl.pathname=`/${credentials.database}`;sourceUrl.searchParams.set('sslmode',credentials.sslMode);
-    const connector=createPostgresConnector({connectionString:sourceUrl.toString(),id:step.source_id,name:task.displayName||'PostgreSQL source',statementTimeoutMs:10_000,maxRows:1_000});
+    if(!intent||!['postgres','sql_server'].includes(task.connectorType)||!task.ciphertext||!task.nonce||!task.authTag||!process.env.CONNECTION_SECRET_KEY)throw new Error('source_query_executor_unavailable');
+    const secret=decryptConnectionSecret<Record<string,unknown>>({version:1,ciphertext:task.ciphertext.toString('base64'),nonce:task.nonce.toString('base64'),authTag:task.authTag.toString('base64')});
+    let connector: ReadOnlyConnector;
+    if(task.connectorType==='sql_server')connector=createSqlServerConnector({server:String(secret.host),port:Number(secret.port),database:String(secret.database),username:String(secret.username),password:String(secret.password),encrypt:true,trustServerCertificate:secret.trustServerCertificate===true,id:step.source_id,name:task.displayName||'SQL Server source',statementTimeoutMs:10_000,maxRows:1_000});
+    else{const sourceUrl=new URL('postgresql://placeholder');sourceUrl.hostname=String(secret.host);sourceUrl.port=String(secret.port);sourceUrl.username=String(secret.username);sourceUrl.password=String(secret.password);sourceUrl.pathname=`/${String(secret.database)}`;sourceUrl.searchParams.set('sslmode',String(secret.sslMode));connector=createPostgresConnector({connectionString:sourceUrl.toString(),id:step.source_id,name:task.displayName||'PostgreSQL source',statementTimeoutMs:10_000,maxRows:1_000});}
     try{
       await connector.test();await connector.discover({mode:'profile'});
       const executed=await connector.executeQueryIntent?.(intent);if(!executed)throw new Error('source_query_executor_unavailable');
       if(executed.rows.length!==1||!('value'in executed.rows[0]!))throw new Error('analytic_query_result_shape_invalid');
       const value=Number(executed.rows[0]!.value);if(!Number.isFinite(value))throw new Error('analytic_query_result_shape_invalid');
-      const evidenceId=randomUUID();const assetNames=typeof intent==='object'&&intent&&'table'in intent?[String((intent as {table:unknown}).table)]:[];
+      const evidenceId=randomUUID();const queryIntent=intent as Record<string,unknown>;const assetNames=[queryIntent.table,queryIntent.leftTable,queryIntent.rightTable].filter((name):name is string=>typeof name==='string');
       const assets=await withRunTenant(pool,claim.runId,client=>client.query<{asset_id:string}>('SELECT asset_id FROM graph.assets WHERE tenant_id=current_setting(\'app.tenant_id\') AND source_id=$1 AND asset_type=\'dataset\' AND qualified_name=ANY($2::text[])',[step.source_id,assetNames]));
       const answer=await new OpenAIModelGateway(pool).complete({tenantId:claim.tenantId,alias:'default',question:`Answer this user question with the exact aggregate value ${value}. Use no other numeric values. User question: ${plan.question}`,metadata:{classification:'METADATA_STATISTICAL',structural:{source:task.displayName||'PostgreSQL source',query:executed.sql},descriptive:{},statistical:{aggregate_value:value},sensitivityTags:[],groupSize:100,minimumCellSize:5},maxOutputTokens:160});
       const modelText=answer.text.trim().replace(/[\r\n]+/g,' ').slice(0,600);const numericValues=modelText.match(/\d+(?:,\d{3})*(?:\.\d+)?/g)?.map(token=>Number(token.replaceAll(',','')))??[];const statement=numericValues.length&&numericValues.every(number=>number===value)?modelText:`The source returned ${value}.`;
-      const analyticResult={sourceId:step.source_id,connectorType:task.connectorType,groupId:task.groupId,metric:String((intent as {kind?:unknown}).kind??'query'),value,claims:[{claim_id:randomUUID(),kind:'metric',statement,evidence_ids:[evidenceId]}],evidence:[{evidence_id:evidenceId,kind:'query',source_id:step.source_id,asset_ids:assets.rows.map(item=>item.asset_id),locator:`${task.displayName||'PostgreSQL source'} · ${executed.sql}`,content_hash:createHash('sha256').update(executed.sql).digest('hex'),captured_at:new Date().toISOString(),collector_version:'postgres-query-v1',redacted_summary:`Executed on ${task.displayName||'PostgreSQL source'}; returned ${executed.rows.length} aggregate row.`}]};
+      const analyticResult={sourceId:step.source_id,connectorType:task.connectorType,groupId:task.groupId,metric:String((intent as {kind?:unknown}).kind??'query'),value,claims:[{claim_id:randomUUID(),kind:'metric',statement,evidence_ids:[evidenceId]}],evidence:[{evidence_id:evidenceId,kind:'query',source_id:step.source_id,asset_ids:assets.rows.map(item=>item.asset_id),locator:`${task.displayName||'Data source'} · ${executed.sql}`,content_hash:createHash('sha256').update(executed.sql).digest('hex'),captured_at:new Date().toISOString(),collector_version:`${task.connectorType}-query-v1`,redacted_summary:`Executed on ${task.displayName||'Data source'}; returned ${executed.rows.length} aggregate row.`}]};
       if(!await completeStep(pool,claim,{resultRef:`postgres-query:${evidenceId}`,analyticResult}))throw new Error('worker_fence_lost');
-    }finally{await connector.close();}
+    }finally{await connector.close?.();}
    }catch(error){
     const reason=error instanceof Error&&error.message==='source_timeout'?'source_timeout':error instanceof Error&&error.message==='policy_revoked'?'authorization_revoked':'source_query_executor_unavailable';
     await failStep(pool,claim,{reasonCode:reason});

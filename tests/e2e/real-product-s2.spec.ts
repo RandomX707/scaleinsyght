@@ -1,0 +1,53 @@
+import { test, expect } from '@playwright/test';
+import { randomUUID } from 'node:crypto';
+import { mkdirSync } from 'node:fs';
+import { config } from 'dotenv';
+import { Pool } from 'pg';
+import { createTenant } from '../../scripts/tenant-create.js';
+
+config({ path: '.env' });
+const tenantUrl = () => { const value = process.env.DATABASE_URL_MIGRATE; if (!value) throw new Error('DATABASE_URL_MIGRATE is required for local S2 acceptance.'); const url = new URL(value); url.pathname = '/si_test'; return url.toString(); };
+const adminPool = new Pool({ connectionString: tenantUrl() });
+const required = ['SQLSERVER_TESTBED_HOST','SQLSERVER_TESTBED_PORT','SQLSERVER_TESTBED_DATABASE','SQLSERVER_TESTBED_USERNAME','SQLSERVER_TESTBED_PASSWORD'] as const;
+const missing = required.filter((key) => !process.env[key]);
+if (missing.length) throw new Error(`${missing.join(', ')} required; run pnpm testbed:sqlserver:up. SQL Server E2E tests are never skipped.`);
+
+test('s2_empty_tenant_adds_real_sql_server_profiles_and_relationships', async ({ page }) => {
+  mkdirSync('docs/acceptance/s2', { recursive: true });
+  const slug = `s2-${randomUUID()}`; const email = `reviewer@${slug}.test.invalid`; const password = 's2-testbed-walkthrough-password-2026';
+  await createTenant(adminPool, { tenantId: slug, name: 'SQL Server test workspace', displayName: 'Test Analyst', email, password });
+  await page.goto(`/login?tenant=${slug}`); await page.getByLabel('Email').fill(email); await page.getByLabel('Password').fill(password); await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Good afternoon, Test Analyst' })).toBeVisible();
+  await page.goto('/connectors'); await expect(page.getByText(/No sources connected/)).toBeVisible();
+  await page.screenshot({ path: 'docs/acceptance/s2/empty-connectors.png', fullPage: true });
+  await page.locator('.page-heading').getByRole('button', { name: /Add connector/ }).click();
+  await page.getByLabel('Source type').selectOption('sql_server');
+  await page.getByLabel('Connection name').fill('SQL Server hospital');
+  await page.getByLabel('Host').fill(process.env.SQLSERVER_TESTBED_HOST!);
+  await page.getByLabel('Port').fill(process.env.SQLSERVER_TESTBED_PORT!);
+  await page.getByLabel('Database').fill(process.env.SQLSERVER_TESTBED_DATABASE!);
+  await page.getByLabel('Username').fill(process.env.SQLSERVER_TESTBED_USERNAME!);
+  await page.getByLabel('Password').fill(process.env.SQLSERVER_TESTBED_PASSWORD!);
+  await page.getByLabel('Trust server certificate').check();
+  await page.screenshot({ path: 'docs/acceptance/s2/add-sql-server.png', fullPage: true });
+  await page.getByRole('button', { name: 'Test connection' }).click();
+  await expect(page.getByRole('heading', { name: 'Choose scope' })).toBeVisible();
+  await page.getByRole('button', { name: 'Start profiling' }).click();
+  await expect(page.getByRole('heading', { name: 'Discovery complete' })).toBeVisible();
+  const response = await page.request.get('/api/connections'); expect(response.ok()).toBeTruthy();
+  const connections = (await response.json() as { connections: Array<{ connectionId: string; connectorType: string; status: string }> }).connections;
+  const source = connections.find((item) => item.status === 'active' && item.connectorType === 'sql_server'); expect(source).toBeTruthy();
+  const connectionId = source!.connectionId;
+  await page.goto(`/profile/${connectionId}`);
+  await expect(page.getByText('Objects profiled')).toBeVisible(); await expect(page.locator('.profile-stats div').filter({ hasText: 'Objects profiled' }).locator('strong')).toHaveText('7');
+  await expect(page.getByText(/patients\.name/)).toBeVisible(); await page.screenshot({ path: 'docs/acceptance/s2/profile.png', fullPage: true });
+  await page.getByRole('button', { name: 'Explore relationships' }).click();
+  await expect(page.locator('.er-link--inferred')).not.toHaveCount(0); await page.screenshot({ path: 'docs/acceptance/s2/er-inferred.png', fullPage: true });
+  await page.goto(`/dictionary?connection=${connectionId}`);
+  await expect(page.locator('.dictionary-list summary').filter({ hasText: 'dbo.patients' })).toBeVisible();
+  await page.getByRole('tab', { name: /Procedures/ }).click();
+  await expect(page.locator('summary').filter({ hasText: /count patient encounters/i })).toBeVisible();
+  await page.screenshot({ path: 'docs/acceptance/s2/dictionary-procedures.png', fullPage: true });
+});
+
+test.afterAll(async () => { await adminPool.end(); });
