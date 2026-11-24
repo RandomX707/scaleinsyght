@@ -61,42 +61,33 @@ POST returns within 3 seconds and the card shows Planning before the answer.
 Browser POST waits are back to 15 seconds. Migration 027 is applied to si_test
 only.
 
-## Step 4 in progress
+## Step 4: done
 
-A diagnostic Luna run after the async change scored 27/30 acceptable on
-development (23 correct, 4 correct refusals, 1 wrong, 2 failed) and 10/10
-acceptable on held-out. The development failures showed that the disclosure
-scrubber treated title-cased exact workbook headers as names. Catalog-matched
-headers now reach the planner in lowercase with the original label in the
-schema. A direct named count now requires its subject to exist in the catalog
-or tenant glossary. Targeted development verification passed Q12 and Q15 and
-correctly refused Q28. The complete comparison is running on both models.
+Full evaluation on revision `59692f6`, both sets, planning model switched with
+`MODEL_CHEAP` on the eval API and worker only (the answer model is
+gpt-6.2-sol in both). Held-out results are aggregates only.
 
-The testbed command now reuses initialized sources. SQL Server writer-refusal
-tests use a disposable writer rather than granting write access to the
-shared reader. The four SQL Server connector contract cases passed. Local
-lint, typecheck, SQL parsing and golden evaluation also passed at prior
-checkpoints. Three full testbed gates and PR/CI are still pending.
+| Planning model | Set | Correct | Refused correctly | Wrong | Failed | Avg latency | Avg cost per question |
+|---|---|---|---|---|---|---|---|
+| gpt-6-luna | questions (30) | 25 | 5 | 0 | 0 | 5.6 s | USD 0.0013 |
+| gpt-6-luna | held-out (10) | 9 | 1 | 0 | 0 | 6.3 s | USD 0.0014 |
+| gpt-6.2-sol | questions (30) | 25 | 5 | 0 | 0 | 5.7 s | USD 0.0087 |
+| gpt-6.2-sol | held-out (10) | 9 | 1 | 0 | 0 | 6.4 s | USD 0.0096 |
 
-A later Luna diagnostic had 27/30 acceptable on development and 9/10 on
-held-out, with 2 and 1 wrong respectively. Only the development failures were
-inspected. The subject guard now separates source qualifiers from the subject
-and rejects a dimension-table count when the named fact table is present.
-Q21 now explicitly says “status placed” to distinguish the lifecycle state
-from the act of placing any order. A status count must retain that filter.
-The live development check passed Q09, Q16 and Q21. Both full comparisons
-have restarted with this version. Local dbt compile and SQL parser tests
-passed with Python 3.11, matching CI.
+Both models meet the targets with identical scores; gpt-6-luna is about seven
+times cheaper at the same latency, so planning stays on the `cheap` alias. An
+earlier attempt failed from Q22 onward with `model_budget_daily_cap_reached`:
+the 100,000-token tenant cap ran out at about 3,500 tokens per question. The
+eval processes now raise it (see `testbed/eval/README.md`), and the product
+limit is being replaced by daily USD caps per tenant and per user.
 
-The next Luna run answered 24 development cases and correctly refused 5, but
-Q16 still returned a dimension count. The persisted SQL and typed intent
-showed the decoder accepted an asserted join on a single-table count and then
-let the filter's qualification replace the validated fact table. The decoder
-now rejects joins on single-table shapes and rejects filters that would be
-discarded by the execution shape. The unit regression supplies that exact
-inconsistent structure. Final runs still need to use this revision.
+heldout2 (`testbed/eval/heldout2.json`, 10 new questions, truth from
+`testbed/eval/heldout2-truth.ts`) was written at `dd0c192`, before this final
+evaluation and after the last planner or prompt change. It is run once, after
+tuning is finished.
 
-The test-only SQL Server writer fixture disconnects its own account before
-removing it, including when a browser-side connection test leaves a pool
-open. The focused SQL Server gate passed again. No shared credentials or
-permissions were changed.
+## Next
+
+Daily USD budget caps (tenant and per user), gates, three consecutive
+`pnpm test:testbed` runs on ports 3340, 3341 and 4290, the single heldout2 run,
+then the PR.
