@@ -18,7 +18,7 @@ import { createOidcAuthorizationRequest, verifyOidcIdToken } from '@scaleinsyght
 import { createEnrollment, hashGatewaySecret, validateGatewayPlan, validateGatewayResult } from '@scaleinsyght/customer-gateway';
 
 export interface GoldenAccount { tenantId: string; email: string; }
-export interface ServerOptions { pool: Pool; sessionSecret: string; goldenAccounts: GoldenAccount[]; artifactStore?: EncryptedArtifactStore; oidcFetch?: typeof fetch; hubAdapters?: { semantics: SemanticsAdapter; dataStudio: { product: 'data_studio'; version: number; connected: boolean; capabilities: readonly string[]; deliverFlowSpec(key: string, spec: FlowSpecDelivery): Promise<unknown>; lookupFlowSpec(key: string): Promise<unknown>; } }; }
+export interface ServerOptions { pool: Pool; sessionSecret: string; goldenAccounts?: GoldenAccount[]; artifactStore?: EncryptedArtifactStore; oidcFetch?: typeof fetch; hubAdapters?: { semantics: SemanticsAdapter; dataStudio: { product: 'data_studio'; version: number; connected: boolean; capabilities: readonly string[]; deliverFlowSpec(key: string, spec: FlowSpecDelivery): Promise<unknown>; lookupFlowSpec(key: string): Promise<unknown>; } }; }
 const sessionLifetimeMs = 8 * 60 * 60 * 1000;
 export function hashPassword(password: string, salt = randomBytes(16).toString('hex')): string {
   return `${salt}:${scryptSync(password,salt,64).toString('hex')}`;
@@ -485,26 +485,29 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     try{return reply.send(await reconcileAssertion(options.pool,{tenantId:current.tenantId,assertionId:request.params.assertionId,evidenceId:request.body.evidenceId}));}
     catch(error){if(error instanceof Error&&error.message==='reconciliation_evidence_not_found')return reply.code(409).send({error:error.message});throw error;}
   });
-  app.post<{Body:{email?:string;password?:string}}>('/api/auth/login',async(request,reply)=>{
-    const email=request.body?.email?.trim().toLowerCase();const password=request.body?.password;
-    if(!email||!password)return reply.code(400).send({error:'invalid_credentials'});
-    const account=options.goldenAccounts.find(item=>item.email.toLowerCase()===email);
-    if(!account)return reply.code(401).send({error:'invalid_credentials'});
+  app.post<{Body:{tenantId?:string;email?:string;password?:string}}>('/api/auth/login',async(request,reply)=>{
+    const rawEmail=request.body?.email;const password=request.body?.password;
+    if(typeof rawEmail!=='string'||typeof password!=='string'||password.length>1024)return reply.code(400).send({error:'invalid_credentials'});
+    const email=rawEmail.trim().toLowerCase();if(!email||email.length>254||!password)return reply.code(400).send({error:'invalid_credentials'});
+    const tenantId=typeof request.body?.tenantId==='string'?request.body.tenantId.trim():'';
+    const legacyAccount=!tenantId?options.goldenAccounts?.find(item=>item.email.toLowerCase()===email):undefined;
+    const scopedTenantId=tenantId||legacyAccount?.tenantId;
+    if(!scopedTenantId)return reply.code(401).send({error:'invalid_credentials'});
     const token=randomBytes(32).toString('base64url');const sessionId=randomUUID();
-    const user=await withTenant(options.pool,account.tenantId,async(client)=>{
-      const result=await client.query<{user_id:string;password_hash:string;is_active:boolean}>(
-        'SELECT user_id,password_hash,is_active FROM core.users WHERE tenant_id=$1 AND email=$2',[account.tenantId,email]);
+    const user=await withTenant(options.pool,scopedTenantId,async(client)=>{
+      const result=await client.query<{user_id:string;password_hash:string;is_active:boolean;display_name:string}>(
+        'SELECT user_id,password_hash,is_active,display_name FROM core.users WHERE tenant_id=$1 AND email=$2',[scopedTenantId,email]);
       const row=result.rows[0];if(!row||!row.is_active||!verifyPassword(password,row.password_hash))return null;
       await client.query(`INSERT INTO core.sessions(tenant_id,session_id,user_id,token_hash,expires_at)
-        VALUES($1,$2,$3,$4,clock_timestamp()+interval '8 hours')`,[account.tenantId,sessionId,row.user_id,digest(token)]);
-      await client.query(`INSERT INTO core.activity_events(tenant_id,event_type,principal_id) VALUES($1,'user_active',$2)`,[account.tenantId,row.user_id]);
+        VALUES($1,$2,$3,$4,clock_timestamp()+interval '8 hours')`,[scopedTenantId,sessionId,row.user_id,digest(token)]);
+      await client.query(`INSERT INTO core.activity_events(tenant_id,event_type,principal_id) VALUES($1,'user_active',$2)`,[scopedTenantId,row.user_id]);
       return row;
     });
     if(!user)return reply.code(401).send({error:'invalid_credentials'});
-    const payload=Buffer.from(JSON.stringify({tenantId:account.tenantId,userId:user.user_id,sessionId,token})).toString('base64url');
+    const payload=Buffer.from(JSON.stringify({tenantId:scopedTenantId,userId:user.user_id,sessionId,token})).toString('base64url');
     const cookie=`${payload}.${sign(payload,options.sessionSecret)}`;
     reply.header('set-cookie',`si_session=${cookie}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${sessionLifetimeMs/1000}`);
-    return reply.send({user:{email}});
+    return reply.send({user:{email,displayName:user.display_name}});
   });
   async function session(request: {headers:Record<string,string|string[]|undefined>}):Promise<{tenantId:string;userId:string;sessionId:string;token:string}|null>{
     const cookieHeader=request.headers.cookie;if(!cookieHeader||Array.isArray(cookieHeader))return null;
@@ -522,6 +525,50 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     });
     return valid?current:null;
   }
+  app.get('/api/auth/me',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const user=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{email:string;display_name:string}>('SELECT email,display_name FROM core.users WHERE tenant_id=$1 AND user_id=$2',[current.tenantId,current.userId]));
+    const row=user.rows[0];if(!row)return reply.code(401).send({error:'unauthorized'});
+    return reply.send({user:{email:row.email,displayName:row.display_name}});
+  });
+  app.post<{Body:{email?:unknown}}>('/api/tenant/invites',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const admin=await withTenant(options.pool,current.tenantId,client=>client.query("SELECT 1 FROM core.entitlements WHERE tenant_id=$1 AND principal_id=$2 AND capability_id='tenant.admin' AND allowed AND resource_id IS NULL LIMIT 1",[current.tenantId,current.userId]));
+    if(!admin.rowCount)return reply.code(403).send({error:'tenant_admin_required'});
+    if(typeof request.body?.email!=='string')return reply.code(400).send({error:'invite_email_invalid'});
+    const email=request.body.email.trim().toLowerCase();if(email.length>254||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))return reply.code(400).send({error:'invite_email_invalid'});
+    const token=randomBytes(32).toString('base64url');const tokenHash=digest(token);
+    const invite=await withTenant(options.pool,current.tenantId,async(client)=>{
+      const existing=await client.query('SELECT 1 FROM core.users WHERE tenant_id=$1 AND email=$2',[current.tenantId,email]);if(existing.rowCount)return null;
+      const created=await client.query<{invite_id:string;expires_at:Date}>(`INSERT INTO core.tenant_invites(tenant_id,email,token_hash,expires_at,created_by)
+        VALUES($1,$2,$3,clock_timestamp()+interval '24 hours',$4) RETURNING invite_id,expires_at`,[current.tenantId,email,tokenHash,current.userId]);
+      await client.query("INSERT INTO core.activity_events(tenant_id,event_type,principal_id) VALUES($1,'member_invited',$2)",[current.tenantId,current.userId]);
+      return created.rows[0]!;
+    });
+    if(!invite)return reply.code(409).send({error:'invite_email_already_in_workspace'});
+    const publicUrl=new URL(process.env.PUBLIC_APP_URL??'http://localhost:5173');publicUrl.pathname='/invite';publicUrl.search='';publicUrl.searchParams.set('tenant',current.tenantId);publicUrl.searchParams.set('token',token);
+    return reply.code(201).send({inviteId:invite.invite_id,inviteUrl:publicUrl.toString(),expiresAt:invite.expires_at});
+  });
+  app.post<{Body:{tenantId?:unknown;token?:unknown;displayName?:unknown;password?:unknown}}>('/api/auth/invites/accept',async(request,reply)=>{
+    const tenantId=typeof request.body?.tenantId==='string'?request.body.tenantId.trim():'';
+    const token=typeof request.body?.token==='string'?request.body.token:'';
+    const displayName=typeof request.body?.displayName==='string'?request.body.displayName.trim():'';
+    const password=typeof request.body?.password==='string'?request.body.password:'';
+    if(!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(tenantId)||!/^[a-zA-Z0-9_-]{40,64}$/.test(token)||!displayName||displayName.length>120||password.length<12||password.length>1024)return reply.code(400).send({error:'invite_acceptance_invalid'});
+    const accepted=await withTenant(options.pool,tenantId,async(client)=>{
+      const found=await client.query<{invite_id:string;email:string}>('SELECT invite_id,email FROM core.tenant_invites WHERE tenant_id=$1 AND token_hash=$2 AND accepted_at IS NULL AND expires_at>clock_timestamp() FOR UPDATE',[tenantId,digest(token)]);
+      const invite=found.rows[0];if(!invite)return null;
+      const created=await client.query<{user_id:string}>(`INSERT INTO core.users(tenant_id,email,display_name,password_hash) VALUES($1,$2,$3,$4)
+        ON CONFLICT (tenant_id,email) DO NOTHING RETURNING user_id`,[tenantId,invite.email,displayName,hashPassword(password)]);
+      const userId=created.rows[0]?.user_id;if(!userId)return null;
+      await client.query('UPDATE core.tenant_invites SET accepted_at=clock_timestamp(),accepted_by=$3 WHERE tenant_id=$1 AND invite_id=$2',[tenantId,invite.invite_id,userId]);
+      await client.query("INSERT INTO core.entitlements(tenant_id,principal_id,capability_id,allowed) VALUES($1,$2,'tenant.member',true)",[tenantId,userId]);
+      await client.query("INSERT INTO core.activity_events(tenant_id,event_type,principal_id) VALUES($1,'member_joined',$2)",[tenantId,userId]);
+      return {email:invite.email,displayName};
+    });
+    if(!accepted)return reply.code(400).send({error:'invite_invalid_or_expired'});
+    return reply.code(201).send({user:accepted});
+  });
   app.get('/api/tenant/sso',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const result=await withTenant(options.pool,current.tenantId,client=>client.query<{issuer:string;client_id:string;client_secret_ref:string;allowed_email_domains:string[];enabled:boolean}>(

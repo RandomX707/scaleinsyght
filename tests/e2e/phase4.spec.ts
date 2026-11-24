@@ -4,6 +4,7 @@ import { Pool } from 'pg';
 import { hashPassword } from '@scaleinsyght/api/server';
 import { getGoldenHubFixtures } from '@scaleinsyght/hub-adapters';
 import { withTenant } from '@scaleinsyght/db';
+import { signInToTestWorkspace } from '../support/e2e-auth.js';
 import phase4E2e from '../golden/phase4-e2e.json' with { type:'json' };
 
 config({path:'.env'});
@@ -25,7 +26,7 @@ async function createTenant(connected:boolean){
  });
  return {tenantId,accounts};
 }
-async function signIn(page:Page,email:string){if(new URL(page.url()).pathname!=='/login')await page.goto('/login');await page.getByLabel('Email').fill(email);await page.getByLabel('Password').fill('golden-local-only');const login=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/auth/login');await page.getByRole('button',{name:'Sign in',exact:true}).click();expect((await login).status()).toBe(200);await page.waitForURL(url=>url.pathname==='/');}
+async function signIn(page:Page,email:string){await signInToTestWorkspace(page,email);}
 async function signOut(page:Page){await page.getByRole('button',{name:'Workspace profile'}).click();await page.getByRole('menuitem',{name:'Sign out'}).click();await page.waitForURL(url=>url.pathname==='/login');}
 
 test('c4_hub_empty_state_is_scoped_to_a_new_tenant_without_connected_adapters',async({page})=>{

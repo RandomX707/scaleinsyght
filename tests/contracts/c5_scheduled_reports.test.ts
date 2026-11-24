@@ -4,7 +4,7 @@ import { Pool } from 'pg';
 import { buildServer, hashPassword } from '@scaleinsyght/api/server';
 import { activateConnection, approveGovernedVersion, createGovernedDraft } from '@scaleinsyght/registry';
 import { createAnalyticPlan } from '@scaleinsyght/analytic';
-import { claimDueSchedule, markScheduleSlotSkipped, markScheduleSlotStarted, persistReportSnapshot, startScheduledReportRun } from '@scaleinsyght/reports';
+import { claimDueSchedule, markScheduleSlotSkipped, markScheduleSlotStarted, nextScheduleInstant, persistReportSnapshot, startScheduledReportRun } from '@scaleinsyght/reports';
 import { withTenant } from '@scaleinsyght/db';
 
 config({ path: '.env' });
@@ -61,9 +61,10 @@ describe('contract 5 governed reports and schedule slots', () => {
       });
       expect((await server.inject({ method: 'GET', url: '/api/me/schedules', headers: { cookie: reviewerCookie } })).json().schedules).toHaveLength(0);
 
+      const dueWeeklySlot=nextScheduleInstant({after:new Date(Date.now()-7*24*60*60*1000-60_000),cadence:'weekly',weekday:1,timeZone:'Asia/Kolkata',localTime:'07:15'});
       await withTenant(migrate, tenantId, async (db) => {
         await db.query("SELECT set_config('app.principal_id',$1,true)", [users.ownerId]);
-        await db.query('UPDATE reports.schedules SET next_run_at=clock_timestamp()-interval \'1 minute\' WHERE tenant_id=$1 AND schedule_id=$2', [tenantId, scheduleId]);
+        await db.query('UPDATE reports.schedules SET next_run_at=$3 WHERE tenant_id=$1 AND schedule_id=$2', [tenantId, scheduleId,dueWeeklySlot]);
       });
       const claim=await claimDueSchedule(worker,tenantId);
       expect(claim).toMatchObject({ tenantId, scheduleId, reportId, ownerId: users.ownerId });

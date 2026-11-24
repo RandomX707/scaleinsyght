@@ -79,16 +79,55 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
 function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [tenantId,setTenantId]=useState('');
+  const [tenantId,setTenantId]=useState(()=>new URLSearchParams(location.search).get('tenant')??'');
   const [error, setError] = useState('');
   async function submit(event: React.FormEvent) {
     event.preventDefault(); setError('');
     try {
-      await api('/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email, password }) });
+      await api('/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tenantId, email, password }) });
       location.assign('/');
     } catch { setError('Email or password is incorrect.'); }
   }
-  return <main className="login"><form onSubmit={submit}><div className="brandmark">S</div><h1>Welcome to Scale Insyght</h1><p>Sign in to your workspace</p><label>Email<input autoComplete="username" type="email" required value={email} onChange={event => setEmail(event.target.value)} /></label><label>Password<input autoComplete="current-password" type="password" required value={password} onChange={event => setPassword(event.target.value)} /></label>{error && <p role="alert" className="error">{error}</p>}<button type="submit">Sign in</button><label>Workspace ID for organization SSO<input aria-label="Workspace ID for organization SSO" value={tenantId} onChange={event=>setTenantId(event.target.value)} /></label><button type="button" disabled={!tenantId} onClick={()=>location.assign(`/api/auth/oidc/${encodeURIComponent(tenantId)}/start`)}>Sign in with organization</button><p className="muted">Password sign-in remains available if organization SSO is unavailable.</p></form></main>;
+  return <main className="login"><form onSubmit={submit}><div className="brandmark">S</div><h1>Welcome to Scale Insyght</h1><p>Sign in to your workspace</p><label>Workspace ID<input autoComplete="organization" required value={tenantId} onChange={event=>setTenantId(event.target.value)} /></label><label>Email<input autoComplete="username" type="email" required value={email} onChange={event => setEmail(event.target.value)} /></label><label>Password<input autoComplete="current-password" type="password" required value={password} onChange={event => setPassword(event.target.value)} /></label>{error && <p role="alert" className="error">{error}</p>}<button type="submit">Sign in</button><button type="button" disabled={!tenantId} onClick={()=>location.assign(`/api/auth/oidc/${encodeURIComponent(tenantId)}/start`)}>Sign in with organization</button><p className="muted">Password sign-in remains available if organization SSO is unavailable.</p></form></main>;
+}
+
+function InviteAcceptance() {
+  const params = new URLSearchParams(location.search);
+  const tenantId = params.get('tenant') ?? '';
+  const token = params.get('token') ?? '';
+  const [displayName, setDisplayName] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [accepted, setAccepted] = useState(false);
+  async function submit(event: React.FormEvent) {
+    event.preventDefault(); setError('');
+    try {
+      await api('/api/auth/invites/accept', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tenantId, token, displayName, password }) });
+      setAccepted(true);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'This invite is invalid or expired.'); }
+  }
+  if (accepted) return <main className="login"><section><h1>Workspace access ready</h1><p>Your account is ready. Sign in to continue.</p><button onClick={() => location.assign(`/login?tenant=${encodeURIComponent(tenantId)}`)}>Continue to sign in</button></section></main>;
+  return <main className="login"><form onSubmit={event => void submit(event)}><div className="brandmark">S</div><h1>Join a workspace</h1><p>Set up your account from the invitation.</p><label>Your name<input autoComplete="name" required maxLength={120} value={displayName} onChange={event => setDisplayName(event.target.value)} /></label><label>Create a password<input autoComplete="new-password" type="password" required minLength={12} value={password} onChange={event => setPassword(event.target.value)} /></label>{error && <p role="alert" className="error">{error}</p>}<button type="submit" disabled={!tenantId || !token}>Accept invitation</button></form></main>;
+}
+
+function InvitesPage() {
+  const [email, setEmail] = useState('');
+  const [inviteUrl, setInviteUrl] = useState('');
+  const [expiresAt, setExpiresAt] = useState('');
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+  async function createInvite(event: React.FormEvent) {
+    event.preventDefault(); setError(''); setMessage(''); setInviteUrl('');
+    try {
+      const invite = await api<{ inviteUrl: string; expiresAt: string }>('/api/tenant/invites', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email }) });
+      setInviteUrl(invite.inviteUrl); setExpiresAt(invite.expiresAt); setMessage('Invite link created. Copy and send it to the person you invited.');
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Invite could not be created.'); }
+  }
+  async function copyInvite() {
+    try { await navigator.clipboard.writeText(inviteUrl); setMessage('Invite link copied.'); }
+    catch { setMessage('Select and copy the invite link.'); }
+  }
+  return <section><div className="page-heading"><div><h1>Invite members</h1><p>Create a single-use link that expires after 24 hours. Send it out of band.</p></div></div><form onSubmit={event => void createInvite(event)}><label>Email<input type="email" required value={email} onChange={event => setEmail(event.target.value)} /></label><button type="submit">Create invite link</button></form>{inviteUrl && <article><label>Copyable invite link<input readOnly value={inviteUrl} onFocus={event => event.currentTarget.select()} /></label><p>Expires {new Date(expiresAt).toLocaleString()}</p><button onClick={() => void copyInvite()}>Copy link</button></article>}{error && <p role="alert" className="error">{error}</p>}{message && <p role="status">{message}</p>}</section>;
 }
 
 function loadGroups(): NavGroups {
@@ -266,6 +305,7 @@ function FlowSpecPage(props:{id:string}){
 function App() {
   const [path, setPath] = useState(location.pathname + location.search);
   const [usage, setUsage] = useState<Usage | null>(null);
+  const [user, setUser] = useState<{ email: string; displayName: string } | null>(null);
   const [connections, setConnections] = useState<Connection[]>([]);
   const [unauthorized, setUnauthorized] = useState(false);
   const [groups, setGroups] = useState<NavGroups>(loadGroups);
@@ -276,13 +316,14 @@ function App() {
   async function reloadConnections() { const result = await api<{ connections: Connection[] }>('/api/connections'); setConnections(result.connections); }
   async function reloadNotifications() { const result = await api<{ notifications: Notification[] }>('/api/notifications'); setNotifications(result.notifications); }
   useEffect(() => {
-    void Promise.all([api<Usage>('/api/usage').then(setUsage), reloadConnections()]).catch(reason => {
+    void Promise.all([api<Usage>('/api/usage').then(setUsage), reloadConnections(), api<{ user: { email: string; displayName: string } }>('/api/auth/me').then(result => setUser(result.user))]).catch(reason => {
       if (reason instanceof Error && reason.message === 'unauthorized') setUnauthorized(true);
       else setError('Workspace data could not be loaded.');
     });
   }, []);
   useEffect(() => { try { localStorage.setItem('nav-workspace', String(groups.workspace)); localStorage.setItem('nav-platform', String(groups.platform)); } catch { /* Navigation still works when storage is disabled. */ } }, [groups]);
   useEffect(() => { const pop = () => setPath(location.pathname + location.search); addEventListener('popstate', pop); return () => removeEventListener('popstate', pop); }, []);
+  if (path.startsWith('/invite')) return <InviteAcceptance />;
   if (path.startsWith('/login') || unauthorized) return <Login />;
   const navigate = (url: string) => { history.pushState({}, '', url); setPath(url); setError(''); };
   const toggle = (group: keyof NavGroups) => setGroups(value => ({ ...value, [group]: !value[group] }));
@@ -290,7 +331,8 @@ function App() {
   async function markRead(id: string) { await api(`/api/notifications/${id}/read`, { method: 'POST' }); await reloadNotifications(); }
   const currentConnection = new URLSearchParams(path.split('?')[1] ?? '').get('connection') ?? path.split('/')[2];
   let page: React.ReactNode;
-  if (path.startsWith('/usage')) page = <section><h1>Usage</h1><p>Counts are derived from activity events for this billing period.</p><div className="cards"><article><span>Active users</span><strong>{usage?.active_users ?? 0}</strong></article>{Object.entries(usage?.active_connectors.by_type ?? {}).map(([type, count]) => <article key={type}><span>Active {type.replaceAll('_', ' ')} connectors</span><strong>{count}</strong></article>)}<article><span>Model tokens (billing period)</span><strong>{(usage?.model_usage.input_tokens??0)+(usage?.model_usage.output_tokens??0)}</strong></article><article><span>Model cost (billing period)</span><strong>USD {(usage?.model_usage.cost_usd??0).toFixed(4)}</strong></article><article><span>Daily model cap</span><strong>USD {(usage?.model_usage.daily_cost_cap_usd??2).toFixed(2)}</strong><p>{usage?.model_usage.daily_token_cap.toLocaleString()??'100,000'} tokens</p></article></div></section>;
+  if (path.startsWith('/invites')) page = <InvitesPage />;
+  else if (path.startsWith('/usage')) page = <section><h1>Usage</h1><p>Counts are derived from activity events for this billing period.</p><div className="cards"><article><span>Active users</span><strong>{usage?.active_users ?? 0}</strong></article>{Object.entries(usage?.active_connectors.by_type ?? {}).map(([type, count]) => <article key={type}><span>Active {type.replaceAll('_', ' ')} connectors</span><strong>{count}</strong></article>)}<article><span>Model tokens (billing period)</span><strong>{(usage?.model_usage.input_tokens??0)+(usage?.model_usage.output_tokens??0)}</strong></article><article><span>Model cost (billing period)</span><strong>USD {(usage?.model_usage.cost_usd??0).toFixed(4)}</strong></article><article><span>Daily model cap</span><strong>USD {(usage?.model_usage.daily_cost_cap_usd??2).toFixed(2)}</strong><p>{usage?.model_usage.daily_token_cap.toLocaleString()??'100,000'} tokens</p></article></div></section>;
   else if (path.startsWith('/connectors')) page = <ConnectorsPage connections={connections} reload={reloadConnections} navigate={navigate} />;
   else if (path.startsWith('/profile/')) page = <ProfilePage connectionId={currentConnection ?? ''} navigate={navigate} />;
   else if (path.startsWith('/dictionary')) page = currentConnection ? <DictionaryPage connectionId={currentConnection} /> : <section><h1>Dictionary</h1><p>Choose a connector to browse its Dictionary.</p>{connections.filter(connection => connection.status === 'active').map(connection => <button key={connection.connectionId} onClick={() => navigate(`/dictionary?connection=${connection.connectionId}`)}>{connection.connectorType.replaceAll('_', ' ')}</button>)}</section>;
@@ -314,7 +356,7 @@ function App() {
       {groups.platform && <div className="nav-items"><a href="/agents" onClick={event=>{event.preventDefault();navigate('/agents');}}>◉ <span>Agents</span></a><a href="/hub" onClick={event=>{event.preventDefault();navigate('/hub');}}>◈ <span>Hub integrations</span></a><a href="/bi-reports" onClick={event=>{event.preventDefault();navigate('/bi-reports');}}>▧ <span>BI reports</span></a><a href="/approval-matrix" onClick={event => { event.preventDefault(); navigate('/approval-matrix'); }}>✓ <span>Approval matrix</span></a><a href="/controls" onClick={event => { event.preventDefault(); navigate('/controls'); }}>⚙ <span>Controls</span></a></div>}
     </nav>
     <div className="recent"><p>RECENT</p><span>No recent conversations</span></div>
-    <div className="profile"><button aria-haspopup="menu" aria-expanded={profileOpen} onClick={() => setProfileOpen(value => !value)}><span className="avatar">A</span><span>Workspace profile</span><span aria-hidden="true">⋯</span></button>{profileOpen && <div role="menu"><button role="menuitem" onClick={() => navigate('/usage')}>Usage</button><button role="menuitem" onClick={signOut}>Sign out</button></div>}</div>
+    <div className="profile"><button aria-haspopup="menu" aria-expanded={profileOpen} onClick={() => setProfileOpen(value => !value)}><span className="avatar">{user?.displayName.split(/\s+/).map(part => part[0]).join('').slice(0,2).toUpperCase()||'A'}</span><span>{user?.displayName||'Workspace profile'}</span><span aria-hidden="true">⋯</span></button>{profileOpen && <div role="menu"><button role="menuitem" onClick={() => navigate('/invites')}>Invite members</button><button role="menuitem" onClick={() => navigate('/usage')}>Usage</button><button role="menuitem" onClick={signOut}>Sign out</button></div>}</div>
   </aside><main><header><span>Analytic mode · read-only</span><button aria-label="Notifications" title="Notifications" onClick={() => { setNotificationsOpen(value => !value); if (!notificationsOpen) void reloadNotifications(); }}>♧ {notifications.filter(item => !item.readAt).length || ''}</button></header>{error && <p className="error" role="alert">{error}</p>}{page}{notificationsOpen && <NotificationPanel notifications={notifications} close={() => setNotificationsOpen(false)} markRead={markRead} />}</main></div>;
 }
 

@@ -8,6 +8,7 @@
   },
   "scripts": {
     "db:setup": "tsx scripts/db-setup.ts",
+    "tenant:create": "tsx scripts/tenant-create.ts",
     "db:setup:sample": "tsx scripts/setup-sample-source.ts",
     "testbed:up": "tsx testbed/up.ts && pnpm testbed:truth",
     "testbed:truth": "tsx testbed/truth.ts",
