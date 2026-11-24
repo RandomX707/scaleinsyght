@@ -4,8 +4,9 @@ import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { Pool } from 'pg';
 import { withRunTenant } from '@scaleinsyght/db';
-import { claimNextStep, completeStep, failStep } from '@scaleinsyght/runner';
-import { MINIMUM_ANALYTIC_CELL_SIZE, finalizeAnalyticRun, roundForModel, summarizeGroups } from '@scaleinsyght/analytic';
+import { claimNextStep, completeStep, failStep, type StepClaim } from '@scaleinsyght/runner';
+import { planLiveQuestion, type PlanningSource } from '@scaleinsyght/api/live-planner';
+import { createAnalyticPlan, startAnalyticRun, MINIMUM_ANALYTIC_CELL_SIZE, finalizeAnalyticRun, roundForModel, summarizeGroups } from '@scaleinsyght/analytic';
 import type { AnalyticPlan } from '@scaleinsyght/contracts';
 import { createExcelConnector, createPostgresConnector, createSqlServerConnector, decryptConnectionSecret, type ReadOnlyConnector } from '@scaleinsyght/connectors';
 import { EncryptedArtifactStore } from '@scaleinsyght/artifacts';
@@ -28,10 +29,66 @@ async function dispatchDueSchedule():Promise<boolean>{
  catch(error){const reason=error instanceof Error?error.message:'';if(['governed_version_not_approved','governed_version_not_found','source_not_active','source_group_version_not_pinned','capability_not_available','principal_not_entitled'].includes(reason)){await markScheduleSlotSkipped(pool,due,reason as 'governed_version_not_approved'|'governed_version_not_found'|'source_not_active'|'source_group_version_not_pinned'|'capability_not_available'|'principal_not_entitled');console.info(`Scheduled report slot skipped for schedule ${due.scheduleId}: ${reason}`);}else console.error(`Scheduled report dispatch failed for schedule ${due.scheduleId}:`,error);}
  return true;
 }
+async function processPlanning(claim: StepClaim): Promise<boolean> {
+  const request = await withRunTenant(pool, claim.runId, async client => (await client.query<{
+    principal_id:string;conversation_id:string;question:string;sources:PlanningSource[];
+    context:Array<{role:'user'|'assistant';content:string}>;
+  }>(`SELECT r.principal_id,r.conversation_id,p.question,p.sources,p.context
+      FROM runs.planning_requests p JOIN runs.runs r USING(tenant_id,run_id) JOIN runs.steps s USING(tenant_id,run_id)
+      WHERE p.run_id=$1 AND s.step_id=$2 AND s.step_order=0`,[claim.runId,claim.stepId])).rows[0]);
+  if (!request) return false;
+  let reason = 'analytic_planning_failed';
+  let attempts: Array<{model:string;inputTokens:number;outputTokens:number;error?:string}> = [];
+  let options: unknown;
+  try {
+    const allowed = await withRunTenant(pool,claim.runId,async client => (await client.query(
+      `SELECT c.connection_id FROM registry.connections c
+       WHERE c.tenant_id=$1 AND c.status='active' AND c.connection_id=ANY($2::uuid[])
+       AND EXISTS (SELECT 1 FROM core.entitlements e WHERE e.tenant_id=c.tenant_id AND e.principal_id=$3
+         AND e.capability_id='analytic.read' AND e.allowed AND (e.resource_id IS NULL OR e.resource_id=c.connection_id::text))`,
+      [claim.tenantId,request.sources.map(source=>source.source_id),request.principal_id])).rowCount);
+    if (allowed !== request.sources.length) throw new Error('principal_not_entitled');
+    const planned = await planLiveQuestion(pool,claim.tenantId,request.question,request.sources,request.context);
+    if (planned.kind === 'planned') {
+      attempts = planned.provenance.typedPlan.attempts;
+      const plan = await createAnalyticPlan({runId:claim.runId,question:request.question,queryIntents:planned.intents,
+        sources:planned.selected.map(source=>({sourceId:source.source_id,agentId:source.agent_id,groupId:source.group_id,groupVersion:source.group_version}))});
+      await startAnalyticRun(pool,{tenantId:claim.tenantId,principalId:request.principal_id,conversationId:request.conversation_id,
+        plan,planningClaim:claim,plannerProvenance:planned.provenance});
+      return true;
+    }
+    attempts = planned.attempts;
+    reason = planned.kind === 'choice' ? 'analytic_source_choice_required' : planned.reason;
+    if (planned.kind === 'choice') options = planned.options;
+  } catch (error) {
+    if (error instanceof Error && /^[a-z][a-z0-9_]{0,63}$/.test(error.message)) reason = error.message;
+  }
+  await withRunTenant(pool,claim.runId,async client=>{
+    const failed=await client.query(`UPDATE runs.steps SET state='FAILED',lease_owner=NULL,lease_expires_at=NULL
+      WHERE run_id=$1 AND step_id=$2 AND fencing_token=$3 AND lease_owner=$4 AND lease_expires_at>clock_timestamp()`,
+      [claim.runId,claim.stepId,claim.fencingToken,claim.workerId]);
+    if (!failed.rowCount) return;
+    const run=await client.query<{state_version:number}>(`UPDATE runs.runs SET state='FAILED',state_version=state_version+1
+      WHERE run_id=$1 AND state='PLANNING' RETURNING state_version`,[claim.runId]);
+    if (!run.rowCount) throw new Error('planning_state_changed');
+    for (const attempt of attempts) await client.query(
+      `INSERT INTO runs.model_provenance(tenant_id,run_id,call_purpose,model_name,input_tokens,output_tokens,typed_plan)
+       VALUES($1,$2,'plan',$3,$4,$5,$6::jsonb)`,[claim.tenantId,claim.runId,attempt.model,attempt.inputTokens,attempt.outputTokens,JSON.stringify({error:attempt.error??reason})]);
+    const latest=await client.query(`SELECT coalesce(max(sequence),0) AS last FROM runs.events WHERE run_id=$1`,[claim.runId]);
+    const sequence=Number(latest.rows[0]!.last);
+    await client.query(`INSERT INTO runs.events(tenant_id,run_id,sequence,event_type,step_id,fencing_token,safe_payload)
+      VALUES($1,$2,$3,'step_failed',$4,$5,$6::jsonb),($1,$2,$7,'run_terminal',NULL,NULL,$8::jsonb)`,
+      [claim.tenantId,claim.runId,sequence+1,claim.stepId,claim.fencingToken,
+        JSON.stringify({step_id:claim.stepId,attempt:claim.attempt,fencing_token:claim.fencingToken,reason_codes:[reason]}),sequence+2,
+        JSON.stringify({state:'FAILED',state_version:run.rows[0]!.state_version,reason,...(options?{options}:{})})]);
+  });
+  return true;
+}
 while(!stopping){
  try{
-  const claim=await claimNextStep(pool,workerId,30_000);
+  const claim=await claimNextStep(pool,workerId,120_000);
   if(!claim){if(await dispatchDueSchedule())continue;await new Promise(resolve=>setTimeout(resolve,500));continue;}
+  if(await processPlanning(claim))continue;
   const task=await withRunTenant(pool,claim.runId,async(client)=>{
     const result=await client.query<{step_order:number;source_group_id:string|null;plan:AnalyticPlan|null;principal_id:string;connector_type:string;display_name:string;ciphertext:Buffer|null;nonce:Buffer|null;auth_tag:Buffer|null}>(
     `SELECT s.step_order,s.source_group_id,p.plan,r.principal_id,c.connector_type,c.display_name,secret.ciphertext,secret.nonce,secret.auth_tag FROM runs.steps s JOIN runs.runs r USING(tenant_id,run_id) LEFT JOIN runs.analytic_plans p USING(tenant_id,run_id)

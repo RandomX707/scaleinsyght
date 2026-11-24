@@ -363,6 +363,9 @@ importers:
       '@scaleinsyght/analytic':
         specifier: workspace:*
         version: link:../../packages/analytic
+      '@scaleinsyght/api':
+        specifier: workspace:*
+        version: link:../api
       '@scaleinsyght/artifacts':
         specifier: workspace:*
         version: link:../../packages/artifacts

@@ -110,7 +110,7 @@ test('s3_empty_tenant_uploads_workbook_profiles_and_answers_with_evidence', asyn
 
   type Captured = { state: string; modelProvenance: Array<{ purpose: string; model: string; inputTokens: number; outputTokens: number; typedPlan: unknown }>; answer: { answer: { claims: Array<{ statement: string }>; evidence: Array<{ locator: string }>; bySource: Array<{ connectorType: string; value: number; rows?: Array<{ group_value: string; value: number }> }> } } };
   async function askChecked(question: string, expectedSources: number, sql: RegExp) {
-    const responsePromise = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/runs' && response.request().method() === 'POST',{timeout:75_000});
+    const responsePromise = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/runs' && response.request().method() === 'POST',{timeout:15_000});
     await page.getByLabel('Ask a question').fill(question);
     await page.getByRole('button', { name: 'Send question' }).click();
     const response = await responsePromise;

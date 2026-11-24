@@ -47,3 +47,19 @@ instructed in the planner. Its live reliability has yet to be measured.
 The baseline is still the latest full evaluation. Run the live evaluation after
 the async changes. Check refusal reliability and provenance for terminal
 planning refusals in the durable planning work.
+
+## Step 3 checkpoint
+
+Live POST /api/runs now writes a planning request and a pending runner step in
+one transaction, then returns the run ID. The worker claims that step through
+the existing lease and fencing mechanism. Successful planning attaches the
+plan and schedules query steps inside the fenced transaction. Refusal and
+source choice are terminal outcomes with a safe reason and attempt provenance.
+Home polls for Planning, Querying, and Writing answer, and source choice now
+arrives after submission. Browser POST timeouts are back to 15 seconds.
+
+Migration 027 was applied only to si_test. A live smoke query went from the
+async POST through hosted planning, PostgreSQL query and answer composition.
+The first batch attempt exposed mixed uuid/text inference on the planning-step
+INSERT and never reached the model. The cast is fixed and the smoke query
+passed after that fix. The full two-model results and gates are still pending.

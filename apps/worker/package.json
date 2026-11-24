@@ -15,6 +15,7 @@
     "@scaleinsyght/model-gateway": "workspace:*",
     "@scaleinsyght/policy": "workspace:*",
     "@scaleinsyght/reports": "workspace:*",
-    "@scaleinsyght/runner": "workspace:*"
+    "@scaleinsyght/runner": "workspace:*",
+    "@scaleinsyght/api": "workspace:*"
   }
 }

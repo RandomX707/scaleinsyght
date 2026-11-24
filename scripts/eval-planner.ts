@@ -27,7 +27,7 @@ type Item = {id: string; status: 'correct' | 'refused correctly' | 'wrong' | 'fa
 const truth = await load('truth.json') as Record<string, Expected>;
 const sets = [
   {name: 'questions', cases: await load('questions.json') as Case[], items: [] as Item[]},
-  {name: 'heldout', cases: await load('heldout.json') as Case[], items: [] as Item[]},
+  ...(process.argv.includes('--smoke') ? [] : [{name: 'heldout', cases: await load('heldout.json') as Case[], items: [] as Item[]}]),
 ];
 const catalog = {p: 'postgres', s: 'sql_server', x: 'excel'};
 const ids = {} as Record<Source, string>;
@@ -104,7 +104,7 @@ async function evaluate(test: Case): Promise<Item> {
         if (code === 'analytic_query_unsupported' || code === 'analytic_source_choice_required') {
           if (truth[test.id] === null && code === 'analytic_query_unsupported') status = 'refused correctly';
         }
-        turns.push({httpStatus: submitted.status, reason: code});
+        turns.push({httpStatus: submitted.status, reason: code, ...(submitted.status >= 500 ? {message: submitted.body.message} : {})});
         break;
       }
       const {runId} = submitted.body;
@@ -126,7 +126,11 @@ async function evaluate(test: Case): Promise<Item> {
         modelCalls: run.modelProvenance?.map(({purpose, model, inputTokens, outputTokens, typedPlan}: {
           purpose: string; model: string; inputTokens: number; outputTokens: number; typedPlan?: {intents?: unknown};
         }) => ({purpose, model, inputTokens, outputTokens, intents: typedPlan?.intents})), events});
-      if (run.state !== 'COMPLETED') break;
+      if (run.state !== 'COMPLETED') {
+        const terminalReason = events?.at(-1)?.safe_payload?.reason;
+        if (terminalReason === 'analytic_query_unsupported' && truth[test.id] === null) status = 'refused correctly';
+        break;
+      }
       if (turns.length < test.turns.length) continue;
       const expected = truth[test.id];
       status = expected && claims.length && evidence.length === actual.length && actual.length === Object.keys(expected).length &&
@@ -157,7 +161,7 @@ try {
   await checked('/auth/login', 'POST', {tenantId, email, password});
   await connect();
   for (const set of sets) {
-    for (const test of set.cases) {
+    for (const test of (process.argv.includes('--smoke') ? set.cases.slice(0,1) : set.cases)) {
       const item = await evaluate(test);
       set.items.push(item);
       if (set.name !== 'heldout') console.log(set.name, item.id, item.status, item.latencyMs + 'ms', '$' + item.costUsd);
