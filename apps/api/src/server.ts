@@ -8,7 +8,7 @@ import { EncryptedArtifactStore } from '@scaleinsyght/artifacts';
 import { getNotifications, markNotificationRead, readConnectionScope, readWorkbook, retireConnection, runProfile, saveConnectionScope, storeWorkbook } from '@scaleinsyght/profiler';
 import { applyPersonalContext, createAnalyticPlan, startAnalyticRun, submitFeedback, type StructuredAnswer } from '@scaleinsyght/analytic';
 import { eventsAfter } from '@scaleinsyght/runner';
-import { AnalyticPlanSchema, FlowSpecSchema, hashPlan } from '@scaleinsyght/contracts';
+import { AnalyticPlanSchema, FlowSpecSchema, hashPlan, parseQueryIntent, type QueryIntent } from '@scaleinsyght/contracts';
 import { compareGraphSnapshots, getIdentifierPath, getImpactRadius, importDbtManifest, listGraphAssertions, listGraphAssets, listGraphSnapshots, listIdentifierFields, listReports, queryLineage, reconcileAssertion, reviewGraphAssertion, traceIdentifier, verifyAssertionFromRun } from '@scaleinsyght/graph';
 import { type DataStudioAdapter, type SemanticsAdapter } from '@scaleinsyght/hub-adapters';
 import { nextScheduleInstant, renderEvidencePack, safeEvidencePack, type ExportFormat, type SafeEvidencePack } from '@scaleinsyght/reports';
@@ -17,9 +17,10 @@ import { authorise } from '@scaleinsyght/policy';
 import { createOidcAuthorizationRequest, verifyOidcIdToken } from '@scaleinsyght/auth-oidc';
 import { createEnrollment, hashGatewaySecret, validateGatewayPlan, validateGatewayResult } from '@scaleinsyght/customer-gateway';
 import { parseDictionaryFile } from './dictionary-file.js';
+import { OpenAIModelGateway } from '@scaleinsyght/model-gateway';
 
 export interface TestSource { id: string; type: SourceConnectorType | 'dbt' | 'tableau' | 'power_bi'; name: string; }
-export interface ServerOptions { pool: Pool; sessionSecret: string; testAccounts?: Array<{ tenantId: string; email: string }>; artifactStore?: EncryptedArtifactStore; oidcFetch?: typeof fetch; testSources?: TestSource[]; testConnectorFor?: (sourceId: string) => ReadOnlyConnector | null; hubAdapters?: { semantics: SemanticsAdapter; dataStudio: DataStudioAdapter }; }
+export interface ServerOptions { pool: Pool; sessionSecret: string; testAccounts?: Array<{ tenantId: string; email: string }>; testAnalyticPlanner?: (question:string,sourceCount:number)=>Promise<Array<{sourceIndex:number;intent:QueryIntent}>|null>; artifactStore?: EncryptedArtifactStore; oidcFetch?: typeof fetch; testSources?: TestSource[]; testConnectorFor?: (sourceId: string) => ReadOnlyConnector | null; hubAdapters?: { semantics: SemanticsAdapter; dataStudio: DataStudioAdapter }; }
 const sessionLifetimeMs = 8 * 60 * 60 * 1000;
 export function hashPassword(password: string, salt = randomBytes(16).toString('hex')): string {
   return `${salt}:${scryptSync(password,salt,64).toString('hex')}`;
@@ -735,12 +736,37 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const question=request.body?.question;const sourceIds=request.body?.sourceIds;
     if(typeof question!=='string'||!question.trim()||!Array.isArray(sourceIds)||sourceIds.length===0||sourceIds.some((id)=>typeof id!=='string'||! /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))||new Set(sourceIds).size!==sourceIds.length)return reply.code(400).send({error:'invalid_analytic_request'});
-    const sources=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{source_id:string;agent_id:string;group_id:string;group_version:number}>(
-      `SELECT connection_id AS source_id,connector_agent_id AS agent_id,source_group_id AS group_id,source_group_version AS group_version
-       FROM registry.connections WHERE tenant_id=$1 AND status='active' AND connection_id=ANY($2::uuid[])`,[current.tenantId,sourceIds]));
+    const sources=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{source_id:string;agent_id:string;group_id:string;group_version:number;display_name:string;connector_type:string}>(
+      `SELECT c.connection_id AS source_id,c.connector_agent_id AS agent_id,c.source_group_id AS group_id,c.source_group_version AS group_version,c.display_name,c.connector_type
+       FROM registry.connections c WHERE c.tenant_id=$1 AND c.status='active' AND c.connection_id=ANY($2::uuid[]) AND EXISTS(
+        SELECT 1 FROM core.entitlements e WHERE e.tenant_id=c.tenant_id AND e.principal_id=$3 AND e.capability_id='analytic.read' AND e.allowed AND (e.resource_id IS NULL OR e.resource_id=c.connection_id::text))`,[current.tenantId,sourceIds,current.userId]));
     if(sources.rowCount!==new Set(sourceIds).size)return reply.code(403).send({error:'source_not_active_or_available'});
-    try{const plan=await createAnalyticPlan({question,runId:randomUUID(),sources:sources.rows.map((row)=>({sourceId:row.source_id,agentId:row.agent_id,groupId:row.group_id,groupVersion:row.group_version}))});return reply.code(201).send(await startAnalyticRun(options.pool,{tenantId:current.tenantId,principalId:current.userId,plan}));}
-    catch(error){const code=error instanceof Error?error.message:'analytic_request_rejected';if(['principal_not_entitled','source_not_active','source_group_version_not_pinned'].includes(code))return reply.code(403).send({error:code});if(code.startsWith('analytic_plan'))return reply.code(400).send({error:code});throw error;}
+    try{
+      const named=sources.rows.filter(row=>[row.display_name,row.connector_type.replaceAll('_',' ')].some(name=>name.trim().length>2&&question.toLocaleLowerCase().includes(name.toLocaleLowerCase())));
+      const candidates=named.length?named:sources.rows;
+      const planned=options.testAnalyticPlanner?await options.testAnalyticPlanner(question,candidates.length):null;
+      let selected=candidates;let intents:QueryIntent[]|undefined;
+      if(planned){
+        if(!planned.length||planned.some(item=>!Number.isInteger(item.sourceIndex)||item.sourceIndex<0||item.sourceIndex>=candidates.length)||new Set(planned.map(item=>item.sourceIndex)).size!==planned.length)throw new Error('analytic_query_intent_invalid');
+        selected=planned.map(item=>candidates[item.sourceIndex]!);intents=planned.map(item=>parseQueryIntent(item.intent));
+      }else if(!options.testAnalyticPlanner){
+        const catalogue=await withTenant(options.pool,current.tenantId,client=>client.query<{source_id:string;assets:Array<{qualified_name:string;columns:Array<{name:string;data_type:string;sensitivity_tags:string[]}>}>}>(`SELECT c.connection_id AS source_id,coalesce(jsonb_agg(jsonb_build_object('qualified_name',d.qualified_name,'columns',coalesce(fields.columns,'[]'::jsonb)) ORDER BY d.qualified_name) FILTER(WHERE d.asset_id IS NOT NULL),'[]'::jsonb) AS assets
+          FROM registry.connections c LEFT JOIN graph.assets d ON d.tenant_id=c.tenant_id AND d.source_id=c.connection_id AND d.asset_type='dataset' AND d.active
+          LEFT JOIN LATERAL(SELECT jsonb_agg(jsonb_build_object('name',f.qualified_name,'data_type',p.data_type,'sensitivity_tags',p.sensitivity_tags) ORDER BY f.qualified_name) AS columns FROM graph.relationships r JOIN graph.assets f ON f.tenant_id=r.tenant_id AND f.asset_id=r.to_asset_id LEFT JOIN LATERAL(SELECT data_type,sensitivity_tags FROM profiler.field_profiles WHERE tenant_id=f.tenant_id AND asset_id=f.asset_id ORDER BY profile_version DESC LIMIT 1)p ON true WHERE r.tenant_id=c.tenant_id AND r.from_asset_id=d.asset_id AND r.relationship_type='CONTAINS') fields ON true
+          WHERE c.tenant_id=$1 AND c.connection_id=ANY($2::uuid[]) GROUP BY c.connection_id`,[current.tenantId,candidates.map(row=>row.source_id)]));
+        const catalogById=new Map(catalogue.rows.map(row=>[row.source_id,row.assets]));
+        const metadata={classification:'METADATA_STRUCTURAL' as const,structural:{sources:candidates.map((row,index)=>({index,name:row.display_name||row.connector_type,type:row.connector_type,assets:catalogById.get(row.source_id)??[]}))},descriptive:{},statistical:{},sensitivityTags:[]};
+        const prompt=`Translate the user request into a validated typed intent, never SQL. Use only listed source indexes, table names, and column names. Return one JSON object with no prose, shaped as {"intents":[{"source_index":0,"intent":{...}}]}. Choose one supported intent: {"kind":"count","table":"schema.table"}; {"kind":"filtered_count","table":"schema.table","column":"column","operator":"eq|neq|gt|gte|lt|lte","value":scalar}; {"kind":"group_by","table":"schema.table","groupBy":"column","aggregate":{"operation":"count"}} or {"kind":"group_by","table":"schema.table","groupBy":"column","aggregate":{"operation":"sum","column":"column"}}; {"kind":"join_aggregate","leftTable":"schema.table","rightTable":"schema.table","leftColumn":"column","rightColumn":"column","aggregate":...}; or {"kind":"compare_aggregates","table":"schema.table","aggregate":...}. For a comparison across sources, return one intent per explicitly named selected source. A within-source join must follow the profiled relationship. Never add a source that the question does not name; when no source name appears, use the selected sources. User request: ${question}`;
+        const completion=await new OpenAIModelGateway(options.pool).complete({tenantId:current.tenantId,alias:'cheap',question:prompt,metadata,maxOutputTokens:500});
+        const decoded=completion.text.trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'');let parsed:unknown;try{parsed=JSON.parse(decoded);}catch{throw new Error('analytic_query_intent_invalid');}
+        if(!parsed||typeof parsed!=='object'||!('intents'in parsed)||!Array.isArray((parsed as {intents:unknown}).intents))throw new Error('analytic_query_intent_invalid');
+        const modelIntents=(parsed as {intents:Array<{source_index?:unknown;intent?:unknown}>}).intents;if(!modelIntents.length||modelIntents.length>candidates.length)throw new Error('analytic_query_intent_invalid');
+        const indexes=modelIntents.map(item=>item.source_index);if(indexes.some(index=>!Number.isInteger(index)||Number(index)<0||Number(index)>=candidates.length)||new Set(indexes).size!==indexes.length)throw new Error('analytic_query_intent_invalid');
+        selected=indexes.map(index=>candidates[Number(index)]!);intents=modelIntents.map(item=>parseQueryIntent(item.intent));
+      }
+      const plan=await createAnalyticPlan({question,runId:randomUUID(),sources:selected.map(row=>({sourceId:row.source_id,agentId:row.agent_id,groupId:row.group_id,groupVersion:row.group_version})),...(intents?{queryIntents:intents}:{})});
+      return reply.code(201).send(await startAnalyticRun(options.pool,{tenantId:current.tenantId,principalId:current.userId,plan}));
+    }catch(error){const code=error instanceof Error?error.message:'analytic_request_rejected';if(['principal_not_entitled','source_not_active','source_group_version_not_pinned'].includes(code))return reply.code(403).send({error:code});if(code.startsWith('analytic_plan')||code.startsWith('analytic_query'))return reply.code(400).send({error:code});if(code.startsWith('MODEL_')||code.startsWith('model_'))return reply.code(503).send({error:code.toLowerCase()});throw error;}
   });
   app.get<{Params:{runId:string}}>('/api/runs/:runId',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
@@ -1066,7 +1092,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
        FROM graph.relationships r JOIN graph.assets f ON f.tenant_id=r.tenant_id AND f.asset_id=r.from_asset_id
        JOIN graph.assets t ON t.tenant_id=r.tenant_id AND t.asset_id=r.to_asset_id
        LEFT JOIN graph.assertions a ON a.tenant_id=r.tenant_id AND a.relationship_id=r.relationship_id
-       WHERE r.tenant_id=$1 AND (f.source_id=$2 OR t.source_id=$2) AND r.family='structural' ORDER BY r.relationship_type,f.qualified_name`,
+       WHERE r.tenant_id=$1 AND (f.source_id=$2 OR t.source_id=$2) AND r.family='structural' AND r.relationship_type='REFERENCES' ORDER BY f.qualified_name,t.qualified_name`,
       [current.tenantId,request.params.connectionId]));
     return reply.send({relationships:result.rows});
   });

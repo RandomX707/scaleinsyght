@@ -20,6 +20,7 @@
     "@scaleinsyght/policy": "workspace:*",
     "@scaleinsyght/profiler": "workspace:*",
     "@scaleinsyght/registry": "workspace:*",
+    "@scaleinsyght/model-gateway": "workspace:*",
     "@scaleinsyght/runner": "workspace:*",
     "@scaleinsyght/analytic": "workspace:*",
     "@scaleinsyght/reports": "workspace:*"

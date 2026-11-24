@@ -123,6 +123,10 @@ export class PostgresConnector implements ReadOnlyConnector {
       JOIN pg_attribute ta ON ta.attrelid=tt.oid AND ta.attname=tc.column_name AND ta.attnum=ANY(pk.conkey)
       WHERE sc.table_schema NOT IN ('pg_catalog','information_schema') AND tc.table_schema NOT IN ('pg_catalog','information_schema')
         AND sc.table_schema NOT LIKE 'pg_toast%' AND tc.table_schema NOT LIKE 'pg_toast%' AND st.oid<>tt.oid
+        AND NOT EXISTS(SELECT 1 FROM pg_constraint source_pk
+          JOIN LATERAL unnest(source_pk.conkey) source_key(attnum) ON true
+          JOIN pg_attribute source_attribute ON source_attribute.attrelid=source_pk.conrelid AND source_attribute.attnum=source_key.attnum
+          WHERE source_pk.conrelid=st.oid AND source_pk.contype='p' AND source_attribute.attname=sc.column_name)
       ORDER BY 1,2,3 LIMIT $1`,[this.maxRows]);
     const declared=new Set(references.map(item=>`${item.from}\0${item.fromColumn}\0${item.to}\0${item.toColumn}`));
     for(const candidate of inferredCandidates.rows){
@@ -143,6 +147,25 @@ export class PostgresConnector implements ReadOnlyConnector {
       AND p.prokind IN ('f','p') ORDER BY n.nspname,p.proname LIMIT $1`,[this.maxRows+1]);
     if(result.rows.length>this.maxRows)throw new Error('postgres_connector_result_limit_exceeded');
     return result.rows.map(row=>({qualifiedName:row.qualified_name,kind:row.kind,definition:row.definition}));
+  }
+
+  async executeQueryIntent(raw:unknown):Promise<{sql:string;rows:Array<Record<string,unknown>>}>{
+    if(!raw||typeof raw!=='object'||Array.isArray(raw))throw new Error('analytic_query_intent_invalid');
+    const intent=raw as Record<string,unknown>;const kind=String(intent.kind);
+    const resolve=async(name:unknown):Promise<Table>=>{if(typeof name!=='string'||!/^([A-Za-z_][A-Za-z0-9_$]*\.)?[A-Za-z_][A-Za-z0-9_$]*$/.test(name))throw new Error('analytic_query_asset_not_found');const table=this.current.get(name);if(!table)throw new Error('analytic_query_asset_not_found');return table;};
+    const column=async(table:Table,name:unknown):Promise<string>=>{if(typeof name!=='string'||!/^[A-Za-z_][A-Za-z0-9_$]*$/.test(name))throw new Error('analytic_query_column_not_found');if(!(await this.columns(table)).some(item=>item.column_name===name))throw new Error('analytic_query_column_not_found');return quoteIdentifier(name);};
+    const aggregate=async(table:Table,value:unknown):Promise<string>=>{if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('analytic_query_intent_invalid');const spec=value as Record<string,unknown>;if(spec.operation==='count')return 'count(*)::text';if(spec.operation==='sum')return `coalesce(sum(${await column(table,spec.column)}),0)::text`;throw new Error('analytic_query_intent_invalid');};
+    let sql:string;let values:unknown[]=[];
+    if(kind==='count'||kind==='compare_aggregates'){
+      const table=await resolve(intent.table);const expression=kind==='count'?'count(*)::text':await aggregate(table,intent.aggregate);sql=`SELECT ${expression} AS value FROM ${quoteIdentifier(table.schema_name)}.${quoteIdentifier(table.table_name)}`;
+    }else if(kind==='filtered_count'){
+      const table=await resolve(intent.table);const col=await column(table,intent.column);const op=({eq:'=',neq:'<>',gt:'>',gte:'>=',lt:'<',lte:'<='} as const)[String(intent.operator) as 'eq'|'neq'|'gt'|'gte'|'lt'|'lte'];if(!op||!['string','number','boolean'].includes(typeof intent.value))throw new Error('analytic_query_intent_invalid');values=[intent.value];sql=`SELECT count(*)::text AS value FROM ${quoteIdentifier(table.schema_name)}.${quoteIdentifier(table.table_name)} WHERE ${col} ${op} $1`;
+    }else if(kind==='group_by'){
+      const table=await resolve(intent.table);const group=await column(table,intent.groupBy);sql=`SELECT ${group}::text AS group_value,${await aggregate(table,intent.aggregate)} AS value FROM ${quoteIdentifier(table.schema_name)}.${quoteIdentifier(table.table_name)} GROUP BY ${group} ORDER BY ${group} LIMIT ${this.maxRows+1}`;
+    }else if(kind==='join_aggregate'){
+      const left=await resolve(intent.leftTable);const right=await resolve(intent.rightTable);const leftColumn=await column(left,intent.leftColumn);const rightColumn=await column(right,intent.rightColumn);const expression=await aggregate(left,intent.aggregate);sql=`SELECT ${expression} AS value FROM ${quoteIdentifier(left.schema_name)}.${quoteIdentifier(left.table_name)} l JOIN ${quoteIdentifier(right.schema_name)}.${quoteIdentifier(right.table_name)} r ON l.${leftColumn.slice(1,-1)}=r.${rightColumn.slice(1,-1)}`;
+    }else throw new Error('analytic_query_intent_invalid');
+    const result=await this.pool.query(sql,values);if(result.rows.length>this.maxRows)throw new Error('postgres_connector_result_limit_exceeded');return{sql,rows:result.rows as Array<Record<string,unknown>>};
   }
 
   async queryAggregate(key:string,metric:'count'):Promise<{metric:'count';value:number}>{

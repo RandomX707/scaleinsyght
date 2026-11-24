@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { AnalyticPlanSchema, hashPlan, type AnalyticPlan } from '@scaleinsyght/contracts';
+import { AnalyticPlanSchema, hashPlan, parseQueryIntent, type AnalyticPlan, type QueryIntent } from '@scaleinsyght/contracts';
 import { withTenant } from '@scaleinsyght/db';
 import type { Pool } from 'pg';
 
@@ -10,8 +10,9 @@ async function planDigest(plan: AnalyticPlan): Promise<string> {
   return hashPlan({ ...plan, plan_hash: '' });
 }
 
-export async function createAnalyticPlan(input: { question: string; runId: string; sources: AnalyticSource[] }): Promise<AnalyticPlan> {
+export async function createAnalyticPlan(input: { question: string; runId: string; sources: AnalyticSource[]; queryIntents?:QueryIntent[] }): Promise<AnalyticPlan> {
   if (!input.question.trim() || input.question.length > 2000 || input.sources.length === 0) throw new Error('analytic_plan_invalid');
+  if(input.queryIntents&&input.queryIntents.length!==input.sources.length)throw new Error('analytic_plan_invalid');
   const questionHash = createHash('sha256').update(input.question.trim()).digest('hex');
   const groups = new Map<string, string>();
   const steps = input.sources.map((source) => {
@@ -20,7 +21,7 @@ export async function createAnalyticPlan(input: { question: string; runId: strin
     return {
       step_id: stepId, capability_id: 'analytic.read', capability_version: 1,
       agent_id: source.agentId, source_id: source.sourceId, via_collating_agent_id: groups.get(source.groupId)!,
-      group_version: source.groupVersion, inputs: { question_hash: questionHash }, depends_on: [], effect_class: 'READ' as const,
+      group_version: source.groupVersion, inputs: input.queryIntents?{query_intent:input.queryIntents[input.sources.indexOf(source)]}:{question_hash: questionHash}, depends_on: [], effect_class: 'READ' as const,
       timeout_s: 120, retry: { max: 1, backoff: 'linear' as const }, idempotency_key: randomUUID(),
     };
   });
@@ -56,8 +57,28 @@ function validatePlanGraph(plan: AnalyticPlan): void {
     visiting.add(id); for (const dependency of step.depends_on) visit(dependency); visiting.delete(id); visited.add(id);
   };
   for (const id of steps.keys()) visit(id);
-  if (plan.steps.some((step) => !plan.scope.source_ids.includes(step.source_id) || step.effect_class !== 'READ'
-    || Object.keys(step.inputs).length !== 1 || !/^[a-f0-9]{64}$/.test(String(step.inputs.question_hash)))) throw new Error('analytic_plan_invalid');
+  for(const step of plan.steps){
+    if(!plan.scope.source_ids.includes(step.source_id)||step.effect_class!=='READ'||Object.keys(step.inputs).length!==1)throw new Error('analytic_plan_invalid');
+    if('question_hash'in step.inputs){if(!/^[a-f0-9]{64}$/.test(String(step.inputs.question_hash)))throw new Error('analytic_plan_invalid');}
+    else if('query_intent'in step.inputs)parseQueryIntent(step.inputs.query_intent);
+    else throw new Error('analytic_plan_invalid');
+  }
+}
+
+async function validateIntentAssets(client:import('pg').PoolClient,sourceId:string,intent:QueryIntent):Promise<void>{
+  const tables=intent.kind==='join_aggregate'?[intent.leftTable,intent.rightTable]:[intent.table];
+  const found=await client.query<{qualified_name:string}>('SELECT qualified_name FROM graph.assets WHERE tenant_id=$1 AND source_id=$2 AND asset_type=\'dataset\' AND active AND qualified_name=ANY($3::text[])',[await client.query("SELECT current_setting('app.tenant_id') AS tenant_id").then(result=>result.rows[0]!.tenant_id),sourceId,tables]);
+  if(found.rowCount!==new Set(tables).size)throw new Error('analytic_query_asset_not_found');
+  const requiredColumns:string[]=[];
+  if(intent.kind==='filtered_count')requiredColumns.push(`${intent.table}.${intent.column}`);
+  if(intent.kind==='group_by'){requiredColumns.push(`${intent.table}.${intent.groupBy}`);if(intent.aggregate.operation==='sum')requiredColumns.push(`${intent.table}.${intent.aggregate.column}`);}
+  if(intent.kind==='join_aggregate'){requiredColumns.push(`${intent.leftTable}.${intent.leftColumn}`,`${intent.rightTable}.${intent.rightColumn}`);if(intent.aggregate.operation==='sum')requiredColumns.push(`${intent.leftTable}.${intent.aggregate.column}`);}
+  if(intent.kind==='compare_aggregates'&&intent.aggregate.operation==='sum')requiredColumns.push(`${intent.table}.${intent.aggregate.column}`);
+  if(requiredColumns.length){const columns=await client.query<{qualified_name:string}>('SELECT qualified_name FROM graph.assets WHERE tenant_id=current_setting(\'app.tenant_id\') AND source_id=$1 AND asset_type=\'field\' AND active AND qualified_name=ANY($2::text[])',[sourceId,requiredColumns]);if(columns.rowCount!==new Set(requiredColumns).size)throw new Error('analytic_query_column_not_found');}
+  if(intent.kind==='join_aggregate'){
+    const join=await client.query(`SELECT 1 FROM graph.assets sourceField JOIN graph.relationships r ON r.tenant_id=sourceField.tenant_id AND r.from_asset_id=sourceField.asset_id AND r.relationship_type='REFERENCES' JOIN graph.assets targetField ON targetField.tenant_id=r.tenant_id AND targetField.asset_id=r.to_asset_id JOIN graph.assertions a ON a.tenant_id=r.tenant_id AND a.relationship_id=r.relationship_id WHERE sourceField.tenant_id=current_setting('app.tenant_id') AND sourceField.source_id=$1 AND targetField.source_id=$1 AND sourceField.qualified_name=$2 AND targetField.qualified_name=$3 LIMIT 1`,[sourceId,`${intent.leftTable}.${intent.leftColumn}`,`${intent.rightTable}.${intent.rightColumn}`]);
+    if(!join.rowCount)throw new Error('analytic_query_join_unasserted');
+  }
 }
 
 export async function validateAnalyticPlan(pool: Pool, input: { tenantId: string; principalId: string; plan: unknown }): Promise<ValidatedPlan> {
@@ -87,6 +108,7 @@ export async function validateAnalyticPlan(pool: Pool, input: { tenantId: string
     );
     if (!entitlement.rows.some((row) => row.resource_id === null)
       && plan.scope.source_ids.some((sourceId) => !entitlement.rows.some((row) => row.resource_id === sourceId))) throw new Error('principal_not_entitled');
+    for(const step of plan.steps)if('query_intent'in step.inputs)await validateIntentAssets(client,step.source_id,parseQueryIntent(step.inputs.query_intent));
   });
   return { tenantId: input.tenantId, principalId: input.principalId, plan };
 }

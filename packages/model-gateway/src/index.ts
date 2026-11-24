@@ -102,7 +102,7 @@ export class OpenAIModelGateway{
       const data=await response.json() as {choices?:Array<{message?:{content?:unknown}}>;usage?:{prompt_tokens?:number;completion_tokens?:number}};
       const text=typeof data.choices?.[0]?.message?.content==='string'?data.choices[0].message.content:null;
       const inputTokens=data.usage?.prompt_tokens,outputTokens=data.usage?.completion_tokens;
-      if(text===null||!Number.isInteger(inputTokens)||!Number.isInteger(outputTokens)||inputTokens!<0||outputTokens!<0)throw new ModelGatewayError('model_provider_response_invalid');
+      if(text===null||typeof inputTokens!=='number'||typeof outputTokens!=='number'||!Number.isInteger(inputTokens)||!Number.isInteger(outputTokens)||inputTokens<0||outputTokens<0)throw new ModelGatewayError('model_provider_response_invalid');
       const costUsd=priceTokens(price,inputTokens,outputTokens);
       await withTenant(this.pool,input.tenantId,async(client)=>{
         await client.query('INSERT INTO core.model_usage(tenant_id,request_id,model_alias,model_name,input_tokens,output_tokens,cost_usd,outcome) VALUES($1,$2,$3,$4,$5,$6,$7,\'completed\')',[input.tenantId,id,input.alias,model,inputTokens,outputTokens,costUsd]);
