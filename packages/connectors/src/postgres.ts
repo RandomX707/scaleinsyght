@@ -4,6 +4,14 @@ import type { ConnectorScope, DiscoveryResult, ObjectProfile, ReadOnlyConnector 
 
 type Table = { schema_name: string; table_name: string; table_type: 'BASE TABLE' | 'VIEW' };
 type Column = { column_name: string; data_type: string; is_nullable: 'YES' | 'NO'; comment: string | null };
+type RoleSafety = {
+  elevated: boolean;
+  database_write: boolean;
+  schema_write: boolean;
+  table_write: boolean;
+  sequence_write: boolean;
+  inherited_roles: boolean;
+};
 export type PostgresStructuralReference = { from: string; to: string; fromColumn: string; toColumn: string };
 const quoteIdentifier=(value:string)=>`"${value.replaceAll('"','""')}"`;
 const assetKey=(qualifiedName:string)=>createHash('sha256').update(`postgres\0${qualifiedName}`).digest('hex');
@@ -14,17 +22,33 @@ export class PostgresConnector implements ReadOnlyConnector {
   readonly id:string;
   readonly name:string;
   private readonly pool:Pool;
+  private readonly maxRows:number;
   private readonly seen=new Map<string,string>();
   private readonly current=new Map<string,Table>();
 
-  constructor(input:{connectionString:string;id?:string;name?:string}){
-    this.pool=new Pool({connectionString:input.connectionString,max:2,connectionTimeoutMillis:5000,statement_timeout:10000});
+  constructor(input:{connectionString:string;id?:string;name?:string;statementTimeoutMs?:number;maxRows?:number}){
+    const statementTimeoutMs=input.statementTimeoutMs??10_000;
+    this.maxRows=input.maxRows??1_000;
+    if(!Number.isSafeInteger(statementTimeoutMs)||statementTimeoutMs<1)throw new Error('postgres_statement_timeout_invalid');
+    if(!Number.isSafeInteger(this.maxRows)||this.maxRows<1)throw new Error('postgres_row_limit_invalid');
+    this.pool=new Pool({connectionString:input.connectionString,max:2,connectionTimeoutMillis:5000,statement_timeout:statementTimeoutMs,options:`-c default_transaction_read_only=on -c statement_timeout=${statementTimeoutMs}`});
     this.id=input.id??'postgres-source';this.name=input.name??'PostgreSQL source';
   }
 
   async test():Promise<{ok:true;capabilities:['discover','profile'];readOnly:true}>{
-    const result=await this.pool.query<{current_user:string;rolsuper:boolean;rolcreatedb:boolean;rolcreaterole:boolean}>('SELECT current_user,r.rolsuper,r.rolcreatedb,r.rolcreaterole FROM pg_roles r WHERE r.rolname=current_user');
-    const role=result.rows[0];if(!role||role.rolsuper||role.rolcreatedb||role.rolcreaterole)throw new Error('postgres_connector_role_not_read_only');
+    const result=await this.pool.query<RoleSafety>(`SELECT
+      (r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolbypassrls OR r.rolreplication) AS elevated,
+      has_database_privilege(current_user,d.oid,'CREATE') AS database_write,
+      EXISTS(SELECT 1 FROM pg_namespace n WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_toast%' AND has_schema_privilege(current_user,n.oid,'CREATE')) AS schema_write,
+      EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_toast%' AND c.relkind IN ('r','p','v','m','f') AND (
+        has_table_privilege(current_user,c.oid,'INSERT') OR has_table_privilege(current_user,c.oid,'UPDATE') OR
+        has_table_privilege(current_user,c.oid,'DELETE') OR has_table_privilege(current_user,c.oid,'TRUNCATE') OR
+        has_table_privilege(current_user,c.oid,'REFERENCES') OR has_table_privilege(current_user,c.oid,'TRIGGER')) ) AS table_write,
+      EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_toast%' AND c.relkind='S' AND (
+        has_sequence_privilege(current_user,c.oid,'USAGE') OR has_sequence_privilege(current_user,c.oid,'UPDATE'))) AS sequence_write,
+      EXISTS(SELECT 1 FROM pg_auth_members m WHERE m.member=r.oid) AS inherited_roles
+      FROM pg_roles r CROSS JOIN pg_database d WHERE r.rolname=current_user AND d.datname=current_database()`);
+    const role=result.rows[0];if(!role||Object.values(role).some(Boolean))throw new Error('postgres_connector_role_not_read_only');
     await this.pool.query('SELECT 1 FROM information_schema.tables LIMIT 1');
     return {ok:true,capabilities:['discover','profile'],readOnly:true};
   }
@@ -32,14 +56,16 @@ export class PostgresConnector implements ReadOnlyConnector {
   private async tables():Promise<Table[]>{
     const rows=await this.pool.query<Table>(`SELECT table_schema AS schema_name,table_name,
       CASE WHEN table_type='VIEW' THEN 'VIEW' ELSE 'BASE TABLE' END AS table_type
-      FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema') AND table_type IN ('BASE TABLE','VIEW') ORDER BY table_schema,table_name`);
+      FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema') AND table_type IN ('BASE TABLE','VIEW') ORDER BY table_schema,table_name LIMIT $1`,[this.maxRows+1]);
+    if(rows.rows.length>this.maxRows)throw new Error('postgres_connector_result_limit_exceeded');
     return rows.rows;
   }
 
   private async columns(table:Table):Promise<Column[]>{
     const result=await this.pool.query<Column>(`SELECT c.column_name,c.data_type,c.is_nullable,
       pg_catalog.col_description(pg_catalog.to_regclass(format('%I.%I',c.table_schema,c.table_name)),c.ordinal_position) AS comment
-      FROM information_schema.columns c WHERE c.table_schema=$1 AND c.table_name=$2 ORDER BY c.ordinal_position`,[table.schema_name,table.table_name]);
+      FROM information_schema.columns c WHERE c.table_schema=$1 AND c.table_name=$2 ORDER BY c.ordinal_position LIMIT $3`,[table.schema_name,table.table_name,this.maxRows+1]);
+    if(result.rows.length>this.maxRows)throw new Error('postgres_connector_result_limit_exceeded');
     return result.rows;
   }
 
@@ -71,12 +97,22 @@ export class PostgresConnector implements ReadOnlyConnector {
   }
 
   async structuralReferences():Promise<PostgresStructuralReference[]>{
-    const result=await this.pool.query<PostgresStructuralReference>(`SELECT tc.table_schema||'.'||tc.table_name AS "from",ccu.table_schema||'.'||ccu.table_name AS "to",kcu.column_name AS "fromColumn",ccu.column_name AS "toColumn"
-      FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu
-        ON tc.constraint_catalog=kcu.constraint_catalog AND tc.constraint_schema=kcu.constraint_schema AND tc.constraint_name=kcu.constraint_name AND tc.table_schema=kcu.table_schema AND tc.table_name=kcu.table_name
-      JOIN information_schema.constraint_column_usage ccu
-        ON tc.constraint_catalog=ccu.constraint_catalog AND tc.constraint_schema=ccu.constraint_schema AND tc.constraint_name=ccu.constraint_name
-      WHERE tc.constraint_type='FOREIGN KEY' AND tc.table_schema NOT IN ('pg_catalog','information_schema') ORDER BY tc.table_schema,tc.table_name,kcu.ordinal_position`);
+    const result=await this.pool.query<PostgresStructuralReference>(`SELECT local_ns.nspname||'.'||local_table.relname AS "from",target_ns.nspname||'.'||target_table.relname AS "to",
+      local_column.attname AS "fromColumn",target_column.attname AS "toColumn"
+      FROM pg_constraint fk
+      JOIN pg_class local_table ON local_table.oid=fk.conrelid
+      JOIN pg_namespace local_ns ON local_ns.oid=local_table.relnamespace
+      JOIN pg_class target_table ON target_table.oid=fk.confrelid
+      JOIN pg_namespace target_ns ON target_ns.oid=target_table.relnamespace
+      JOIN unnest(fk.conkey) WITH ORDINALITY local_key(attnum,position) ON TRUE
+      JOIN unnest(fk.confkey) WITH ORDINALITY target_key(attnum,position) ON target_key.position=local_key.position
+      JOIN pg_attribute local_column ON local_column.attrelid=fk.conrelid AND local_column.attnum=local_key.attnum
+      JOIN pg_attribute target_column ON target_column.attrelid=fk.confrelid AND target_column.attnum=target_key.attnum
+      WHERE fk.contype='f' AND local_ns.nspname NOT IN ('pg_catalog','information_schema') AND local_ns.nspname NOT LIKE 'pg_toast%'
+      AND EXISTS(SELECT 1 FROM information_schema.tables visible_local WHERE visible_local.table_schema=local_ns.nspname AND visible_local.table_name=local_table.relname)
+      AND EXISTS(SELECT 1 FROM information_schema.tables visible_target WHERE visible_target.table_schema=target_ns.nspname AND visible_target.table_name=target_table.relname)
+      ORDER BY local_ns.nspname,local_table.relname,local_key.position LIMIT $1`,[this.maxRows+1]);
+    if(result.rows.length>this.maxRows)throw new Error('postgres_connector_result_limit_exceeded');
     return result.rows;
   }
 
@@ -90,7 +126,8 @@ export class PostgresConnector implements ReadOnlyConnector {
   async close():Promise<void>{await this.pool.end();}
 }
 
-export function createPostgresConnector(connectionString:string,name='Local synthetic hospital source'):PostgresConnector{
-  if(!connectionString)throw new Error('DATABASE_URL_SAMPLE_SOURCE is required for the real PostgreSQL connector');
-  return new PostgresConnector({connectionString,id:'si_sample_source',name});
+export function createPostgresConnector(input:string|{connectionString:string;id?:string;name?:string;statementTimeoutMs?:number;maxRows?:number},name='PostgreSQL source'):PostgresConnector{
+  const config=typeof input==='string'?{connectionString:input,name}:input;
+  if(!config.connectionString)throw new Error('postgres_connection_string_required');
+  return new PostgresConnector(config);
 }

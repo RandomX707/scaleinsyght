@@ -195,6 +195,7 @@ export function createGoldenConnector(sourceId: string): ReadOnlyConnector {
 }
 
 export { PostgresConnector, createPostgresConnector, type PostgresStructuralReference } from './postgres.js';
+export { encryptConnectionSecret, decryptConnectionSecret, type EncryptedConnectionSecret } from './connection-secrets.js';
 
 export function listGoldenSources(): ReadonlyArray<Pick<GoldenSource, 'id' | 'type' | 'name'>> {
   return golden.sources.map(({ id, type, name }) => ({ id, type, name }));
