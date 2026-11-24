@@ -1,6 +1,6 @@
 {
   "source": "si_testbed_pg",
-  "generatedAt": "2026-11-24T10:30:02.339Z",
+  "generatedAt": "2026-11-24T11:18:46.988Z",
   "rowCounts": {
     "patients": 500,
     "encounters": 700,
@@ -59,5 +59,77 @@
     "orders_department_4": 200,
     "orders_department_5": 200,
     "orders_department_6": 200
+  },
+  "sqlServer": {
+    "source": "si_testbed_sqlserver",
+    "rowCounts": {
+      "patients": 500,
+      "encounters": 700,
+      "orders": 1200,
+      "departments": 6,
+      "providers": 24
+    },
+    "columnCounts": {
+      "departments": 3,
+      "encounters": 6,
+      "orders": 7,
+      "patients": 6,
+      "providers": 4
+    },
+    "foreignKeys": [
+      {
+        "from": "orders.department_id",
+        "to": "departments.department_id"
+      },
+      {
+        "from": "orders.encounter_id",
+        "to": "encounters.encounter_id"
+      }
+    ],
+    "viewNames": [
+      "dbo.department_order_summary",
+      "dbo.patient_encounter_summary"
+    ],
+    "procedureNames": [
+      "dbo.count_patient_encounters",
+      "dbo.patient_order_total"
+    ],
+    "sensitiveColumns": [
+      "encounters.encounter_id",
+      "encounters.patient_id",
+      "orders.encounter_id",
+      "patients.date_of_birth",
+      "patients.mrn",
+      "patients.name",
+      "patients.phone"
+    ],
+    "nullRates": {
+      "patients.phone": 0,
+      "encounters.discharged_at": 0.1428571429
+    },
+    "metrics": {
+      "patients": 500,
+      "encounters": 700,
+      "orders": 1200,
+      "completed_orders": 400,
+      "order_amount": 72900,
+      "encounter_per_patient": 1.4,
+      "orders_department_3": 200,
+      "orders_department_6": 200,
+      "orders_department_1": 200,
+      "orders_department_4": 200,
+      "orders_department_5": 200,
+      "orders_department_2": 200
+    },
+    "inferredRelationship": {
+      "from": "encounters.patient_id",
+      "to": "patients.patient_id",
+      "matches": 700,
+      "sourceCount": 500,
+      "targetCount": 500,
+      "declared": false
+    },
+    "sharedPatientIds": 500,
+    "sharedEncounterIds": 700
   }
 }
