@@ -34,3 +34,15 @@ describe('phase 2 golden analytic execution', () => {
     expect(criticCheck(invalid, plan)).toEqual({ accepted: false, reasons: ['claim_missing_evidence'] });
   });
 });
+
+describe('decision 42 disclosure', () => {
+  it('withholds small cells and preserves the boundary value of 11', () => {
+    const source = {sourceId: 'source', connectorType: 'postgres', groupId: 'group', metric: 'count', claims: [], evidence: []};
+    for (const value of [0, 1, 10]) {
+      expect(collateGroupResults([{...source, value, minimumCellSize: value}]).bySource[0])
+        .toEqual({sourceId: 'source', connectorType: 'postgres', value: null, withheld: true});
+    }
+    expect(collateGroupResults([{...source, value: 11, minimumCellSize: 11}]).bySource[0])
+      .toEqual({sourceId: 'source', connectorType: 'postgres', value: 11});
+  });
+});

@@ -16,9 +16,11 @@ export interface StructuredResult {
   claims: Claim[];
   evidence: EvidenceRef[];
 }
+export const MINIMUM_ANALYTIC_CELL_SIZE = 11;
+
 export interface StructuredAnswer {
   metric: string;
-  bySource: Array<{ sourceId: string; connectorType: string; value: number; rows?: Array<Record<string,unknown>>; summary?: GroupSummary; groupLabel?: string }>;
+  bySource: Array<{ sourceId: string; connectorType: string; value: number | null; withheld?: true; rows?: Array<Record<string,unknown>>; summary?: GroupSummary; groupLabel?: string }>;
   claims: Claim[];
   evidence: EvidenceRef[];
   trust: { groupCount: number; sourceCount: number; joins: Array<'group' | 'cross_group'> };
@@ -39,7 +41,13 @@ export function collateGroupResults(results: StructuredResult[]): StructuredAnsw
   }
   return {
     metric: results[0]!.metric,
-    bySource: results.map(({ sourceId, connectorType, value, rows, groupLabel }) => { const summary = rows ? summarizeGroups(rows) : undefined; return { sourceId, connectorType, value, ...(rows?{rows}:{}), ...(summary?{summary}:{}), ...(groupLabel?{groupLabel}:{}) }; }),
+    bySource: results.map(({ sourceId, connectorType, value, rows, groupLabel, minimumCellSize }) => {
+      if (minimumCellSize !== undefined && minimumCellSize < MINIMUM_ANALYTIC_CELL_SIZE) {
+        return { sourceId, connectorType, value: null, withheld: true };
+      }
+      const summary = rows ? summarizeGroups(rows) : undefined;
+      return { sourceId, connectorType, value, ...(rows ? { rows } : {}), ...(summary ? { summary } : {}), ...(groupLabel ? { groupLabel } : {}) };
+    }),
     claims, evidence,
     trust: { groupCount: groups.size, sourceCount: results.length, joins: groups.size > 1 ? ['group', 'cross_group'] : ['group'] },
   };
@@ -78,7 +86,16 @@ export async function finalizeAnalyticRun(pool: Pool, runId: string, compose?: (
       metric: 'unavailable', bySource: [], claims: [], evidence: [], trust: { groupCount: 0, sourceCount: 0, joins: [] },
     };
     let compositionFailed=false;let failureReason:string|undefined;
-    if(compose&&!partial&&results.length&&plan.steps.every(step=>'query_intent' in step.inputs)){
+    if (answer.bySource.some(source => source.withheld)) {
+      answer.claims = answer.bySource.map((source, index) => {
+        const refs = results[index]!.evidence;
+        const name = refs[0]?.locator.split(' · ')[0] ?? source.connectorType;
+        const statement = source.withheld
+          ? `${name}: Fewer than 11, withheld to protect privacy`
+          : `${name}: ${source.rows ? 'See the grouped results' : source.value?.toLocaleString('en-US')}`;
+        return ClaimSchema.parse({ claim_id: randomUUID(), kind: 'metric', statement, evidence_ids: refs.map(ref => ref.evidence_id) });
+      });
+    } else if(compose&&!partial&&results.length&&plan.steps.every(step=>'query_intent' in step.inputs)){
       try{
         const prose=await compose({plan,results});
         answer.claims=[ClaimSchema.parse({claim_id:randomUUID(),kind:'metric',statement:prose.statement,evidence_ids:answer.evidence.map(ref=>ref.evidence_id)})];

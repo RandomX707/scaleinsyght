@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { Pool } from 'pg';
 import { withRunTenant } from '@scaleinsyght/db';
 import { claimNextStep, completeStep, failStep } from '@scaleinsyght/runner';
-import { finalizeAnalyticRun, roundForModel, summarizeGroups } from '@scaleinsyght/analytic';
+import { MINIMUM_ANALYTIC_CELL_SIZE, finalizeAnalyticRun, roundForModel, summarizeGroups } from '@scaleinsyght/analytic';
 import type { AnalyticPlan } from '@scaleinsyght/contracts';
 import { createExcelConnector, createPostgresConnector, createSqlServerConnector, decryptConnectionSecret, type ReadOnlyConnector } from '@scaleinsyght/connectors';
 import { EncryptedArtifactStore } from '@scaleinsyght/artifacts';
@@ -86,8 +86,7 @@ while(!stopping){
     await failStep(pool,claim,{reasonCode:reason});
    }
    await finalizeAnalyticRun(pool,claim.runId,async ({plan,results})=>{
-     const minimumCellSize=5;
-     if(results.some(result=>(result.minimumCellSize??0)<minimumCellSize))throw new Error('model_answer_disclosure_suppressed');
+     const minimumCellSize = MINIMUM_ANALYTIC_CELL_SIZE;
      const rawValues=results.flatMap(result=>result.rows?.map(row=>Number(row.value))??[result.value]);
      const values=[...rawValues,...rawValues.map(roundForModel)];
      const summaryNumbers:number[]=[];

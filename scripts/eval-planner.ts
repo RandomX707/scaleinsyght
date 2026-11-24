@@ -77,8 +77,9 @@ async function connect() {
     await checked(path + '/discover', 'POST', {jobType: 'profile'});
   }
 }
-type Actual = {connectorType: string; value?: number; rows?: Array<{group_value: string; value: number}>};
+type Actual = {connectorType: string; value?: number | null; withheld?: true; rows?: Array<{group_value: string; value: number}>};
 function same(expected: Result, actual: Actual) {
+  if (actual.withheld) return typeof expected === 'number' && expected < 11 && actual.value == null && !actual.rows?.length;
   if (typeof expected === 'number') return actual.value != null && Number(actual.value) === expected && !actual.rows?.length;
   const rows = actual.rows;
   return rows?.length === expected.length && expected.every(group => rows.some(row =>
@@ -158,7 +159,7 @@ try {
     for (const test of set.cases) {
       const item = await evaluate(test);
       set.items.push(item);
-      console.log(set.name, item.id, item.status, item.latencyMs + 'ms', '$' + item.costUsd);
+      if (set.name !== 'heldout') console.log(set.name, item.id, item.status, item.latencyMs + 'ms', '$' + item.costUsd);
       await save();
     }
     console.log(set.name, summary(set.items));
