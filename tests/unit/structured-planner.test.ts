@@ -37,6 +37,13 @@ describe('structured planner with declared intent (decision 44)', () => {
     const breakdown = {...orderStep,kind:'grouped_join',groupBy:'dbo.departments.department_name',order:'desc',declared:total.declared};
     expect(decodePlannerOutput(wrap(breakdown), orders, orderJoins).steps[0]?.intent).toMatchObject({kind:'grouped_join',groupByTable:'right',groupBy:'department_name'});
   });
+  it('fills an empty executable grouping from the declaration but rejects a different one', () => {
+    const visits = [{name:'Operations workbook',assets:[{qualified_name:'Visits',columns:[{name:'department',label:'Department'},{name:'patient_id',label:'Patient ID'}]}]}];
+    const average = {...step,kind:'average_count_by',table:'Visits',groupBy:null,entityColumn:'Visits.patient_id',
+      declared:{...declared,subject_table:'Visits',measure:'average_count_per_entity',grouping_column:'Visits.department'}};
+    expect(decodePlannerOutput(wrap(average), visits, []).steps[0]?.intent).toEqual({kind:'average_count_by',table:'Visits',groupBy:'department',entityColumn:'patient_id',limit:100});
+    expect(() => decodePlannerOutput(wrap({...average,groupBy:'Visits.patient_id'}), visits, [])).toThrow('plan_grouping_differs_from_declared_grouping');
+  });
   it('rejects a plan that groups when the step declares a single value', () => {
     expect(() => decodePlannerOutput(wrap({...grouped,declared}), catalog, [])).toThrow('declared_single_value_but_plan_groups');
   });

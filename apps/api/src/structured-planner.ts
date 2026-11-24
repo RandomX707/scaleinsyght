@@ -123,19 +123,21 @@ export function decodePlannerOutput(text: string, catalog: PlannerCatalog, joins
       return [target,key] as const;
     };
 
+    // The declaration is authoritative: a grouped step that leaves groupBy empty takes the declared grouping column.
+    if (declared.grouping_column != null && item.groupBy == null && GROUPED_KINDS.includes(kind)) item.groupBy = declared.grouping_column;
     // The executable plan must match what the step declares.
-    if ((isJoinIntent ? leftTable : table) !== declared.subject_table) throw new Error('plan_subject_differs_from_declared_subject');
+    if ((isJoinIntent ? leftTable : table) !== declared.subject_table) throw new Error(`plan_subject_differs_from_declared_subject: declared ${String(declared.subject_table)}, plan uses ${isJoinIntent ? leftTable : table}`);
     if (declared.grouping_column == null) {
-      if (!SCALAR_KINDS.includes(kind)) throw new Error('declared_single_value_but_plan_groups');
+      if (!SCALAR_KINDS.includes(kind)) throw new Error(`declared_single_value_but_plan_groups: kind ${kind} groups by ${String(item.groupBy)}`);
     } else if (!GROUPED_KINDS.includes(kind) || item.groupBy !== declared.grouping_column) {
-      throw new Error('plan_grouping_differs_from_declared_grouping');
+      throw new Error(`plan_grouping_differs_from_declared_grouping: declared ${String(declared.grouping_column)}, plan kind ${kind} groups by ${String(item.groupBy)}`);
     }
     const executedMeasure = kind === 'average_count_by' ? 'average_count_per_entity' : String(item.operation);
     if (executedMeasure !== declared.measure || (declared.measure === 'sum' && item.aggregateColumn !== declared.measure_column)) {
-      throw new Error('plan_measure_differs_from_declared_measure');
+      throw new Error(`plan_measure_differs_from_declared_measure: declared ${String(declared.measure)} ${String(declared.measure_column ?? '')}, plan ${executedMeasure} ${String(item.aggregateColumn ?? '')}`.trim());
     }
     const executedFilters = Array.isArray(item.filters) ? item.filters as Array<Record<string, unknown>> : [];
-    if (!sameSet(executedFilters.map(filter => String(filter.column)), declared.filter_columns)) throw new Error('plan_filters_differ_from_declared_filters');
+    if (!sameSet(executedFilters.map(filter => String(filter.column)), declared.filter_columns)) throw new Error(`plan_filters_differ_from_declared_filters: declared [${declared.filter_columns.join(', ')}], plan [${executedFilters.map(filter => String(filter.column)).join(', ')}]`);
 
     const measure = item.operation === 'sum' ? {operation:'sum',column:get(item.aggregateColumn,[leftTable])[1]} : {operation:'count'};
     const limit = item.limit === null ? {} : {limit:item.limit};
