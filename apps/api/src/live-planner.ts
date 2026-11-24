@@ -7,7 +7,7 @@ import { decodePlannerOutput,hasNamedCountSubject,normalizeCatalogMentions,plann
 
 export type PlanningSource = {source_id:string;agent_id:string;group_id:string;group_version:number;display_name:string;connector_type:string};
 
-export async function planLiveQuestion(pool:Pool, tenantId:string, question:string, candidates:PlanningSource[], priorTurns:Array<{role:'user'|'assistant';content:string}>) {
+export async function planLiveQuestion(pool:Pool, tenantId:string, question:string, candidates:PlanningSource[], priorTurns:Array<{role:'user'|'assistant';content:string}>, principalId?:string) {
   let selected=candidates;
   let intents:QueryIntent[]|undefined;
   let plannerProvenance:{model:string;inputTokens:number;outputTokens:number}|undefined;
@@ -33,7 +33,7 @@ Prior turns: ${priorTurns.map(turn=>`${turn.role}: ${normalize(turn.content)}`).
   let repair='';
   for(let attempt=0;attempt<3;attempt++){
     const completion=await new OpenAIModelGateway(pool).complete({
-      tenantId:tenantId,alias:'cheap',purpose:'plan',question:prompt+repair,metadata,responseSchema:schema,maxOutputTokens:1600,
+      tenantId:tenantId,...(principalId?{principalId}:{}),alias:'cheap',purpose:'plan',question:prompt+repair,metadata,responseSchema:schema,maxOutputTokens:1600,
     });
     const provenance={model:completion.model,inputTokens:completion.inputTokens,outputTokens:completion.outputTokens};
     attempts.push(provenance);

@@ -1,5 +1,6 @@
 import { createHash, createHmac, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import Fastify, { type FastifyInstance } from 'fastify';
+import { dailyBudgetCaps } from '@scaleinsyght/model-gateway';
 import type { Pool } from 'pg';
 import { withTenant, getUsage } from '@scaleinsyght/db';
 import { activateConnection, approveGovernedVersion, createConnectionDraft, createGovernedDraft, deletePersonalMemory, getApprovedGovernedVersion, getPersonalMemory, moveConnectionToGroup, putPersonalMemory, type ConnectorType, type PersonalMemoryData } from '@scaleinsyght/registry';
@@ -684,7 +685,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
   app.get('/api/usage',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const from=new Date();from.setUTCDate(1);from.setUTCHours(0,0,0,0);const to=new Date(from);to.setUTCMonth(to.getUTCMonth()+1);
-    return reply.send(await getUsage(options.pool,current.tenantId,from,to));
+    return reply.send(await getUsage(options.pool,current.tenantId,from,to,{...dailyBudgetCaps(),principalId:current.userId}));
   });
   app.get('/api/tenant/settings',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
