@@ -97,6 +97,8 @@ export function decodePlannerOutput(text: string, catalog: PlannerCatalog, joins
       throw new Error('count_the_named_subject_table');
     }
     const join = joins.find(candidate => candidate.source_index === index && joinKey(candidate) === item.join);
+    const isJoinIntent = item.kind === 'join_aggregate' || item.kind === 'grouped_join';
+    if (item.join !== null && (!isJoinIntent || !join)) throw new Error('join_requires_a_join_intent');
     const [leftTable,leftColumn] = join ? field(join.from_name) : [table,''];
     const [rightTable,rightColumn] = join ? field(join.to_name) : ['', ''];
     const get = (ref: unknown, allowed: string[]) => {
@@ -120,12 +122,15 @@ export function decodePlannerOutput(text: string, catalog: PlannerCatalog, joins
         !filters.some(filter=>/(^|_)status$/i.test(filter.column) && filter.operator==='eq')) {
       throw new Error('apply_the_requested_status_filter');
     }
+    if (filters.length && !isJoinIntent && item.kind !== 'filtered_count') {
+      throw new Error('select_an_intent_that_applies_its_filters');
+    }
     let intent: unknown;
     switch (item.kind) {
       case 'count': intent = {kind:'count',table}; break;
       case 'compare_aggregates': intent = {kind:item.kind,table,aggregate:measure}; break;
       case 'filtered_count': {
-        if (filters.length !== 1) throw new Error('filtered_count_requires_one_filter');
+        if (filters.length !== 1 || filters[0]?.table !== table) throw new Error('filtered_count_requires_one_filter_on_its_table');
         intent = {kind:item.kind,...filters[0]};
         break;
       }

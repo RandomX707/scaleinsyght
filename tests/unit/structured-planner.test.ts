@@ -29,6 +29,13 @@ describe('structured planner', () => {
     expect(() => decodePlannerOutput(wrap({...payload,table:'Departments'}),sources,[],'How many charges belong to Imaging?'))
       .toThrow('count_the_named_subject_table');
   });
+  it('rejects a single-table count that uses an asserted join to smuggle a dimension filter', () => {
+    const sources = [{assets:[...catalog[0]!.assets,{qualified_name:'Departments',columns:[{name:'name'}]}]}];
+    const joins = [{source_index:0,from_name:'Charges.charge_type',to_name:'Departments.name'}];
+    const output = wrap({...payload,kind:'filtered_count',table:'Charges',join:'Charges.charge_type = Departments.name',
+      filters:[{column:'Departments.name',operator:'eq',value:'Imaging',upperExclusive:null}]});
+    expect(() => decodePlannerOutput(output,sources,joins,'How many charges belong to Imaging?')).toThrow('join_requires_a_join_intent');
+  });
   it('rejects a column outside the selected table', () => {
     expect(() => decodePlannerOutput(wrap({...payload,groupBy:'Visits.charge_type'}), catalog, [], 'Count records')).toThrow('column_does_not_belong_to_selected_table');
   });

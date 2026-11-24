@@ -90,3 +90,11 @@ from the act of placing any order. A status count must retain that filter.
 The live development check passed Q09, Q16 and Q21. Both full comparisons
 have restarted with this version. Local dbt compile and SQL parser tests
 passed with Python 3.11, matching CI.
+
+The next Luna run answered 24 development cases and correctly refused 5, but
+Q16 still returned a dimension count. The persisted SQL and typed intent
+showed the decoder accepted an asserted join on a single-table count and then
+let the filter's qualification replace the validated fact table. The decoder
+now rejects joins on single-table shapes and rejects filters that would be
+discarded by the execution shape. The unit regression supplies that exact
+inconsistent structure. Final runs still need to use this revision.
