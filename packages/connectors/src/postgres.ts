@@ -153,6 +153,15 @@ export class PostgresConnector implements ReadOnlyConnector {
     return result.rows.map(row=>({qualifiedName:row.qualified_name,kind:row.kind,definition:row.definition}));
   }
 
+  async categoryValues(table: string, column: string): Promise<{sql: string; values: string[]} | undefined> {
+    const target = this.current.get(table);
+    if (!target || !(await this.columns(target)).some(field => field.column_name === column && /^(text|character varying|character)$/.test(field.data_type))) return;
+    const key = quoteIdentifier(column);
+    const sql = `SELECT DISTINCT ${key} AS value FROM ${quoteIdentifier(target.schema_name)}.${quoteIdentifier(target.table_name)} WHERE ${key} IS NOT NULL ORDER BY value LIMIT 101`;
+    const result = await this.pool.query<{value: string}>(sql);
+    return {sql, values: result.rows.map(row => row.value)};
+  }
+
   async executeQueryIntent(raw:unknown, includeCellSize=false):Promise<{sql:string;rows:Array<Record<string,unknown>>}>{
     const {sql,values}=await compilePostgresDialectIntent(raw,{table:name=>this.current.get(name),columns:async table=>(await this.columns(table)).map(item=>item.column_name),maxRows:this.maxRows,includeCellSize});
     const result=await this.pool.query(sql,values);if(result.rows.length>this.maxRows)throw new Error('postgres_connector_result_limit_exceeded');return{sql,rows:result.rows as Array<Record<string,unknown>>};

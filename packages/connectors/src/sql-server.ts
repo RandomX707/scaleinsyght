@@ -138,6 +138,15 @@ export class SqlServerConnector implements ReadOnlyConnector {
     return rows.recordset.map((row) => ({ qualifiedName: row.qualified_name, kind: row.kind, definition: row.definition }));
   }
 
+  async categoryValues(table: string, column: string): Promise<{sql: string; values: string[]} | undefined> {
+    const target = this.objects.get(table);
+    if (!target || !(await this.columns(target)).some(field => field.column_name === column && /^(n?varchar|n?char)$/.test(field.data_type))) return;
+    const key = quote(column);
+    const sql = `SELECT DISTINCT TOP (101) ${key} AS value FROM ${quote(target.schema_name)}.${quote(target.object_name)} WHERE ${key} IS NOT NULL ORDER BY value`;
+    const result = await (await this.request()).query<{value: string}>(sql);
+    return {sql, values: result.recordset.map(row => row.value)};
+  }
+
   async executeQueryIntent(raw: unknown, includeCellSize=false): Promise<{ sql: string; rows: Array<Record<string, unknown>> }> {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('analytic_query_intent_invalid');
     const intent = raw as Record<string, unknown>; const request = await this.request();

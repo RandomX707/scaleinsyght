@@ -107,14 +107,15 @@ type SourceChoice={question:string;options:Array<{sourceId:string;name:string}>}
 const formatNumber=(value:number)=>value.toLocaleString('en-US',{maximumFractionDigits:2});
 const listNames=(names:string[])=>names.length<=1?names.join(''):`${names.slice(0,-1).join(', ')} and ${names.at(-1)}`;
 function GroupedResult(props:{rows:Array<Record<string,unknown>>;summary?:GroupSummary|undefined;groupLabel:string;sourceName:string}) {
-  const rows=props.rows.map(row=>({label:String(row.group_value??''),value:Number(row.value)}));
-  const max=Math.max(...rows.map(row=>row.value),0);const summary=props.summary;
+  const rows=props.rows.map(row=>({label:String(row.group_value??''),value:row.value === '<11' ? '<11' as const : Number(row.value)}));
+  const chartRows=rows.filter((row): row is {label:string;value:number}=>typeof row.value==='number');
+  const max=Math.max(...chartRows.map(row=>row.value),0);const summary=props.summary;
   const labelled=new Set(summary?[summary.highest.label,summary.lowest.label]:[]);
   const description=summary?`Bar chart of ${rows.length} groups from ${props.sourceName}. Highest ${summary.highest.label} at ${formatNumber(summary.highest.value)}; lowest ${summary.lowest.label} at ${formatNumber(summary.lowest.value)}.`:`Bar chart of ${rows.length} groups from ${props.sourceName}.`;
   return <div className="grouped-result">
     {summary&&<p className="group-summary">Highest: <strong>{summary.highest.label}</strong> ({formatNumber(summary.highest.value)}) · Lowest: <strong>{summary.lowest.label}</strong> ({formatNumber(summary.lowest.value)}) · Spread: {formatNumber(summary.spread)}{summary.ties.map(tie=><span key={tie.value}> · {listNames(tie.labels)} tie at {formatNumber(tie.value)}</span>)}</p>}
-    {rows.length>=2&&rows.length<=20&&max>0&&<figure className="bar-chart" aria-label={description}><ul>{rows.map((row,index)=><li key={`${row.label}-${index}`} className="bar-row" tabIndex={0} aria-label={`${row.label}: ${formatNumber(row.value)}`}><span className="bar-label">{row.label}</span><span className="bar-track"><span className="bar" style={{width:`${Math.max(1,row.value/max*100)}%`}}/></span><span className="bar-value">{labelled.has(row.label)?formatNumber(row.value):''}</span><span className="bar-tooltip" role="tooltip">{row.label}: {formatNumber(row.value)}</span></li>)}</ul><figcaption className="visually-hidden">{description}</figcaption></figure>}
-    <Table caption={`Full result from ${props.sourceName}`} headers={[uiCopy(props.groupLabel),'Value']} rows={rows.map(row=>[row.label,formatNumber(row.value)])}/>
+    {chartRows.length===rows.length&&rows.length>=2&&rows.length<=20&&max>0&&<figure className="bar-chart" aria-label={description}><ul>{chartRows.map((row,index)=><li key={`${row.label}-${index}`} className="bar-row" tabIndex={0} aria-label={`${row.label}: ${formatNumber(row.value)}`}><span className="bar-label">{row.label}</span><span className="bar-track"><span className="bar" style={{width:`${Math.max(1,row.value/max*100)}%`}}/></span><span className="bar-value">{labelled.has(row.label)?formatNumber(row.value):''}</span><span className="bar-tooltip" role="tooltip">{row.label}: {formatNumber(row.value)}</span></li>)}</ul><figcaption className="visually-hidden">{description}</figcaption></figure>}
+    <Table caption={`Full result from ${props.sourceName}`} headers={[uiCopy(props.groupLabel),'Value']} rows={rows.map(row=>[row.label,typeof row.value==='number'?formatNumber(row.value):row.value])}/>
   </div>;
 }
 function AnswerSources(props:{run:AnalyticRun;name:(sourceId:string)=>string}) {

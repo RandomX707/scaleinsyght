@@ -77,13 +77,14 @@ async function connect() {
     await checked(path + '/discover', 'POST', {jobType: 'profile'});
   }
 }
-type Actual = {connectorType: string; value?: number | null; withheld?: true; rows?: Array<{group_value: string; value: number}>};
+type Actual = {connectorType: string; value?: number | null; withheld?: true; categoryNotFound?: true; rows?: Array<{group_value: string; value: number | string}>};
 function same(expected: Result, actual: Actual) {
-  if (actual.withheld) return typeof expected === 'number' && expected < 11 && actual.value == null && !actual.rows?.length;
+  if (actual.categoryNotFound) return false;
+  if (actual.withheld && typeof expected === 'number') return expected > 0 && expected < 11 && actual.value == null && !actual.rows?.length;
   if (typeof expected === 'number') return actual.value != null && Number(actual.value) === expected && !actual.rows?.length;
   const rows = actual.rows;
   return rows?.length === expected.length && expected.every(group => rows.some(row =>
-    String(row.group_value) === group.label && Number(row.value) === group.value));
+    String(row.group_value) === group.label && (row.value === '<11' ? group.value > 0 && group.value < 11 : Number(row.value) === group.value)));
 }
 async function evaluate(test: Case): Promise<Item> {
   const start = performance.now();

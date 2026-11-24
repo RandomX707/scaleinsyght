@@ -69,7 +69,38 @@ while(!stopping){
     }
     try{
       await connector.test();await connector.discover({mode:'profile'});
-      const executed=await connector.executeQueryIntent?.(intent,true);if(!executed)throw new Error('source_query_executor_unavailable');
+      const resolvedIntent = structuredClone(intent) as Record<string, unknown>;
+      const filters = resolvedIntent.kind === 'filtered_count' ? [resolvedIntent]
+        : Array.isArray(resolvedIntent.filters) ? resolvedIntent.filters as Array<Record<string, unknown>> : [];
+      let missingCategory: {column: string; values: string[]; sql: string} | undefined;
+      for (const filter of filters) {
+        if (!connector.categoryValues || typeof filter.value !== 'string' ||
+            !['eq', 'neq'].includes(String(filter.operator)) || typeof filter.column !== 'string') continue;
+        const table = filter === resolvedIntent ? resolvedIntent.table : filter.table === 'right' ? resolvedIntent.rightTable
+          : filter.table === 'left' || filter.table === undefined ? resolvedIntent.leftTable : filter.table;
+        if (typeof table !== 'string') continue;
+        const field = await withRunTenant(pool, claim.runId, async client => (await client.query<{sensitivity_tags: string[]}>(
+          `SELECT p.sensitivity_tags FROM graph.assets a JOIN profiler.field_profiles p USING (tenant_id,asset_id)
+           WHERE a.source_id=$1 AND a.qualified_name=$2 AND a.asset_type='field' AND a.active
+           ORDER BY p.profile_version DESC LIMIT 1`, [step.source_id, table + '.' + filter.column])).rows[0]);
+        if (!field || field.sensitivity_tags.length) continue;
+        const categories = await connector.categoryValues(table, filter.column);
+        if (!categories) continue;
+        const requested = filter.value.toLowerCase();
+        const match = categories.values.find(value => value === filter.value) ??
+          categories.values.find(value => value.toLowerCase() === requested);
+        if (match !== undefined) {
+          filter.value = match;
+        } else if (categories.values.length <= 100) {
+          missingCategory = {column: filter.column, values: categories.values, sql: categories.sql};
+          break;
+        } else {
+          throw new Error('category_domain_exceeds_limit');
+        }
+      }
+      const executed = missingCategory ? {sql: missingCategory.sql, rows: [{value: 0, cell_size: 0}]}
+        : await connector.executeQueryIntent?.(resolvedIntent, true);
+      if (!executed) throw new Error('source_query_executor_unavailable');
       if(!executed.rows.length||executed.rows.length>100||executed.rows.some(row=>!row||typeof row!=='object'||!('value'in row)||!Number.isFinite(Number(row.value))))throw new Error('analytic_query_result_shape_invalid');
       const rows=executed.rows.map(row=>Object.fromEntries(Object.entries(row).filter(([key])=>key!=='group_key'&&key!=='cell_size')));const value=Number(rows[0]!.value);if(!Number.isFinite(value))throw new Error('analytic_query_result_shape_invalid');
       const evidenceId=randomUUID();const queryIntent=intent as Record<string,unknown>;const assetNames=[queryIntent.table,queryIntent.leftTable,queryIntent.rightTable].filter((name):name is string=>typeof name==='string');
@@ -78,7 +109,7 @@ while(!stopping){
       const labels=connector.columnLabels&&typeof groupTable==='string'?await connector.columnLabels(groupTable):{};
       const columnLabels=Object.fromEntries(Object.entries(labels).filter(([name,label])=>name!==label));
       const groupLabel=typeof queryIntent.groupBy==='string'?columnLabels[queryIntent.groupBy]:undefined;
-      const analyticResult={sourceId:step.source_id,connectorType:task.connectorType,groupId:task.groupId,metric:String((intent as {kind?:unknown}).kind??'query'),value,...(groupLabel?{groupLabel}:{}),...(Object.keys(columnLabels).length?{columnLabels}:{}),rows:rows.length===1&&!('group_value'in rows[0]!)?undefined:rows,minimumCellSize:Math.min(...executed.rows.map(row=>Number(row.cell_size??0))),claims:[],evidence:[{evidence_id:evidenceId,kind:'query',source_id:step.source_id,asset_ids:assets.rows.map(item=>item.asset_id),locator:`${task.displayName||'Data source'} · ${executed.sql}`,content_hash:createHash('sha256').update(executed.sql).digest('hex'),captured_at:new Date().toISOString(),collector_version:`${task.connectorType}-query-v1`,redacted_summary:`Executed on ${task.displayName||'Data source'}; returned ${executed.rows.length} aggregate row(s).`}]};
+      const analyticResult={sourceId:step.source_id,connectorType:task.connectorType,groupId:task.groupId,metric:String((intent as {kind?:unknown}).kind??'query'),value,...(groupLabel?{groupLabel}:{}),...(Object.keys(columnLabels).length?{columnLabels}:{}),rows:rows.length===1&&!('group_value'in rows[0]!)?undefined:rows,minimumCellSize:Math.min(...executed.rows.map(row=>Number(row.cell_size??0))),cellSizes:executed.rows.map(row=>Number(row.cell_size??0)),...(missingCategory ? {missingCategory: {column: missingCategory.column, values: missingCategory.values}} : {}),claims:[],evidence:[{evidence_id:evidenceId,kind:'query',source_id:step.source_id,asset_ids:assets.rows.map(item=>item.asset_id),locator:`${task.displayName||'Data source'} · ${executed.sql}`,content_hash:createHash('sha256').update(executed.sql).digest('hex'),captured_at:new Date().toISOString(),collector_version:`${task.connectorType}-query-v1`,redacted_summary:`Executed on ${task.displayName||'Data source'}; returned ${executed.rows.length} aggregate row(s).`}]};
       if(!await completeStep(pool,claim,{resultRef:`postgres-query:${evidenceId}`,analyticResult}))throw new Error('worker_fence_lost');
     }finally{await connector.close?.();}
    }catch(error){
@@ -111,7 +142,7 @@ while(!stopping){
       });
       return {source:result.evidence[0]?.locator.split(' · ')[0],connector_type:result.connectorType,executed_query:result.evidence[0]?.locator.split(' · ').slice(1).join(' · '),filters,...(result.columnLabels?{column_labels:result.columnLabels}:{})};
      });
-     const answer=await new OpenAIModelGateway(pool).complete({tenantId:claim.tenantId,alias:'default',question:`Write one concise answer to the exact user question using the disclosed aggregate statistics. Include a result value. Use each executed query and its disclosed filters to interpret its statistic. Group labels appear in the results table and chart below your sentence, so name no group labels. For grouped results, summarise them: give the highest and lowest values and the spread between them, using the disclosed highest, lowest and spread statistics. If difference_between_sources is disclosed you may state it. If tie statistics are disclosed, state each tie, for example '3 departments tie at 200', using the question's word for the groups. Source indexes match the statistics. When column_labels are given, refer to a column by its label, never by its SQL identifier. When there is more than one source, give each value next to its source name written exactly as in that source's source field. Do not invent facts. Question: ${plan.question}`,metadata:{classification:'METADATA_STATISTICAL',structural:{sources},descriptive:{},statistical,sensitivityTags:[],groupSize:Math.min(...results.map(result=>result.minimumCellSize??0)),minimumCellSize},maxOutputTokens:400});
+     const answer=await new OpenAIModelGateway(pool).complete({tenantId:claim.tenantId,alias:'default',question:`Write one concise answer to the exact user question using the disclosed aggregate statistics. Include a result value. Use each executed query and its disclosed filters to interpret its statistic. Group labels appear in the results table and chart below your sentence, so name no group labels. For grouped results, summarise them: give the highest and lowest values and the spread between them, using the disclosed highest, lowest and spread statistics. If difference_between_sources is disclosed you may state it. If tie statistics are disclosed, state each tie, for example '3 departments tie at 200', using the question's word for the groups. Source indexes match the statistics. When column_labels are given, refer to a column by its label, never by its SQL identifier. When there is more than one source, give each value next to its source name written exactly as in that source's source field. Do not invent facts. Question: ${plan.question}`,metadata:{classification:'METADATA_STATISTICAL',structural:{sources},descriptive:{},statistical,sensitivityTags:[],groupSize:Math.min(...results.map(result=>result.minimumCellSize===0?minimumCellSize:result.minimumCellSize??0)),minimumCellSize},maxOutputTokens:400});
      const statement=answer.text.trim().replace(/[\r\n]+/g,' ').slice(0,600);
      const numbers=(value:string)=>value.match(/-?\d+(?:,\d{3})*(?:\.\d+)?/g)?.map(token=>Number(token.replaceAll(',','')))??[];
      const counts=results.map(result=>result.rows?.length??1);

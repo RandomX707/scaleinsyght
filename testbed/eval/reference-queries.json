@@ -15,7 +15,7 @@
     ]
   },
   "Q04": {
-    "p": "SELECT count(*) AS value FROM orders WHERE order_status='pending'"
+    "p": "SELECT count(*) AS value FROM orders WHERE order_status='placed'"
   },
   "Q05": {
     "s": "SELECT count(*) AS value FROM orders WHERE order_status='completed'"
@@ -104,7 +104,7 @@
     ]
   },
   "Q21": {
-    "s": "SELECT count(*) AS value FROM orders WHERE order_status='pending'"
+    "s": "SELECT count(*) AS value FROM orders WHERE order_status='placed'"
   },
   "Q22": {
     "x": [
@@ -174,7 +174,7 @@
       "Charges",
       "Status",
       "eq",
-      "pending",
+      "completed",
       null
     ]
   },

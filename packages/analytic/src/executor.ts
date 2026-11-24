@@ -13,14 +13,17 @@ export interface StructuredResult {
   groupLabel?: string;
   columnLabels?: Record<string,string>;
   minimumCellSize?: number;
+  cellSizes?: number[];
+  missingCategory?: {column: string; values: string[]};
   claims: Claim[];
   evidence: EvidenceRef[];
 }
 export const MINIMUM_ANALYTIC_CELL_SIZE = 11;
+const isSmall = (size: number | undefined) => size !== undefined && size > 0 && size < MINIMUM_ANALYTIC_CELL_SIZE;
 
 export interface StructuredAnswer {
   metric: string;
-  bySource: Array<{ sourceId: string; connectorType: string; value: number | null; withheld?: true; rows?: Array<Record<string,unknown>>; summary?: GroupSummary; groupLabel?: string }>;
+  bySource: Array<{ sourceId: string; connectorType: string; value: number | null; withheld?: true; categoryNotFound?: true; rows?: Array<Record<string,unknown>>; summary?: GroupSummary; groupLabel?: string }>;
   claims: Claim[];
   evidence: EvidenceRef[];
   trust: { groupCount: number; sourceCount: number; joins: Array<'group' | 'cross_group'> };
@@ -41,9 +44,15 @@ export function collateGroupResults(results: StructuredResult[]): StructuredAnsw
   }
   return {
     metric: results[0]!.metric,
-    bySource: results.map(({ sourceId, connectorType, value, rows, groupLabel, minimumCellSize }) => {
-      if (minimumCellSize !== undefined && minimumCellSize < MINIMUM_ANALYTIC_CELL_SIZE) {
+    bySource: results.map(({ sourceId, connectorType, value, rows, groupLabel, minimumCellSize, cellSizes, missingCategory }) => {
+      if (missingCategory) return {sourceId, connectorType, value: null, categoryNotFound: true};
+      if (!rows && isSmall(minimumCellSize)) {
         return { sourceId, connectorType, value: null, withheld: true };
+      }
+      if (rows && cellSizes?.some(isSmall)) {
+        const visibleRows = rows.map((row, index) => isSmall(cellSizes[index])
+          ? {group_value: row.group_value, value: '<11'} : row);
+        return {sourceId, connectorType, value: null, withheld: true, rows: visibleRows, ...(groupLabel ? {groupLabel} : {})};
       }
       const summary = rows ? summarizeGroups(rows) : undefined;
       return { sourceId, connectorType, value, ...(rows ? { rows } : {}), ...(summary ? { summary } : {}), ...(groupLabel ? { groupLabel } : {}) };
@@ -86,12 +95,16 @@ export async function finalizeAnalyticRun(pool: Pool, runId: string, compose?: (
       metric: 'unavailable', bySource: [], claims: [], evidence: [], trust: { groupCount: 0, sourceCount: 0, joins: [] },
     };
     let compositionFailed=false;let failureReason:string|undefined;
-    if (answer.bySource.some(source => source.withheld)) {
+    if (answer.bySource.some(source => source.withheld || source.categoryNotFound || source.value === 0 && !source.rows)) {
       answer.claims = answer.bySource.map((source, index) => {
         const refs = results[index]!.evidence;
         const name = refs[0]?.locator.split(' · ')[0] ?? source.connectorType;
-        const statement = source.withheld
-          ? `${name}: Fewer than 11, withheld to protect privacy`
+        const missing = results[index]!.missingCategory;
+        const available = missing?.values.map(value => JSON.stringify(value)).join(', ') ?? '';
+        const statement = missing
+          ? `${name}: That category does not exist in ${missing.column}. Available values: ${available.slice(0, 400) || 'none'}.`
+          : source.withheld
+          ? source.rows ? `${name}: See the displayed counts. Cells marked <11 are withheld to protect privacy.` : `${name}: Fewer than 11, withheld to protect privacy`
           : `${name}: ${source.rows ? 'See the grouped results' : source.value?.toLocaleString('en-US')}`;
         return ClaimSchema.parse({ claim_id: randomUUID(), kind: 'metric', statement, evidence_ids: refs.map(ref => ref.evidence_id) });
       });

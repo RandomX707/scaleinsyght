@@ -6,16 +6,15 @@ ports 3340, 3341 and 4290. The review app uses port 4284 and must be left alone.
 
 ## Step 1
 
-Decision 42 redacts small cells in structured answers before they can leave the
-worker or reach the answer writer. Redacted sources retain their query evidence
-and receive a deterministic privacy statement. For a grouped result with any
-small cell, the entire grouped result for that source is withheld to prevent
-inference from its summaries. The eval checks both the withheld marker and
-whether withholding was expected. Held-out console output is aggregate only.
+Decision 42 shows zero and withholds only counts from 1 through 10. Grouped
+answers show every group cell, using “<11” for small cells and omitting group
+summaries and charts when any cell is hidden. Nonsensitive equality filters
+resolve case against source categories. When a category is absent, the answer
+lists the source categories from a bounded read-only query.
 
-Reference values from independent truth are Q04 PostgreSQL 0, Q21 SQL Server 0,
-Q28 unavailable, and H08 workbook 0. Q28's executed workbook query was for the
-wrong subject. It requires a planning refusal even if its count is suppressed.
+The original zeros were real. The seeded order statuses are completed, placed
+and cancelled. Q04 and Q21 now use placed (359 each). H08's independent truth
+is now 529. Q28 remains unavailable and requires a planning refusal.
 
 Baseline scores remain the latest measured values. Questions 23/30 acceptable
 (19 correct, 4 correct refusals, 2 wrong, 5 failed). Held-out 9/10 acceptable
