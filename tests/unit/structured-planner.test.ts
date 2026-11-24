@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodePlannerOutput, hasNamedCountSubject, normalizeCatalogMentions, plannerSchema } from '../../apps/api/src/structured-planner.js';
+import { asksPerGroup, decodePlannerOutput, hasNamedCountSubject, normalizeCatalogMentions, plannerSchema } from '../../apps/api/src/structured-planner.js';
 
 const catalog = [{assets: [{qualified_name:'Charges',columns:[{name:'charge_type',label:'Charge Type'},{name:'charged_on'}]}]}];
 const payload = {
@@ -27,6 +27,14 @@ describe('structured planner', () => {
     const grouped = {source_index:0,kind:'grouped_join',table:'dbo.orders',join:null,groupBy:'dbo.departments.department_name',groupKey:null,entityColumn:null,operation:'count',aggregateColumn:null,order:'desc',limit:null,filters:[]};
     expect(() => decodePlannerOutput(wrap(grouped), orders, [], 'How many orders does each department have?')).not.toThrow('count_the_named_subject_table');
     expect(hasNamedCountSubject('How many orders does each department have?',[{assets:[{qualified_name:'dbo.orders',columns:[{name:'order_id'}]}]}],[])).toBe(true);
+  });
+  it('rejects a single total for a per-group question', () => {
+    const orders = [{assets: [{qualified_name:'dbo.orders',columns:[{name:'order_id'},{name:'department_id'}]},{qualified_name:'dbo.departments',columns:[{name:'department_id'},{name:'department_name'}]}]}];
+    const joins = [{source_index:0,from_name:'dbo.orders.department_id',to_name:'dbo.departments.department_id'}];
+    const total = {source_index:0,kind:'join_aggregate',table:'dbo.orders',join:'dbo.orders.department_id = dbo.departments.department_id',groupBy:null,groupKey:null,entityColumn:null,operation:'count',aggregateColumn:null,order:null,limit:null,filters:[]};
+    expect(() => decodePlannerOutput(wrap(total), orders, joins, 'How many orders does each department have?')).toThrow('group_the_result_by_the_requested_dimension');
+    for (const question of ['Give counts by order type','Break down order counts by order status','List the number of Charges for each Charge Type','Orders per department, top 5']) expect(asksPerGroup(question), question).toBe(true);
+    for (const question of ['Give separate order totals for each testbed','How many orders have status placed?','Compare the number of orders in each source','How many encounters were admitted during 2024?']) expect(asksPerGroup(question), question).toBe(false);
   });
   it('separates the subject from a source qualifier', () => {
     expect(hasNamedCountSubject('How many Charges in the workbook were recorded?',catalog,[])).toBe(true);

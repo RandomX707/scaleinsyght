@@ -79,6 +79,13 @@ function field(ref: unknown): [string,string] {
   return [ref.slice(0,split), ref.slice(split+1)];
 }
 
+const sourceWords = new Set(['testbed','testbeds','source','sources','system','systems','database','databases','workbook','workbooks']);
+/** True when the question asks for one value per group: "for each department", "per provider", "by status", "break down". */
+export function asksPerGroup(question: string): boolean {
+  if (/\bbreak\s?down\b/i.test(question)) return true;
+  return [...question.matchAll(/\b(?:each|every|per|by)\s+(?:named\s+)?([a-z]+)/gi)].some(match => !sourceWords.has(match[1]!.toLowerCase()));
+}
+
 export function decodePlannerOutput(text: string, catalog: PlannerCatalog, joins: PlannerJoin[], question: string) {
   const parsed = JSON.parse(text) as {intents?: Array<Record<string, unknown>>};
   if (!Array.isArray(parsed.intents) || parsed.intents.length > catalog.length) throw new Error('invalid_source_list');
@@ -153,6 +160,10 @@ export function decodePlannerOutput(text: string, catalog: PlannerCatalog, joins
         break;
       }
       default: throw new Error('unknown_intent_kind');
+    }
+    // A per-group question must get a grouped answer; a single total would be a confident wrong answer.
+    if (asksPerGroup(question) && ['count','filtered_count','join_aggregate','compare_aggregates'].includes(String(item.kind))) {
+      throw new Error('group_the_result_by_the_requested_dimension');
     }
     const validated = QueryIntentSchema.safeParse(intent);
     if (!validated.success) throw new Error('typed_intent_fields: ' + validated.error.issues.map(issue => issue.path.join('.') + ' ' + issue.code).join(', ').slice(0,180));
