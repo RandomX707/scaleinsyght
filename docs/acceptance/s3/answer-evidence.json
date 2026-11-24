@@ -1,0 +1,414 @@
+[
+  {
+    "question": "How many visits are in the operations workbook?",
+    "answer": "The operations workbook contains 768 visits.",
+    "sql": [
+      "Operations workbook · SELECT count(*)::text AS value,count(*) AS cell_size FROM \"main\".\"Visits\""
+    ],
+    "results": [
+      {
+        "connectorType": "excel",
+        "value": 768
+      }
+    ],
+    "provenance": [
+      {
+        "model": "gpt-6-luna",
+        "purpose": "plan",
+        "typedPlan": {
+          "intents": [
+            {
+              "intent": {
+                "kind": "count",
+                "table": "Visits"
+              },
+              "source_name": "Operations workbook",
+              "source_index": 0
+            }
+          ],
+          "source_selection": {
+            "used": [
+              {
+                "name": "Operations workbook",
+                "reason": "named in your question",
+                "sourceId": "1674e344-4f3c-4912-8841-63efea607cd4"
+              }
+            ],
+            "unused": []
+          }
+        },
+        "inputTokens": 1491,
+        "outputTokens": 59
+      },
+      {
+        "model": "gpt-6.2-sol",
+        "purpose": "answer",
+        "typedPlan": null,
+        "inputTokens": 287,
+        "outputTokens": 11
+      }
+    ]
+  },
+  {
+    "question": "and how many of them have a discharge date?",
+    "answer": "688 visits have a discharge date.",
+    "sql": [
+      "Operations workbook · SELECT count(*)::text AS value,count(*) AS cell_size FROM \"main\".\"Visits\" WHERE \"discharged_on\" IS NOT NULL"
+    ],
+    "results": [
+      {
+        "connectorType": "excel",
+        "value": 688
+      }
+    ],
+    "provenance": [
+      {
+        "model": "gpt-6-luna",
+        "purpose": "plan",
+        "typedPlan": {
+          "intents": [
+            {
+              "intent": {
+                "kind": "filtered_count",
+                "table": "Visits",
+                "column": "discharged_on",
+                "operator": "is_not_null"
+              },
+              "source_name": "Operations workbook",
+              "source_index": 0
+            }
+          ],
+          "source_selection": {
+            "used": [
+              {
+                "name": "Operations workbook",
+                "reason": "used earlier in this conversation",
+                "sourceId": "1674e344-4f3c-4912-8841-63efea607cd4"
+              }
+            ],
+            "unused": []
+          }
+        },
+        "inputTokens": 1513,
+        "outputTokens": 90
+      },
+      {
+        "model": "gpt-6.2-sol",
+        "purpose": "answer",
+        "typedPlan": null,
+        "inputTokens": 314,
+        "outputTokens": 10
+      }
+    ]
+  },
+  {
+    "question": "How many charges in the workbook were cancelled?",
+    "answer": "147 charges in the workbook were cancelled.",
+    "sql": [
+      "Operations workbook · SELECT count(*)::text AS value,count(*) AS cell_size FROM \"main\".\"Charges\" WHERE \"status\" = $1"
+    ],
+    "results": [
+      {
+        "connectorType": "excel",
+        "value": 147
+      }
+    ],
+    "provenance": [
+      {
+        "model": "gpt-6-luna",
+        "purpose": "plan",
+        "typedPlan": {
+          "intents": [
+            {
+              "intent": {
+                "kind": "filtered_count",
+                "table": "Charges",
+                "value": "cancelled",
+                "column": "status",
+                "operator": "eq"
+              },
+              "source_name": "Operations workbook",
+              "source_index": 0
+            }
+          ],
+          "source_selection": {
+            "used": [
+              {
+                "name": "Operations workbook",
+                "reason": "named in your question",
+                "sourceId": "1674e344-4f3c-4912-8841-63efea607cd4"
+              }
+            ],
+            "unused": []
+          }
+        },
+        "inputTokens": 1491,
+        "outputTokens": 107
+      },
+      {
+        "model": "gpt-6.2-sol",
+        "purpose": "answer",
+        "typedPlan": null,
+        "inputTokens": 319,
+        "outputTokens": 11
+      }
+    ]
+  },
+  {
+    "question": "Total charge amount by department in the workbook, top 5",
+    "answer": "In the Operations workbook, total charges among the top five departments ranged from 11,459.65 to 41,486.17, a spread of 30,026.52.",
+    "sql": [
+      "Operations workbook · SELECT \"department\"::text AS group_value,coalesce(sum(\"amount\"),0)::text AS value,count(*) AS cell_size FROM \"main\".\"Charges\" GROUP BY \"department\" ORDER BY (coalesce(sum(\"amount\"),0)::text)::numeric DESC,\"department\" ASC LIMIT 5"
+    ],
+    "results": [
+      {
+        "connectorType": "excel",
+        "value": 41486.17000000001,
+        "rows": [
+          {
+            "value": "41486.17000000001",
+            "group_value": "Emergency"
+          },
+          {
+            "value": "31562.519999999993",
+            "group_value": "Laboratory"
+          },
+          {
+            "value": "20507.489999999994",
+            "group_value": "Imaging"
+          },
+          {
+            "value": "16858.730000000007",
+            "group_value": "Cardiology"
+          },
+          {
+            "value": "11459.65",
+            "group_value": "Surgery"
+          }
+        ]
+      }
+    ],
+    "provenance": [
+      {
+        "model": "gpt-6-luna",
+        "purpose": "plan",
+        "typedPlan": {
+          "intents": [
+            {
+              "intent": {
+                "kind": "group_by",
+                "limit": 5,
+                "order": "desc",
+                "table": "Charges",
+                "groupBy": "department",
+                "orderBy": "value",
+                "aggregate": {
+                  "column": "amount",
+                  "operation": "sum"
+                }
+              },
+              "source_name": "Operations workbook",
+              "source_index": 0
+            }
+          ],
+          "source_selection": {
+            "used": [
+              {
+                "name": "Operations workbook",
+                "reason": "named in your question",
+                "sourceId": "1674e344-4f3c-4912-8841-63efea607cd4"
+              }
+            ],
+            "unused": []
+          }
+        },
+        "inputTokens": 1494,
+        "outputTokens": 137
+      },
+      {
+        "model": "gpt-6.2-sol",
+        "purpose": "answer",
+        "typedPlan": null,
+        "inputTokens": 434,
+        "outputTokens": 41
+      }
+    ]
+  },
+  {
+    "question": "Average number of visits per patient by department in the workbook",
+    "answer": "Across the 12 departments in the Operations workbook, average visits per patient ranged from 1.00 to 2.14, a spread of 1.14 visits per patient.",
+    "sql": [
+      "Operations workbook · SELECT group_value,avg(entity_count)::text AS value,count(*) AS cell_size FROM (SELECT \"department\" AS group_sort,\"department\"::text AS group_value,\"patient_id\" AS entity_key,count(*) AS entity_count FROM \"main\".\"Visits\" GROUP BY \"department\",\"patient_id\") entity_counts GROUP BY group_sort,group_value ORDER BY group_sort LIMIT 100"
+    ],
+    "results": [
+      {
+        "connectorType": "excel",
+        "value": 1.5142857142857142,
+        "rows": [
+          {
+            "value": "1.5142857142857142",
+            "group_value": "Cardiology"
+          },
+          {
+            "value": "1.0",
+            "group_value": "Dermatology"
+          },
+          {
+            "value": "1.5194805194805194",
+            "group_value": "Emergency"
+          },
+          {
+            "value": "1.7058823529411764",
+            "group_value": "Imaging"
+          },
+          {
+            "value": "1.1914893617021276",
+            "group_value": "Laboratory"
+          },
+          {
+            "value": "2.142857142857143",
+            "group_value": "Neurology"
+          },
+          {
+            "value": "1.236842105263158",
+            "group_value": "Oncology"
+          },
+          {
+            "value": "1.4705882352941178",
+            "group_value": "Orthopedics"
+          },
+          {
+            "value": "1.5",
+            "group_value": "Pediatrics"
+          },
+          {
+            "value": "1.5333333333333334",
+            "group_value": "Psychiatry"
+          },
+          {
+            "value": "1.3333333333333333",
+            "group_value": "Rehabilitation"
+          },
+          {
+            "value": "1.5277777777777777",
+            "group_value": "Surgery"
+          }
+        ]
+      }
+    ],
+    "provenance": [
+      {
+        "model": "gpt-6-luna",
+        "purpose": "plan",
+        "typedPlan": {
+          "intents": [
+            {
+              "intent": {
+                "kind": "average_count_by",
+                "limit": 100,
+                "table": "Visits",
+                "groupBy": "department",
+                "entityColumn": "patient_id"
+              },
+              "source_name": "Operations workbook",
+              "source_index": 0
+            }
+          ],
+          "source_selection": {
+            "used": [
+              {
+                "name": "Operations workbook",
+                "reason": "named in your question",
+                "sourceId": "1674e344-4f3c-4912-8841-63efea607cd4"
+              }
+            ],
+            "unused": []
+          }
+        },
+        "inputTokens": 1493,
+        "outputTokens": 96
+      },
+      {
+        "model": "gpt-6.2-sol",
+        "purpose": "answer",
+        "typedPlan": null,
+        "inputTokens": 514,
+        "outputTokens": 40
+      }
+    ]
+  },
+  {
+    "question": "Does the workbook's Patients sheet have the same number of patients as the PostgreSQL testbed?",
+    "answer": "No. The workbook’s Patients sheet has 391 rows, while the PostgreSQL testbed’s patients table has 500—a difference of 109. Both counts are unfiltered (Operations workbook: 391; PostgreSQL testbed: 500).",
+    "sql": [
+      "Operations workbook · SELECT count(*)::text AS value,count(*) AS cell_size FROM \"main\".\"Patients\"",
+      "PostgreSQL testbed · SELECT count(*)::text AS value,count(*) AS cell_size FROM \"public\".\"patients\""
+    ],
+    "results": [
+      {
+        "connectorType": "excel",
+        "value": 391
+      },
+      {
+        "connectorType": "postgres",
+        "value": 500
+      }
+    ],
+    "provenance": [
+      {
+        "model": "gpt-6-luna",
+        "purpose": "plan",
+        "typedPlan": {
+          "intents": [
+            {
+              "intent": {
+                "kind": "compare_aggregates",
+                "table": "Patients",
+                "aggregate": {
+                  "operation": "count"
+                }
+              },
+              "source_name": "Operations workbook",
+              "source_index": 0
+            },
+            {
+              "intent": {
+                "kind": "compare_aggregates",
+                "table": "public.patients",
+                "aggregate": {
+                  "operation": "count"
+                }
+              },
+              "source_name": "PostgreSQL testbed",
+              "source_index": 1
+            }
+          ],
+          "source_selection": {
+            "used": [
+              {
+                "name": "Operations workbook",
+                "reason": "named in your question",
+                "sourceId": "1674e344-4f3c-4912-8841-63efea607cd4"
+              },
+              {
+                "name": "PostgreSQL testbed",
+                "reason": "named in your question",
+                "sourceId": "d29ce3b3-59b2-4cd2-bbea-718358b81fe8"
+              }
+            ],
+            "unused": []
+          }
+        },
+        "inputTokens": 2316,
+        "outputTokens": 156
+      },
+      {
+        "model": "gpt-6.2-sol",
+        "purpose": "answer",
+        "typedPlan": null,
+        "inputTokens": 355,
+        "outputTokens": 39
+      }
+    ]
+  }
+]
