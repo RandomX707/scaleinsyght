@@ -53,8 +53,8 @@ S1 removed fixture-backed connector, profile, analytic-result, metadata-import, 
 ## S1 acceptance evidence
 
 - `tests/contracts/c1_tenant_create_empty_workspace_and_single_use_invite.test.ts`: tenant creation and invite contract cases.
-- `tests/contracts/c3_real_postgres_query_intents.test.ts`: five typed query shapes against real local PostgreSQL and SQL-derived truth.
-- `tests/contracts/c6_real_postgres_metadata.test.ts`: source safety, profile metadata, inferred relationship, and routine metadata.
+- `tests/testbed/c3_real_postgres_query_intents.test.ts`: five typed query shapes against real local PostgreSQL and SQL-derived truth.
+- `tests/testbed/c6_real_postgres_metadata.test.ts`: source safety, profile metadata, inferred relationship, and routine metadata.
 - `tests/e2e/real-product-s1.spec.ts`: empty tenant, UI invite, PostgreSQL connection, profile, ER, dictionary import, and real Home answer.
 - Screenshots and video are saved under `docs/acceptance/s1/` by the local `pnpm test:testbed` command.
 - The isolated click-through instructions and recorded gate results are in [`docs/phases/real-product-s1-demo.md`](phases/real-product-s1-demo.md) and [`docs/phases/real-product-s1-report.md`](phases/real-product-s1-report.md).

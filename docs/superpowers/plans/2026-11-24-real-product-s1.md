@@ -69,10 +69,10 @@
 **Files:**
 - Create `testbed/postgres/schema.sql`, `testbed/postgres/data.sql`, `testbed/dictionary.csv`, `testbed/up.ts`, `testbed/truth.ts`, `testbed/truth.json`
 - Modify root `package.json` scripts
-- Test: `tests/unit/testbed-truth.test.ts`, `tests/contracts/c6_testbed_postgres_truth.test.ts`
+- Test: `tests/unit/testbed-truth.test.ts`, `tests/testbed/c6_testbed_postgres_truth.test.ts`
 
 - [ ] **Step 1: Write failing test cases** `testbed_truth_is_sql_derived_and_has_expected_fixtures` and `testbed_pg_has_five_hospital_tables_two_views_two_functions_sensitive_tags_and_undeclared_pair`. Assert schema has patient, encounter, order, department, provider; >=2,000 rows total; two DB-declared FK pairs; one shared-key relationship with no declared FK; tags for name, DOB, MRN, phone; and truth keys for row/column counts, FK pairs, inferred pair, sensitive columns, null rates, and metrics.
-- [ ] **Step 2: Run `pnpm exec vitest run tests/unit/testbed-truth.test.ts tests/contracts/c6_testbed_postgres_truth.test.ts` and confirm the new tests fail because the testbed files/scripts do not exist.**
+- [ ] **Step 2: Run `pnpm exec vitest run tests/unit/testbed-truth.test.ts tests/testbed/c6_testbed_postgres_truth.test.ts` and confirm the new tests fail because the testbed files/scripts do not exist.**
 - [ ] **Step 3: Implement `testbed:up` and `testbed:truth`** using PostgreSQL 16, an isolated `si_testbed_pg` database, a generated `si_testbed_reader` role with only SELECT/CONNECT, and `.env`-only generated credentials. Keep the tenant app database separate. Seed stable fake patient/encounter IDs. `truth.ts` queries the source database directly and writes only computed truth values to `testbed/truth.json`.
 - [ ] **Step 4: Rerun the two tests and both commands; require the expected table/column/key/tag counts and verify `si_testbed_reader` cannot INSERT/UPDATE/DELETE or create schema objects.**
 - [ ] **Step 5: Commit and push `test: add isolated PostgreSQL testbed truth`.**
