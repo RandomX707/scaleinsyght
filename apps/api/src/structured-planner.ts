@@ -28,15 +28,21 @@ export function normalizeCatalogMentions(question: string, catalog: PlannerCatal
   return question.replace(new RegExp('\\b(?:' + alternatives + ')(?=s?\\b)', 'gi'), term => term.toLowerCase());
 }
 
+const singular = (word: string) => word.toLowerCase().replace(/ies$/, 'y').replace(/(?<!s)s$/, '');
+const tokens = (value: string) => value.match(/[a-z]+/gi)?.map(singular) ?? [];
+
+function namedCountSubject(question: string): string | undefined {
+  const subject = /^how many ([a-z][a-z -]{1,85}?)(?: (?:are|were|was|is|have|had|belong|cost|link|exist)(?:\b)|[?!.]|$)/i.exec(question)?.[1];
+  if (!subject) return;
+  const nounPhrase = subject.split(/ (?:in|from|on|at|with|of) /i)[0]!;
+  const generic = new Set(['record','row','entry','item','one']);
+  return tokens(nounPhrase).filter(word => !generic.has(word)).at(-1);
+}
+
 /** A direct count of a named subject requires that subject's head noun in the catalog.
  * A tenant glossary may explicitly map a business term to a differently named table. */
 export function hasNamedCountSubject(question: string, catalog: PlannerCatalog, glossary: string[]): boolean {
-  const subject = /^how many ([a-z][a-z -]{1,60}?) (?:are|were|was|is)\b/i.exec(question)?.[1];
-  if (!subject) return true;
-  const singular = (word: string) => word.toLowerCase().replace(/ies$/, 'y').replace(/(?<!s)s$/, '');
-  const generic = new Set(['record','row','entry','item','one']);
-  const tokens = (value: string) => value.match(/[a-z]+/gi)?.map(singular) ?? [];
-  const noun = tokens(subject).filter(word => !generic.has(word)).at(-1);
+  const noun = namedCountSubject(question);
   if (!noun) return true;
   const catalogTerms = catalog.flatMap(source => source.assets.flatMap(asset =>
     [asset.qualified_name, ...asset.columns.flatMap(column => [column.name,column.label ?? ''])]));
@@ -84,6 +90,12 @@ export function decodePlannerOutput(text: string, catalog: PlannerCatalog, joins
     seen.add(index);
     const table = String(item.table);
     if (!source.assets.some(asset => asset.qualified_name === table)) throw new Error('table_outside_catalog');
+    const subject = namedCountSubject(question);
+    const explicitTables = subject ? source.assets.filter(asset =>
+      singular(asset.qualified_name.split('.').at(-1)!) === subject) : [];
+    if (explicitTables.length && !explicitTables.some(asset=>asset.qualified_name===table)) {
+      throw new Error('count_the_named_subject_table');
+    }
     const join = joins.find(candidate => candidate.source_index === index && joinKey(candidate) === item.join);
     const [leftTable,leftColumn] = join ? field(join.from_name) : [table,''];
     const [rightTable,rightColumn] = join ? field(join.to_name) : ['', ''];
@@ -94,7 +106,7 @@ export function decodePlannerOutput(text: string, catalog: PlannerCatalog, joins
       }
       return [target,key] as const;
     };
-    const measure = item.operation === 'sum' && !/\bhow many\b|\b(?:count|counts|number of|volume)\b/i.test(question)
+    const measure = item.operation === 'sum' && /\b(?:amount|sum|value|spend|cost|revenue|balance|weight|quantity)\b/i.test(question) && !/\bhow many\b|\b(?:count|counts|number of|volume)\b/i.test(question)
       ? {operation:'sum',column:get(item.aggregateColumn,[leftTable])[1]} : {operation:'count'};
     const limit = item.limit === null ? {} : {limit:item.limit};
     const order = item.order === null ? {} : {order:item.order,orderBy:'value'};
@@ -103,6 +115,11 @@ export function decodePlannerOutput(text: string, catalog: PlannerCatalog, joins
       return {table:target,column,operator:filter.operator,...(filter.value === null ? {} : {value:filter.value}),
         ...(filter.upperExclusive === null ? {} : {upperExclusive:filter.upperExclusive})};
     }) : [];
+    if (/\bstatus\b/i.test(question) && /\bhow many\b|\bcount\b/i.test(question) &&
+        source.assets.find(asset=>asset.qualified_name===leftTable)?.columns.some(column=>/(^|_)status$/i.test(column.name)) &&
+        !filters.some(filter=>/(^|_)status$/i.test(filter.column) && filter.operator==='eq')) {
+      throw new Error('apply_the_requested_status_filter');
+    }
     let intent: unknown;
     switch (item.kind) {
       case 'count': intent = {kind:'count',table}; break;

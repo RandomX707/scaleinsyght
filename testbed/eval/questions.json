@@ -185,7 +185,7 @@
     "id": "Q21",
     "turns": [
       "Give me the total order count in the SQL Server testbed.",
-      "And how many were placed?"
+      "And how many had the status placed?"
     ],
     "sources": [
       "s"

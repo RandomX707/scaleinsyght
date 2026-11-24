@@ -21,6 +21,14 @@ describe('structured planner', () => {
     expect(hasNamedCountSubject('How many insurance claims were denied?',catalog,[])).toBe(false);
     expect(hasNamedCountSubject('How many Charges were cancelled?',catalog,[])).toBe(true);
   });
+  it('separates the subject from a source qualifier', () => {
+    expect(hasNamedCountSubject('How many Charges in the workbook were recorded?',catalog,[])).toBe(true);
+  });
+  it('rejects a dimension count when the question names the fact table', () => {
+    const sources = [{assets:[...catalog[0]!.assets,{qualified_name:'Departments',columns:[{name:'name'}]}]}];
+    expect(() => decodePlannerOutput(wrap({...payload,table:'Departments'}),sources,[],'How many charges belong to Imaging?'))
+      .toThrow('count_the_named_subject_table');
+  });
   it('rejects a column outside the selected table', () => {
     expect(() => decodePlannerOutput(wrap({...payload,groupBy:'Visits.charge_type'}), catalog, [], 'Count records')).toThrow('column_does_not_belong_to_selected_table');
   });

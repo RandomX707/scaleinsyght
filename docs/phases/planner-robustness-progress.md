@@ -80,3 +80,13 @@ tests use a disposable writer rather than granting write access to the
 shared reader. The four SQL Server connector contract cases passed. Local
 lint, typecheck, SQL parsing and golden evaluation also passed at prior
 checkpoints. Three full testbed gates and PR/CI are still pending.
+
+A later Luna diagnostic had 27/30 acceptable on development and 9/10 on
+held-out, with 2 and 1 wrong respectively. Only the development failures were
+inspected. The subject guard now separates source qualifiers from the subject
+and rejects a dimension-table count when the named fact table is present.
+Q21 now explicitly says “status placed” to distinguish the lifecycle state
+from the act of placing any order. A status count must retain that filter.
+The live development check passed Q09, Q16 and Q21. Both full comparisons
+have restarted with this version. Local dbt compile and SQL parser tests
+passed with Python 3.11, matching CI.
