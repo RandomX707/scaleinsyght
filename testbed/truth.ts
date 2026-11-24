@@ -55,6 +55,15 @@ try {
     (SELECT count(DISTINCT patient_id) FROM encounters)::text AS source_count,
     (SELECT count(DISTINCT patient_id) FROM patients)::text AS target_count
     FROM encounters e JOIN patients p ON p.patient_id=e.patient_id`);
+  const emergencyVisits2025 = await client.query<{ value: string }>(`SELECT count(*)::text AS value
+    FROM public.encounters e JOIN public.departments d ON d.department_id=e.department_id
+    WHERE d.department_name='Emergency' AND e.admitted_at>='2025-01-01' AND e.admitted_at<'2026-01-01'`);
+  const ordersPerDepartmentTop5 = await client.query<{ department_id: number; department_name: string; order_count: string }>(`SELECT d.department_id,d.department_name,count(*)::text AS order_count
+    FROM public.departments d JOIN public.orders o ON o.department_id=d.department_id
+    GROUP BY d.department_id,d.department_name ORDER BY count(*) DESC,d.department_id LIMIT 5`);
+  const averageEncountersPerPatientByProvider = await client.query<{ provider_id: number; average: string }>(`SELECT provider_id,avg(encounter_count)::text AS average
+    FROM (SELECT provider_id,patient_id,count(*) AS encounter_count FROM public.encounters GROUP BY provider_id,patient_id) per_patient
+    GROUP BY provider_id ORDER BY provider_id`);
   const sqlServer = await collectSqlServerTruth(client);
   const truth = {
     source: 'si_testbed_pg',
@@ -73,6 +82,19 @@ try {
     nullRates,
     metrics,
     sqlServer,
+    answerChecks: {
+      emergencyVisits2025: { postgres: Number(emergencyVisits2025.rows[0]!.value), sqlServer: sqlServer.answerMetrics.emergencyVisits2025 },
+      ordersPerDepartmentTop5: {
+        postgres: ordersPerDepartmentTop5.rows.map((row) => ({ departmentId: row.department_id, departmentName: row.department_name, orderCount: Number(row.order_count) })),
+        sqlServer: sqlServer.answerMetrics.ordersPerDepartmentTop5,
+      },
+      averageEncountersPerPatientByProvider: {
+        postgres: averageEncountersPerPatientByProvider.rows.map((row) => ({ providerId: row.provider_id, average: Number(row.average) })),
+        sqlServer: sqlServer.answerMetrics.averageEncountersPerPatientByProvider,
+      },
+      patientCountComparison: { postgres: rowCounts.patients!, sqlServer: sqlServer.rowCounts.patients!, same: rowCounts.patients === sqlServer.rowCounts.patients },
+      sharedPatientsCount: sqlServer.sharedPatientIds,
+    },
   };
   writeFileSync(resolve('testbed/truth.json'), `${JSON.stringify(truth, null, 2)}\n`, { mode: 0o644 });
   process.stdout.write('SQL-derived truth written for 5 tables, 2 declared relationships, and the undeclared patient key.\n');
