@@ -74,33 +74,19 @@ heldout2 (`testbed/eval/heldout2.json`, 10 new questions, truth from
 evaluation and after the last planner or prompt change. It is run once, after
 tuning is finished.
 
-## Next (handover, 25 Nov 2026)
+## Step 5: declared intent (in progress, overnight 25 Nov)
 
-Done since step 4: USD daily caps per tenant and per user (decision 43,
-migration 028); count-subject guard fix and a per-group check (both to be
-removed, see below); S3 walkthrough aligned with decision 42; a `planning`
-gateway alias set by `MODEL_PLANNING`, defaulting to `MODEL_DEFAULT`
-(migration 029, purpose `verify`). Nothing uses the alias yet.
+Done: decision 44 (gpt-6.2-sol plans through the `planning` alias; Luna via
+`MODEL_PLANNING=gpt-6-luna`), declared intent in the plan schema checked by
+the decoder (question-text checks removed), a verification call with repair,
+Q31 to Q40 paraphrases, `.env` caps at USD 5 and 1 with a defaults test.
+The first full run regressed (8 development refusals on both models): the
+verifier saw an incomplete plan description (no date end bound, title-case
+headers redacted by the gateway, the default 100-row bound read as a
+ranking, no tie-break) and too small an output budget.
+Fixed in `20274f8` and replayed: all affected cases correct with Sol.
 
-Remaining, in order (user decisions of 25 Nov):
-1. Decision 44: plan with gpt-6.2-sol through the `planning` alias (Luna via
-   `MODEL_PLANNING=gpt-6-luna`); record the decision.
-2. Replace question-text checks (`hasNamedCountSubject`, `namedCountSubject`,
-   `asksPerGroup`, the status and sum regexes in `structured-planner.ts`) with
-   declared intent: a top-level declaration (subject, grouping, conditions,
-   comparison, answerable) and a per-step declaration (subject_table,
-   measure, measure_column, grouping_column, filter_columns). The decoder checks
-   the executable plan against them. Then a verification call (alias
-   `planning`, purpose `verify`, schema {answers_question, reason}). A "no"
-   triggers a repair; no accepted plan after three attempts is a refusal.
-3. Add Q31 to Q40 paraphrases to `testbed/eval/questions.json` with truth.
-   Run both models and confirm 0 wrong.
-4. The Usage test showed a 2.00 tenant cap because the worktree `.env` still
-   sets `MODEL_DAILY_COST_CAP_USD=2` (the code default is 5). Update `.env`
-   files and add a unit test for the defaults.
-5. Gates, three `pnpm test:testbed` runs (ports 3340, 3341, 4290), heldout2
-   once (`pnpm eval:planner --set=heldout2`), noting the planner changes after
-   `dd0c192`, then PR and merge.
-6. chat-threads branch: client request IDs (idempotent submit), one thread per
-   chat, Recent conversations cleanup, titles, bar values, plurals. Delete
-   empty and duplicate riverside-health conversations. Restart 4284.
+Next: full both-model evaluation on the final revision, gates, three
+`pnpm test:testbed` runs, heldout2 once, PR and merge. Then chat-threads.
+Overnight model spend is logged in the run notes and reported in
+`docs/overnight-report.md`.
