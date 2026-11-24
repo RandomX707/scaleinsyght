@@ -15,9 +15,13 @@ const truth = JSON.parse(readFileSync('testbed/truth.json', 'utf8')) as {
     ordersPerDepartmentTop5: { postgres: Array<{ departmentId: number; departmentName: string; orderCount: number }>; sqlServer: Array<{ departmentId: number; departmentName: string; orderCount: number }> };
     averageEncountersPerPatientByProvider: { postgres: Array<{ providerId: number; average: number }>; sqlServer: Array<{ providerId: number; average: number }> };
     patientCountComparison: { postgres: number; sqlServer: number; same: boolean };
+    ordersPerDepartment: { postgres: Array<{ departmentId: number; departmentName: string; orderCount: number }> };
+    encountersPerPatient: { postgres: Record<string, number> };
     sharedPatientsCount: number;
   };
 };
+
+const round6=(rows:Array<{providerId:number;average:number}>)=>rows.map(row=>({providerId:row.providerId,average:Math.round(row.average*1e6)/1e6}));
 
 describe('real PostgreSQL testbed truth', () => {
   it('testbed_truth_is_sql_derived_and_has_expected_fixtures', () => {
@@ -39,17 +43,30 @@ describe('real PostgreSQL testbed truth', () => {
   });
 
   it('truth_contains_sql_derived_answers_for_the_s2_review_questions', () => {
-    expect(truth.answerChecks.emergencyVisits2025).toEqual({ postgres: 117, sqlServer: 117 });
-    for (const source of [truth.answerChecks.ordersPerDepartmentTop5.postgres, truth.answerChecks.ordersPerDepartmentTop5.sqlServer]) {
-      expect(source).toEqual([1, 2, 3, 4, 5].map((departmentId) => ({ departmentId, departmentName: ['Cardiology','Neurology','Emergency','Imaging','Laboratory'][departmentId - 1], orderCount: 200 })));
-    }
-    for (const source of [truth.answerChecks.averageEncountersPerPatientByProvider.postgres, truth.answerChecks.averageEncountersPerPatientByProvider.sqlServer]) {
-      expect(source).toHaveLength(24);
-      expect(source.map((item) => item.providerId)).toEqual(Array.from({ length: 24 }, (_, index) => index + 1));
-      expect(source.every((item) => item.average === 1)).toBe(true);
-    }
+    expect(truth.answerChecks.emergencyVisits2025.postgres).toBeGreaterThan(0);
+    expect(truth.answerChecks.emergencyVisits2025.sqlServer).toBe(truth.answerChecks.emergencyVisits2025.postgres);
+    expect(truth.answerChecks.ordersPerDepartmentTop5.sqlServer).toEqual(truth.answerChecks.ordersPerDepartmentTop5.postgres);
+    expect(round6(truth.answerChecks.averageEncountersPerPatientByProvider.sqlServer)).toEqual(round6(truth.answerChecks.averageEncountersPerPatientByProvider.postgres));
     expect(truth.answerChecks.patientCountComparison).toEqual({ postgres: 500, sqlServer: 500, same: true });
     expect(truth.answerChecks.sharedPatientsCount).toBe(500);
+  });
+
+  it('testbed_distributions_are_skewed_not_uniform', () => {
+    const top = truth.answerChecks.ordersPerDepartmentTop5.postgres.map((row) => row.orderCount);
+    expect(top).toHaveLength(5);
+    expect(new Set(top).size).toBe(5);
+    expect(top).toEqual([...top].sort((left, right) => right - left));
+    const all = truth.answerChecks.ordersPerDepartment.postgres.map((row) => row.orderCount);
+    expect(all.length).toBeGreaterThanOrEqual(10);
+    expect(all[0]! / all.at(-1)!).toBeGreaterThan(5);
+    expect(all.length - new Set(all).size).toBeGreaterThan(0);
+    const perPatient = Object.entries(truth.answerChecks.encountersPerPatient.postgres).map(([visits, patients]) => ({ visits: Number(visits), patients }));
+    const patientsWith = (test: (visits: number) => boolean) => perPatient.filter((row) => test(row.visits)).reduce((sum, row) => sum + row.patients, 0);
+    expect(patientsWith((visits) => visits === 1)).toBeGreaterThan(250);
+    expect(patientsWith((visits) => visits >= 2 && visits <= 4)).toBeGreaterThanOrEqual(100);
+    expect(patientsWith((visits) => visits >= 10)).toBeGreaterThanOrEqual(5);
+    const averages = truth.answerChecks.averageEncountersPerPatientByProvider.postgres.map((row) => row.average);
+    expect(Math.max(...averages) - Math.min(...averages)).toBeGreaterThan(0.5);
   });
 
   it('testbed_pg_has_five_hospital_tables_two_views_two_functions_sensitive_tags_and_undeclared_pair', () => {

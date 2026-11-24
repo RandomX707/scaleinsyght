@@ -108,4 +108,4 @@ const total = runSqlServerAdminQuery(`SET NOCOUNT ON; SELECT COUNT_BIG(*) FROM (
   UNION ALL SELECT provider_id FROM dbo.providers
 ) rows;`, databaseName);
 if (Number(total.split(/\r?\n/).at(-1)) < 2_000) throw new Error('sqlserver_testbed_seed_below_minimum');
-process.stdout.write('Local SQL Server 2022 testbed is ready (2,430 fictional rows; SELECT-only login).\n');
+process.stdout.write('Local SQL Server 2022 testbed is ready (generated fictional rows; SELECT-only login).\n');

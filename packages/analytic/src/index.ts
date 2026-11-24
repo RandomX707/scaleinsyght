@@ -199,3 +199,4 @@ export async function startAnalyticRun(pool: Pool, input: { tenantId: string; pr
   });
   return { runId: plan.run_id };
 }
+export { summarizeGroups, roundForModel, type GroupSummary } from './group-summary.js';

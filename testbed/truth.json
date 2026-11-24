@@ -1,11 +1,11 @@
 {
   "source": "si_testbed_pg",
-  "generatedAt": "2026-11-24T14:14:30.508Z",
+  "generatedAt": "2026-11-24T16:38:02.647Z",
   "rowCounts": {
     "patients": 500,
-    "encounters": 700,
-    "orders": 1200,
-    "departments": 6,
+    "encounters": 1291,
+    "orders": 1500,
+    "departments": 12,
     "providers": 24
   },
   "columnCounts": {
@@ -28,7 +28,7 @@
   "inferredRelationship": {
     "from": "encounters.patient_id",
     "to": "patients.patient_id",
-    "matches": 700,
+    "matches": 1291,
     "sourceCount": 500,
     "targetCount": 500,
     "declared": false
@@ -37,24 +37,24 @@
     {
       "from": "encounters.department_id",
       "to": "departments.department_id",
-      "matches": 700,
-      "sourceCount": 700,
+      "matches": 1291,
+      "sourceCount": 1291,
       "confidence": 1,
       "declared": false
     },
     {
       "from": "encounters.patient_id",
       "to": "patients.patient_id",
-      "matches": 700,
-      "sourceCount": 700,
+      "matches": 1291,
+      "sourceCount": 1291,
       "confidence": 1,
       "declared": false
     },
     {
       "from": "encounters.provider_id",
       "to": "providers.provider_id",
-      "matches": 700,
-      "sourceCount": 700,
+      "matches": 1291,
+      "sourceCount": 1291,
       "confidence": 1,
       "declared": false
     },
@@ -156,29 +156,35 @@
   ],
   "nullRates": {
     "patients.phone": 0.142,
-    "encounters.discharged_at": 0.14285714285714285
+    "encounters.discharged_at": 0.11386522075910147
   },
   "metrics": {
     "patients": 500,
-    "encounters": 700,
-    "orders": 1200,
-    "completed_orders": 400,
-    "order_amount": 72900,
-    "encounter_per_patient": 1.4,
-    "orders_department_1": 200,
-    "orders_department_2": 200,
-    "orders_department_3": 200,
-    "orders_department_4": 200,
-    "orders_department_5": 200,
-    "orders_department_6": 200
+    "encounters": 1291,
+    "orders": 1500,
+    "completed_orders": 908,
+    "order_amount": 261080.98,
+    "encounter_per_patient": 2.582,
+    "orders_department_1": 152,
+    "orders_department_2": 52,
+    "orders_department_3": 388,
+    "orders_department_4": 197,
+    "orders_department_5": 301,
+    "orders_department_6": 121,
+    "orders_department_7": 88,
+    "orders_department_8": 64,
+    "orders_department_9": 41,
+    "orders_department_10": 41,
+    "orders_department_11": 30,
+    "orders_department_12": 25
   },
   "sqlServer": {
     "source": "si_testbed_sqlserver",
     "rowCounts": {
       "patients": 500,
-      "encounters": 700,
-      "orders": 1200,
-      "departments": 6,
+      "encounters": 1291,
+      "orders": 1500,
+      "departments": 12,
       "providers": 24
     },
     "columnCounts": {
@@ -217,27 +223,33 @@
     ],
     "nullRates": {
       "patients.phone": 0.11,
-      "encounters.discharged_at": 0.1428571429
+      "encounters.discharged_at": 0.1138652208
     },
     "metrics": {
       "patients_with_phone": 445,
       "patients": 500,
-      "encounters": 700,
-      "orders": 1200,
-      "completed_orders": 400,
-      "order_amount": 72900,
-      "encounter_per_patient": 1.4,
-      "orders_department_3": 200,
-      "orders_department_6": 200,
-      "orders_department_1": 200,
-      "orders_department_4": 200,
-      "orders_department_5": 200,
-      "orders_department_2": 200
+      "encounters": 1291,
+      "orders": 1500,
+      "completed_orders": 908,
+      "order_amount": 261080.98,
+      "encounter_per_patient": 2.582,
+      "orders_department_9": 41,
+      "orders_department_3": 388,
+      "orders_department_12": 25,
+      "orders_department_6": 121,
+      "orders_department_7": 88,
+      "orders_department_1": 152,
+      "orders_department_10": 41,
+      "orders_department_4": 197,
+      "orders_department_5": 301,
+      "orders_department_2": 52,
+      "orders_department_11": 30,
+      "orders_department_8": 64
     },
     "inferredRelationship": {
       "from": "encounters.patient_id",
       "to": "patients.patient_id",
-      "matches": 700,
+      "matches": 1291,
       "sourceCount": 500,
       "targetCount": 500,
       "declared": false
@@ -246,24 +258,24 @@
       {
         "from": "dbo.encounters.department_id",
         "to": "dbo.departments.department_id",
-        "matches": 700,
-        "sourceCount": 700,
+        "matches": 1291,
+        "sourceCount": 1291,
         "confidence": 1,
         "declared": false
       },
       {
         "from": "dbo.encounters.patient_id",
         "to": "dbo.patients.patient_id",
-        "matches": 700,
-        "sourceCount": 700,
+        "matches": 1291,
+        "sourceCount": 1291,
         "confidence": 1,
         "declared": false
       },
       {
         "from": "dbo.encounters.provider_id",
         "to": "dbo.providers.provider_id",
-        "matches": 700,
-        "sourceCount": 700,
+        "matches": 1291,
+        "sourceCount": 1291,
         "confidence": 1,
         "declared": false
       },
@@ -315,104 +327,166 @@
       }
     ],
     "sharedPatientIds": 500,
-    "sharedEncounterIds": 700,
+    "sharedEncounterIds": 1291,
     "answerMetrics": {
-      "emergencyVisits2025": 117,
+      "emergencyVisits2025": 234,
       "ordersPerDepartmentTop5": [
-        {
-          "departmentId": 1,
-          "departmentName": "Cardiology",
-          "orderCount": 200
-        },
-        {
-          "departmentId": 2,
-          "departmentName": "Neurology",
-          "orderCount": 200
-        },
         {
           "departmentId": 3,
           "departmentName": "Emergency",
-          "orderCount": 200
-        },
-        {
-          "departmentId": 4,
-          "departmentName": "Imaging",
-          "orderCount": 200
+          "orderCount": 388
         },
         {
           "departmentId": 5,
           "departmentName": "Laboratory",
-          "orderCount": 200
+          "orderCount": 301
+        },
+        {
+          "departmentId": 4,
+          "departmentName": "Imaging",
+          "orderCount": 197
+        },
+        {
+          "departmentId": 1,
+          "departmentName": "Cardiology",
+          "orderCount": 152
+        },
+        {
+          "departmentId": 6,
+          "departmentName": "Surgery",
+          "orderCount": 121
+        }
+      ],
+      "ordersPerDepartment": [
+        {
+          "departmentId": 3,
+          "departmentName": "Emergency",
+          "orderCount": 388
+        },
+        {
+          "departmentId": 5,
+          "departmentName": "Laboratory",
+          "orderCount": 301
+        },
+        {
+          "departmentId": 4,
+          "departmentName": "Imaging",
+          "orderCount": 197
+        },
+        {
+          "departmentId": 1,
+          "departmentName": "Cardiology",
+          "orderCount": 152
+        },
+        {
+          "departmentId": 6,
+          "departmentName": "Surgery",
+          "orderCount": 121
+        },
+        {
+          "departmentId": 7,
+          "departmentName": "Oncology",
+          "orderCount": 88
+        },
+        {
+          "departmentId": 8,
+          "departmentName": "Pediatrics",
+          "orderCount": 64
+        },
+        {
+          "departmentId": 2,
+          "departmentName": "Neurology",
+          "orderCount": 52
+        },
+        {
+          "departmentId": 9,
+          "departmentName": "Orthopedics",
+          "orderCount": 41
+        },
+        {
+          "departmentId": 10,
+          "departmentName": "Psychiatry",
+          "orderCount": 41
+        },
+        {
+          "departmentId": 11,
+          "departmentName": "Dermatology",
+          "orderCount": 30
+        },
+        {
+          "departmentId": 12,
+          "departmentName": "Rehabilitation",
+          "orderCount": 25
         }
       ],
       "averageEncountersPerPatientByProvider": [
         {
           "providerId": 1,
-          "average": 1
+          "average": 1.2916666666666667
         },
         {
           "providerId": 2,
-          "average": 1
+          "average": 1.9047619047619047
         },
         {
           "providerId": 3,
-          "average": 1
+          "average": 1.7411764705882353
         },
         {
           "providerId": 4,
-          "average": 1
+          "average": 1.7692307692307692
         },
         {
           "providerId": 5,
-          "average": 1
+          "average": 1.5853658536585367
         },
         {
           "providerId": 6,
-          "average": 1
+          "average": 2.0357142857142856
         },
         {
           "providerId": 7,
-          "average": 1
+          "average": 1.5909090909090908
         },
         {
           "providerId": 8,
-          "average": 1
+          "average": 1.52
         },
         {
           "providerId": 9,
-          "average": 1
+          "average": 1.8125
         },
         {
           "providerId": 10,
-          "average": 1
+          "average": 1.5384615384615385
         },
         {
           "providerId": 11,
-          "average": 1
+          "average": 2.090909090909091
         },
         {
           "providerId": 12,
-          "average": 1
+          "average": 1.4523809523809523
         },
         {
           "providerId": 13,
-          "average": 1
+          "average": 1.3333333333333333
         },
         {
           "providerId": 14,
-          "average": 1
+          "average": 1.9382716049382716
         },
         {
           "providerId": 15,
-          "average": 1
+          "average": 2.0833333333333335
         },
         {
           "providerId": 16,
-          "average": 1
+          "average": 1.6451612903225807
         },
         {
           "providerId": 17,
-          "average": 1
+          "average": 1.4
         },
         {
           "providerId": 18,
@@ -420,11 +494,11 @@
         },
         {
           "providerId": 19,
-          "average": 1
+          "average": 1.1666666666666667
         },
         {
           "providerId": 20,
-          "average": 1
+          "average": 2.4285714285714284
         },
         {
           "providerId": 21,
@@ -432,149 +506,294 @@
         },
         {
           "providerId": 22,
-          "average": 1
+          "average": 2.5294117647058822
         },
         {
           "providerId": 23,
-          "average": 1
+          "average": 1.9230769230769231
         },
         {
           "providerId": 24,
-          "average": 1
+          "average": 1.375
         }
       ]
     }
   },
   "answerChecks": {
     "emergencyVisits2025": {
-      "postgres": 117,
-      "sqlServer": 117
+      "postgres": 234,
+      "sqlServer": 234
     },
     "ordersPerDepartmentTop5": {
       "postgres": [
         {
-          "departmentId": 1,
-          "departmentName": "Cardiology",
-          "orderCount": 200
-        },
-        {
-          "departmentId": 2,
-          "departmentName": "Neurology",
-          "orderCount": 200
-        },
-        {
           "departmentId": 3,
           "departmentName": "Emergency",
-          "orderCount": 200
-        },
-        {
-          "departmentId": 4,
-          "departmentName": "Imaging",
-          "orderCount": 200
+          "orderCount": 388
         },
         {
           "departmentId": 5,
           "departmentName": "Laboratory",
-          "orderCount": 200
+          "orderCount": 301
+        },
+        {
+          "departmentId": 4,
+          "departmentName": "Imaging",
+          "orderCount": 197
+        },
+        {
+          "departmentId": 1,
+          "departmentName": "Cardiology",
+          "orderCount": 152
+        },
+        {
+          "departmentId": 6,
+          "departmentName": "Surgery",
+          "orderCount": 121
         }
       ],
       "sqlServer": [
         {
-          "departmentId": 1,
-          "departmentName": "Cardiology",
-          "orderCount": 200
-        },
-        {
-          "departmentId": 2,
-          "departmentName": "Neurology",
-          "orderCount": 200
-        },
-        {
           "departmentId": 3,
           "departmentName": "Emergency",
-          "orderCount": 200
-        },
-        {
-          "departmentId": 4,
-          "departmentName": "Imaging",
-          "orderCount": 200
+          "orderCount": 388
         },
         {
           "departmentId": 5,
           "departmentName": "Laboratory",
-          "orderCount": 200
+          "orderCount": 301
+        },
+        {
+          "departmentId": 4,
+          "departmentName": "Imaging",
+          "orderCount": 197
+        },
+        {
+          "departmentId": 1,
+          "departmentName": "Cardiology",
+          "orderCount": 152
+        },
+        {
+          "departmentId": 6,
+          "departmentName": "Surgery",
+          "orderCount": 121
         }
       ]
+    },
+    "ordersPerDepartment": {
+      "postgres": [
+        {
+          "departmentId": 3,
+          "departmentName": "Emergency",
+          "orderCount": 388
+        },
+        {
+          "departmentId": 5,
+          "departmentName": "Laboratory",
+          "orderCount": 301
+        },
+        {
+          "departmentId": 4,
+          "departmentName": "Imaging",
+          "orderCount": 197
+        },
+        {
+          "departmentId": 1,
+          "departmentName": "Cardiology",
+          "orderCount": 152
+        },
+        {
+          "departmentId": 6,
+          "departmentName": "Surgery",
+          "orderCount": 121
+        },
+        {
+          "departmentId": 7,
+          "departmentName": "Oncology",
+          "orderCount": 88
+        },
+        {
+          "departmentId": 8,
+          "departmentName": "Pediatrics",
+          "orderCount": 64
+        },
+        {
+          "departmentId": 2,
+          "departmentName": "Neurology",
+          "orderCount": 52
+        },
+        {
+          "departmentId": 9,
+          "departmentName": "Orthopedics",
+          "orderCount": 41
+        },
+        {
+          "departmentId": 10,
+          "departmentName": "Psychiatry",
+          "orderCount": 41
+        },
+        {
+          "departmentId": 11,
+          "departmentName": "Dermatology",
+          "orderCount": 30
+        },
+        {
+          "departmentId": 12,
+          "departmentName": "Rehabilitation",
+          "orderCount": 25
+        }
+      ],
+      "sqlServer": [
+        {
+          "departmentId": 3,
+          "departmentName": "Emergency",
+          "orderCount": 388
+        },
+        {
+          "departmentId": 5,
+          "departmentName": "Laboratory",
+          "orderCount": 301
+        },
+        {
+          "departmentId": 4,
+          "departmentName": "Imaging",
+          "orderCount": 197
+        },
+        {
+          "departmentId": 1,
+          "departmentName": "Cardiology",
+          "orderCount": 152
+        },
+        {
+          "departmentId": 6,
+          "departmentName": "Surgery",
+          "orderCount": 121
+        },
+        {
+          "departmentId": 7,
+          "departmentName": "Oncology",
+          "orderCount": 88
+        },
+        {
+          "departmentId": 8,
+          "departmentName": "Pediatrics",
+          "orderCount": 64
+        },
+        {
+          "departmentId": 2,
+          "departmentName": "Neurology",
+          "orderCount": 52
+        },
+        {
+          "departmentId": 9,
+          "departmentName": "Orthopedics",
+          "orderCount": 41
+        },
+        {
+          "departmentId": 10,
+          "departmentName": "Psychiatry",
+          "orderCount": 41
+        },
+        {
+          "departmentId": 11,
+          "departmentName": "Dermatology",
+          "orderCount": 30
+        },
+        {
+          "departmentId": 12,
+          "departmentName": "Rehabilitation",
+          "orderCount": 25
+        }
+      ]
+    },
+    "encountersPerPatient": {
+      "postgres": {
+        "1": 277,
+        "2": 55,
+        "3": 55,
+        "4": 52,
+        "5": 12,
+        "6": 7,
+        "7": 9,
+        "8": 7,
+        "9": 8,
+        "10": 1,
+        "11": 1,
+        "12": 3,
+        "13": 7,
+        "14": 3,
+        "16": 3
+      }
     },
     "averageEncountersPerPatientByProvider": {
       "postgres": [
         {
           "providerId": 1,
-          "average": 1
+          "average": 1.2916666666666667
         },
         {
           "providerId": 2,
-          "average": 1
+          "average": 1.9047619047619049
         },
         {
           "providerId": 3,
-          "average": 1
+          "average": 1.7411764705882353
         },
         {
           "providerId": 4,
-          "average": 1
+          "average": 1.7692307692307692
         },
         {
           "providerId": 5,
-          "average": 1
+          "average": 1.5853658536585367
         },
         {
           "providerId": 6,
-          "average": 1
+          "average": 2.0357142857142856
         },
         {
           "providerId": 7,
-          "average": 1
+          "average": 1.5909090909090908
         },
         {
           "providerId": 8,
-          "average": 1
+          "average": 1.52
         },
         {
           "providerId": 9,
-          "average": 1
+          "average": 1.8125
         },
         {
           "providerId": 10,
-          "average": 1
+          "average": 1.5384615384615385
         },
         {
           "providerId": 11,
-          "average": 1
+          "average": 2.090909090909091
         },
         {
           "providerId": 12,
-          "average": 1
+          "average": 1.4523809523809523
         },
         {
           "providerId": 13,
-          "average": 1
+          "average": 1.3333333333333333
         },
         {
           "providerId": 14,
-          "average": 1
+          "average": 1.9382716049382716
         },
         {
           "providerId": 15,
-          "average": 1
+          "average": 2.0833333333333335
         },
         {
           "providerId": 16,
-          "average": 1
+          "average": 1.6451612903225805
         },
         {
           "providerId": 17,
-          "average": 1
+          "average": 1.4
         },
         {
           "providerId": 18,
@@ -582,11 +801,11 @@
         },
         {
           "providerId": 19,
-          "average": 1
+          "average": 1.1666666666666667
         },
         {
           "providerId": 20,
-          "average": 1
+          "average": 2.4285714285714284
         },
         {
           "providerId": 21,
@@ -594,85 +813,85 @@
         },
         {
           "providerId": 22,
-          "average": 1
+          "average": 2.5294117647058822
         },
         {
           "providerId": 23,
-          "average": 1
+          "average": 1.9230769230769231
         },
         {
           "providerId": 24,
-          "average": 1
+          "average": 1.375
         }
       ],
       "sqlServer": [
         {
           "providerId": 1,
-          "average": 1
+          "average": 1.2916666666666667
         },
         {
           "providerId": 2,
-          "average": 1
+          "average": 1.9047619047619047
         },
         {
           "providerId": 3,
-          "average": 1
+          "average": 1.7411764705882353
         },
         {
           "providerId": 4,
-          "average": 1
+          "average": 1.7692307692307692
         },
         {
           "providerId": 5,
-          "average": 1
+          "average": 1.5853658536585367
         },
         {
           "providerId": 6,
-          "average": 1
+          "average": 2.0357142857142856
         },
         {
           "providerId": 7,
-          "average": 1
+          "average": 1.5909090909090908
         },
         {
           "providerId": 8,
-          "average": 1
+          "average": 1.52
         },
         {
           "providerId": 9,
-          "average": 1
+          "average": 1.8125
         },
         {
           "providerId": 10,
-          "average": 1
+          "average": 1.5384615384615385
         },
         {
           "providerId": 11,
-          "average": 1
+          "average": 2.090909090909091
         },
         {
           "providerId": 12,
-          "average": 1
+          "average": 1.4523809523809523
         },
         {
           "providerId": 13,
-          "average": 1
+          "average": 1.3333333333333333
         },
         {
           "providerId": 14,
-          "average": 1
+          "average": 1.9382716049382716
         },
         {
           "providerId": 15,
-          "average": 1
+          "average": 2.0833333333333335
         },
         {
           "providerId": 16,
-          "average": 1
+          "average": 1.6451612903225807
         },
         {
           "providerId": 17,
-          "average": 1
+          "average": 1.4
         },
         {
           "providerId": 18,
@@ -680,11 +899,11 @@
         },
         {
           "providerId": 19,
-          "average": 1
+          "average": 1.1666666666666667
         },
         {
           "providerId": 20,
-          "average": 1
+          "average": 2.4285714285714284
         },
         {
           "providerId": 21,
@@ -692,15 +911,15 @@
         },
         {
           "providerId": 22,
-          "average": 1
+          "average": 2.5294117647058822
         },
         {
           "providerId": 23,
-          "average": 1
+          "average": 1.9230769230769231
         },
         {
           "providerId": 24,
-          "average": 1
+          "average": 1.375
         }
       ]
     },

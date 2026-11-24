@@ -19,6 +19,7 @@ export type SqlServerTruth = {
   answerMetrics: {
     emergencyVisits2025: number;
     ordersPerDepartmentTop5: Array<{ departmentId: number; departmentName: string; orderCount: number }>;
+    ordersPerDepartment: Array<{ departmentId: number; departmentName: string; orderCount: number }>;
     averageEncountersPerPatientByProvider: Array<{ providerId: number; average: number }>;
   };
 };
@@ -84,7 +85,9 @@ UNION ALL SELECT 'ordersPerDepartmentTop5|' + CONVERT(varchar(10),department_id)
 FROM (SELECT TOP (5) d.department_id,d.department_name,COUNT_BIG(*) AS order_count
   FROM dbo.departments d JOIN dbo.orders o ON o.department_id=d.department_id
   GROUP BY d.department_id,d.department_name ORDER BY COUNT_BIG(*) DESC,d.department_id) top_departments
-UNION ALL SELECT 'averageEncountersPerPatientByProvider|' + CONVERT(varchar(10),provider_id) + '|' + CONVERT(varchar(40),AVG(encounter_count*1.0))
+UNION ALL SELECT 'ordersPerDepartment|' + CONVERT(varchar(10),d.department_id) + '|' + d.department_name + '|' + CONVERT(varchar(30),COUNT_BIG(*))
+FROM dbo.departments d JOIN dbo.orders o ON o.department_id=d.department_id GROUP BY d.department_id,d.department_name
+UNION ALL SELECT 'averageEncountersPerPatientByProvider|' + CONVERT(varchar(10),provider_id) + '|' + CONVERT(varchar(40),AVG(CAST(encounter_count AS float)),3)
 FROM (SELECT provider_id,patient_id,COUNT_BIG(*) AS encounter_count FROM dbo.encounters GROUP BY provider_id,patient_id) per_patient
 GROUP BY provider_id;`, 'si_testbed_sqlserver');
   const foreignKeys = [...parsed.entries()]
@@ -132,7 +135,11 @@ ORDER BY ss.name,st.name,sc.name,ts.name,tt.name,tc.name;`, 'si_testbed_sqlserve
     const [, providerId, average] = line.split('|');
     return { providerId: Number(providerId), average: Number(average) };
   });
-  ordersPerDepartmentTop5.sort((left, right) => left.departmentId - right.departmentId);
+  ordersPerDepartmentTop5.sort((left, right) => right.orderCount - left.orderCount || left.departmentId - right.departmentId);
+  const ordersPerDepartment = answerMetricLines.filter((line) => line.startsWith('ordersPerDepartment|')).map((line) => {
+    const [, departmentId, departmentName, orderCount] = line.split('|');
+    return { departmentId: Number(departmentId), departmentName: departmentName ?? '', orderCount: Number(orderCount) };
+  }).sort((left, right) => right.orderCount - left.orderCount || left.departmentId - right.departmentId);
   averageEncountersPerPatientByProvider.sort((left, right) => left.providerId - right.providerId);
   const sensitiveColumns = [...parsed.entries()]
     .filter(([key]) => key.startsWith('sensitiveColumns|'))
@@ -156,6 +163,6 @@ ORDER BY ss.name,st.name,sc.name,ts.name,tt.name,tc.name;`, 'si_testbed_sqlserve
     expectedRelationships:[...foreignKeys.map(item=>({from:`dbo.${item.from}`,to:`dbo.${item.to}`,evidenceMethod:'declared' as const,confidence:1})),...inferredRelationships.map(item=>({from:item.from,to:item.to,evidenceMethod:'inferred' as const,confidence:item.confidence}))],
     sharedPatientIds: sharedCount(pgPatientIds, patientIds),
     sharedEncounterIds: sharedCount(pgEncounterIds, encounterIds),
-    answerMetrics: { emergencyVisits2025, ordersPerDepartmentTop5, averageEncountersPerPatientByProvider },
+    answerMetrics: { emergencyVisits2025, ordersPerDepartmentTop5, ordersPerDepartment, averageEncountersPerPatientByProvider },
   };
 }

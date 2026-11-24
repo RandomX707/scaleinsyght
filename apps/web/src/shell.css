@@ -292,3 +292,23 @@ h3 { font-size: 14px; line-height: 1.3; }
 .er-node--view { border-style: dashed !important; border-color: var(--primary) !important; }
 .er-link text { fill: var(--muted); font-size: 10px; }
 .plan-card pre { max-width: 100%; overflow: auto; }
+
+/* Grouped answers: summary, bar chart (2-20 groups) and full table */
+.analytic-workspace .answer-sources { margin: 0; font-size: 12px; color: var(--muted); }
+.analytic-workspace .answer-sources strong { color: var(--ink); font-weight: 600; }
+.analytic-workspace .grouped-result { display: grid; gap: var(--space-3); }
+.analytic-workspace .group-summary { margin: 0; font-size: 13px; color: var(--ink); }
+.analytic-workspace .bar-chart { margin: 0; }
+.analytic-workspace .bar-chart ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.analytic-workspace .bar-row { position: relative; display: grid; grid-template-columns: minmax(96px, 160px) minmax(0, 1fr) 64px; align-items: center; gap: var(--space-2); min-height: 22px; padding: 2px 4px; border-radius: var(--radius-sm); font-size: 12px; outline: none; }
+.analytic-workspace .bar-row:hover, .analytic-workspace .bar-row:focus-visible { background: var(--bg); }
+.analytic-workspace .bar-row:focus-visible { box-shadow: 0 0 0 2px var(--primary); }
+.analytic-workspace .bar-label { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.analytic-workspace .bar-track { display: block; height: 12px; border-left: 1px solid var(--line); }
+.analytic-workspace .bar { display: block; height: 100%; background: var(--primary); border-radius: 0 4px 4px 0; }
+.analytic-workspace .bar-value { color: var(--muted); font-variant-numeric: tabular-nums; }
+.analytic-workspace .bar-tooltip { display: none; position: absolute; right: 8px; top: -26px; z-index: 2; padding: 3px 8px; border-radius: var(--radius-sm); background: var(--ink); color: var(--surface); font-size: 11px; white-space: nowrap; pointer-events: none; }
+.analytic-workspace .bar-row:hover .bar-tooltip, .analytic-workspace .bar-row:focus-visible .bar-tooltip { display: block; }
+.analytic-workspace .source-choice-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+@media (prefers-reduced-motion: reduce) { .analytic-workspace .bar-row { transition: none; } }

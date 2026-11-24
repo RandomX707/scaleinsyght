@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { ClaimSchema, EvidenceRefSchema, type AnalyticPlan, type Claim, type EvidenceRef } from '@scaleinsyght/contracts';
 import { withRunTenant } from '@scaleinsyght/db';
 import type { Pool } from 'pg';
+import { summarizeGroups, type GroupSummary } from './group-summary.js';
 export interface StructuredResult {
   sourceId: string;
   connectorType: string;
@@ -15,7 +16,7 @@ export interface StructuredResult {
 }
 export interface StructuredAnswer {
   metric: string;
-  bySource: Array<{ sourceId: string; connectorType: string; value: number; rows?: Array<Record<string,unknown>> }>;
+  bySource: Array<{ sourceId: string; connectorType: string; value: number; rows?: Array<Record<string,unknown>>; summary?: GroupSummary }>;
   claims: Claim[];
   evidence: EvidenceRef[];
   trust: { groupCount: number; sourceCount: number; joins: Array<'group' | 'cross_group'> };
@@ -36,7 +37,7 @@ export function collateGroupResults(results: StructuredResult[]): StructuredAnsw
   }
   return {
     metric: results[0]!.metric,
-    bySource: results.map(({ sourceId, connectorType, value, rows }) => ({ sourceId, connectorType, value, ...(rows?{rows}:{}) })),
+    bySource: results.map(({ sourceId, connectorType, value, rows }) => { const summary = rows ? summarizeGroups(rows) : undefined; return { sourceId, connectorType, value, ...(rows?{rows}:{}), ...(summary?{summary}:{}) }; }),
     claims, evidence,
     trust: { groupCount: groups.size, sourceCount: results.length, joins: groups.size > 1 ? ['group', 'cross_group'] : ['group'] },
   };
