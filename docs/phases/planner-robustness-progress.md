@@ -98,3 +98,8 @@ let the filter's qualification replace the validated fact table. The decoder
 now rejects joins on single-table shapes and rejects filters that would be
 discarded by the execution shape. The unit regression supplies that exact
 inconsistent structure. Final runs still need to use this revision.
+
+The test-only SQL Server writer fixture disconnects its own account before
+removing it, including when a browser-side connection test leaves a pool
+open. The focused SQL Server gate passed again. No shared credentials or
+permissions were changed.

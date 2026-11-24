@@ -16,6 +16,21 @@ export function createDisposableSqlServerWriter() {
     throw error;
   }
   return {username,password,remove() {
+    runSqlServerAdminQuery(`ALTER LOGIN [${username}] DISABLE;
+      DECLARE @session int, @command nvarchar(30);
+      DECLARE writer_sessions CURSOR LOCAL FAST_FORWARD FOR
+        SELECT session_id FROM sys.dm_exec_sessions WHERE original_login_name = N'${username}';
+      OPEN writer_sessions;
+      FETCH NEXT FROM writer_sessions INTO @session;
+      WHILE @@FETCH_STATUS = 0
+      BEGIN
+        SET @command = N'KILL ' + CAST(@session AS nvarchar(10));
+        BEGIN TRY EXEC(@command); END TRY
+        BEGIN CATCH IF ERROR_NUMBER() <> 6101 THROW; END CATCH;
+        FETCH NEXT FROM writer_sessions INTO @session;
+      END;
+      CLOSE writer_sessions;
+      DEALLOCATE writer_sessions;`);
     runSqlServerAdminQuery(`DROP USER [${username}];`, database);
     runSqlServerAdminQuery(`DROP LOGIN [${username}];`);
   }};
