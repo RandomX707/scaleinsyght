@@ -1,6 +1,6 @@
 import { QueryIntentSchema, type QueryIntent } from '@scaleinsyght/contracts';
 
-type Column = {name: string; label?: string};
+type Column = {name: string; label?: string; sensitivity_tags?: string[]};
 export type PlannerCatalog = Array<{name?: string; assets: Array<{qualified_name: string; columns: Column[]}>}>;
 export type PlannerJoin = {source_index: number; from_name: string; to_name: string};
 type Schema = Record<string, unknown>;
@@ -125,6 +125,13 @@ export function decodePlannerOutput(text: string, catalog: PlannerCatalog, joins
 
     // The declaration is authoritative: a grouped step that leaves groupBy empty takes the declared grouping column.
     if (declared.grouping_column != null && item.groupBy == null && GROUPED_KINDS.includes(kind)) item.groupBy = declared.grouping_column;
+    // Grouping returns the group column's values. Never group by a tagged column: identifiers are stored only as keyed
+    // fingerprints (non-negotiable 6) and tagged values never leave the source (contract 7).
+    if (item.groupBy != null) {
+      const [groupTable, groupColumn] = field(item.groupBy);
+      const tags = source.assets.find(asset => asset.qualified_name === groupTable)?.columns.find(col => col.name === groupColumn)?.sensitivity_tags ?? [];
+      if (tags.length) throw new Error(`grouping_by_a_sensitive_column_is_not_allowed: ${String(item.groupBy)} is tagged ${tags.join(', ')}`);
+    }
     // The executable plan must match what the step declares.
     if ((isJoinIntent ? leftTable : table) !== declared.subject_table) throw new Error(`plan_subject_differs_from_declared_subject: declared ${String(declared.subject_table)}, plan uses ${isJoinIntent ? leftTable : table}`);
     if (declared.grouping_column == null) {

@@ -44,6 +44,15 @@ describe('structured planner with declared intent (decision 44)', () => {
     expect(decodePlannerOutput(wrap(average), visits, []).steps[0]?.intent).toEqual({kind:'average_count_by',table:'Visits',groupBy:'department',entityColumn:'patient_id',limit:100});
     expect(() => decodePlannerOutput(wrap({...average,groupBy:'Visits.patient_id'}), visits, [])).toThrow('plan_grouping_differs_from_declared_grouping');
   });
+  it('never groups by a tagged column, which would return raw identifier values', () => {
+    // heldout2 N06: "five provider IDs with the most encounters" was planned per patient_id, returning raw patient IDs.
+    const encounters = [{name:'SQL Server hospital',assets:[{qualified_name:'dbo.encounters',columns:[{name:'patient_id',sensitivity_tags:['identifier']},{name:'provider_id',sensitivity_tags:[]}]}]}];
+    const perPatient = {...step,kind:'group_by',table:'dbo.encounters',groupBy:'dbo.encounters.patient_id',order:'desc',limit:5,
+      declared:{...declared,subject_table:'dbo.encounters',grouping_column:'dbo.encounters.patient_id'}};
+    expect(() => decodePlannerOutput(wrap(perPatient), encounters, [])).toThrow('grouping_by_a_sensitive_column_is_not_allowed');
+    const perProvider = {...perPatient,groupBy:'dbo.encounters.provider_id',declared:{...perPatient.declared,grouping_column:'dbo.encounters.provider_id'}};
+    expect(decodePlannerOutput(wrap(perProvider), encounters, []).steps[0]?.intent).toMatchObject({kind:'group_by',groupBy:'provider_id'});
+  });
   it('rejects a plan that groups when the step declares a single value', () => {
     expect(() => decodePlannerOutput(wrap({...grouped,declared}), catalog, [])).toThrow('declared_single_value_but_plan_groups');
   });
