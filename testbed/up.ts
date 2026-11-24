@@ -72,4 +72,4 @@ try {
 }
 
 saveEnvValue('DATABASE_URL_TESTBED', sourceUrl.toString());
-process.stdout.write('Local PostgreSQL testbed is ready (2,430 fictional rows; read-only role).\n');
+process.stdout.write('Local PostgreSQL testbed is ready (generated fictional rows; read-only role).\n');

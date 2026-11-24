@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { Pool } from 'pg';
 import { withRunTenant } from '@scaleinsyght/db';
 import { claimNextStep, completeStep, failStep } from '@scaleinsyght/runner';
-import { finalizeAnalyticRun } from '@scaleinsyght/analytic';
+import { finalizeAnalyticRun, roundForModel, summarizeGroups } from '@scaleinsyght/analytic';
 import type { AnalyticPlan } from '@scaleinsyght/contracts';
 import { createPostgresConnector, createSqlServerConnector, decryptConnectionSecret, type ReadOnlyConnector } from '@scaleinsyght/connectors';
 import { OpenAIModelGateway } from '@scaleinsyght/model-gateway';
@@ -72,10 +72,14 @@ while(!stopping){
    await finalizeAnalyticRun(pool,claim.runId,async ({plan,results})=>{
      const minimumCellSize=5;
      if(results.some(result=>(result.minimumCellSize??0)<minimumCellSize))throw new Error('model_answer_disclosure_suppressed');
-     const values=results.flatMap(result=>result.rows?.map(row=>Number(row.value))??[result.value]);
+     const rawValues=results.flatMap(result=>result.rows?.map(row=>Number(row.value))??[result.value]);
+     const values=[...rawValues,...rawValues.map(roundForModel)];
+     const summaryNumbers:number[]=[];
      const statistical=Object.fromEntries(results.flatMap((result,index)=>{
-      const prefix=`source_${index+1}`;
-      return [[`${prefix}_aggregate_count`,result.rows?.length??1],...(result.rows?.map((row,i)=>[`${prefix}_aggregate_${i+1}`,Number(row.value)])??[[`${prefix}_aggregate_1`,result.value]])];
+      const prefix=`source_${index+1}`;const summary=result.rows?summarizeGroups(result.rows):undefined;
+      const summaryStats:Array<[string,number]>=summary?[[`${prefix}_group_count`,summary.groupCount],[`${prefix}_highest`,roundForModel(summary.highest.value)],[`${prefix}_lowest`,roundForModel(summary.lowest.value)],[`${prefix}_spread`,summary.spread],...summary.ties.flatMap((tie,tieIndex):Array<[string,number]>=>[[`${prefix}_tie_${tieIndex+1}_value`,tie.value],[`${prefix}_tie_${tieIndex+1}_group_count`,tie.labels.length]])]:[];
+      summaryNumbers.push(...summaryStats.map(([,number])=>number));
+      return [[`${prefix}_aggregate_count`,result.rows?.length??1],...(result.rows?.map((row,i)=>[`${prefix}_aggregate_${i+1}`,roundForModel(Number(row.value))])??[[`${prefix}_aggregate_1`,result.value]]),...summaryStats];
      })) as Record<string,number>;
      const question=plan.question.toLowerCase();
      const mentionedYears=[...question.matchAll(/\b(?:19|20)\d{2}\b/g)].map(match=>Number(match[0]));
@@ -90,13 +94,17 @@ while(!stopping){
       });
       return {source:result.evidence[0]?.locator.split(' · ')[0],connector_type:result.connectorType,executed_query:result.evidence[0]?.locator.split(' · ').slice(1).join(' · '),filters};
      });
-     const answer=await new OpenAIModelGateway(pool).complete({tenantId:claim.tenantId,alias:'default',question:`Write one concise answer to the exact user question using the disclosed aggregate statistics. Include a result value. Use each executed query and its disclosed filters to interpret its statistic. Group labels appear in the results table below your sentence. When answering grouped questions, summarize the aggregate values without repeating labels. Source indexes match the statistics. When there is more than one source, give each value next to its source name written exactly as in that source's source field. Do not invent facts. Question: ${plan.question}`,metadata:{classification:'METADATA_STATISTICAL',structural:{sources},descriptive:{},statistical,sensitivityTags:[],groupSize:Math.min(...results.map(result=>result.minimumCellSize??0)),minimumCellSize},maxOutputTokens:400});
+     const answer=await new OpenAIModelGateway(pool).complete({tenantId:claim.tenantId,alias:'default',question:`Write one concise answer to the exact user question using the disclosed aggregate statistics. Include a result value. Use each executed query and its disclosed filters to interpret its statistic. Group labels appear in the results table and chart below your sentence, so name no group labels. For grouped results, summarise them: give the highest and lowest values and the spread between them, using the disclosed highest, lowest and spread statistics. If tie statistics are disclosed, state each tie, for example '3 departments tie at 200', using the question's word for the groups. Source indexes match the statistics. When there is more than one source, give each value next to its source name written exactly as in that source's source field. Do not invent facts. Question: ${plan.question}`,metadata:{classification:'METADATA_STATISTICAL',structural:{sources},descriptive:{},statistical,sensitivityTags:[],groupSize:Math.min(...results.map(result=>result.minimumCellSize??0)),minimumCellSize},maxOutputTokens:400});
      const statement=answer.text.trim().replace(/[\r\n]+/g,' ').slice(0,600);
      const numbers=(value:string)=>value.match(/-?\d+(?:,\d{3})*(?:\.\d+)?/g)?.map(token=>Number(token.replaceAll(',','')))??[];
      const counts=results.map(result=>result.rows?.length??1);
-     const allowed=new Set([...values,...counts,...numbers(plan.question)]);
+     const allowed=new Set([...values,...counts,...summaryNumbers,...numbers(plan.question)]);
      if(!numbers(statement).some(number=>values.includes(number))||numbers(statement).some(number=>!allowed.has(number)))throw new Error('model_answer_validation_failed');
-     return {statement,model:answer.model,inputTokens:answer.inputTokens,outputTokens:answer.outputTokens};
+     const sourceNames=sources.map(source=>String(source.source??''));
+     const attributed=results.length>1&&sourceNames.some(name=>name&&!statement.includes(name))&&results.every(result=>!result.rows)
+      ?`${statement.replace(/[.\s]+$/,'')} (${results.map((result,index)=>`${sourceNames[index]}: ${result.value.toLocaleString('en-US')}`).join('; ')}).`
+      :statement;
+     return {statement:attributed,model:answer.model,inputTokens:answer.inputTokens,outputTokens:answer.outputTokens};
    });
    await persistReportSnapshot(pool,claim.runId);
   }else{

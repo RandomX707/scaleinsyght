@@ -10,6 +10,7 @@ import { runSqlServerAdminQuery } from '../../testbed/sqlserver/admin-query.js';
 config({ path: '.env' });
 const tenantUrl = () => { const value = process.env.DATABASE_URL_MIGRATE; if (!value) throw new Error('DATABASE_URL_MIGRATE is required for local S2 acceptance.'); const url = new URL(value); url.pathname = '/si_test'; return url.toString(); };
 const adminPool = new Pool({ connectionString: tenantUrl() });
+const round6=(rows:Array<{providerId:number;average:number}>)=>rows.map(row=>({providerId:row.providerId,average:Math.round(row.average*1e6)/1e6}));
 const truth=JSON.parse(readFileSync('testbed/truth.json','utf8')) as {answerChecks:{emergencyVisits2025:{sqlServer:number};ordersPerDepartmentTop5:{sqlServer:Array<{departmentName:string;orderCount:number}>};averageEncountersPerPatientByProvider:{sqlServer:Array<{providerId:number;average:number}>};patientCountComparison:{postgres:number;sqlServer:number};patientsWithPhone:{postgres:number;sqlServer:number}};expectedRelationships:{sqlServer:Array<{from:string;to:string;evidenceMethod:string;confidence:number}>}};
 const required = ['SQLSERVER_TESTBED_HOST','SQLSERVER_TESTBED_PORT','SQLSERVER_TESTBED_DATABASE','SQLSERVER_TESTBED_USERNAME','SQLSERVER_TESTBED_PASSWORD'] as const;
 const missing = required.filter((key) => !process.env[key]);
@@ -105,10 +106,9 @@ test('s2_empty_tenant_adds_real_sql_server_profiles_and_relationships', async ({
   await expect(page.getByRole('heading',{name:'Discovery complete'})).toBeVisible();
   await page.getByRole('button',{name:'Close dialog'}).click();
   type Captured={state:string;modelProvenance:Array<{purpose:string;model:string;inputTokens:number;outputTokens:number;typedPlan:unknown}>;answer:{answer:{claims:Array<{statement:string}>;evidence:Array<{locator:string}>;bySource:Array<{connectorType:string;value:number;rows?:Array<{group_value:string;value:number}>}>}}};
-  async function askChecked(question:string,expectedSources:number,sql:RegExp){
+  async function askChecked(question:string,expectedSources:number,sql:RegExp,trigger?:()=>Promise<void>){
     const responsePromise=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/runs'&&response.request().method()==='POST');
-    await page.getByLabel('Ask a question').fill(question);
-    await page.getByRole('button',{name:'Send question'}).click();
+    if(trigger)await trigger();else{await page.getByLabel('Ask a question').fill(question);await page.getByRole('button',{name:'Send question'}).click();}
     const response=await responsePromise;
     expect(response.status(),`${question}: ${JSON.stringify(await response.json())}`).toBe(201);
     const {runId}=await response.json() as {runId:string};
@@ -123,11 +123,18 @@ test('s2_empty_tenant_adds_real_sql_server_profiles_and_relationships', async ({
     expect(answer.evidence).toHaveLength(expectedSources);
     for(const evidence of answer.evidence)expect(evidence.locator).toMatch(sql);
     await expect(page.locator('.answer-claim').last()).toHaveText(answer.claims[0]!.statement);
+    const sourceLine=page.locator('.answer-sources').last();await expect(sourceLine).toContainText(expectedSources>1?'Sources used:':'Source used:');
+    for(const name of answer.bySource.map(result=>result.connectorType==='sql_server'?'SQL Server hospital':'PostgreSQL testbed'))await expect(sourceLine).toContainText(name);
+    const evidenceRows=page.locator('.evidence-list').last().locator(':scope > div');await expect(evidenceRows).toHaveCount(expectedSources);
+    for(let index=0;index<expectedSources;index++){await expect(evidenceRows.nth(index)).toContainText('SELECT');expect((await evidenceRows.nth(index).innerText()).match(/· SELECT/g)).toHaveLength(1);}
+    expect(await page.locator('.evidence-list').last().innerText()).not.toContain('<br');
     return {question,answer,provenance:run!.modelProvenance};
   }
+  const answerTruth=truth.answerChecks as unknown as {ordersPerDepartment:{sqlServer:Array<{departmentName:string;orderCount:number}>};emergencyVisits2025:{sqlServer:number}};
   const singles=[
     ['How many encounters were emergency visits in 2025?',/JOIN.*admitted_at/i],
     ['Orders per department, top 5',/GROUP BY.*ORDER BY/i],
+    ['How many orders does each department have?',/GROUP BY/i],
     ['Average number of encounters per patient by provider',/AVG.*patient_id/i],
   ] as const;
   const evidence=[];
@@ -136,12 +143,50 @@ test('s2_empty_tenant_adds_real_sql_server_profiles_and_relationships', async ({
     await page.getByText('All sources',{exact:true}).click();
     await page.getByLabel('PostgreSQL testbed',{exact:true}).uncheck();
     evidence.push(await askChecked(question,1,sql));
+    if(question.startsWith('Orders per department')){
+      const top=truth.answerChecks.ordersPerDepartmentTop5.sqlServer;
+      expect(new Set(top.map(row=>row.orderCount)).size).toBe(5);
+      expect(evidence.at(-1)!.answer.bySource[0]!.rows?.map(row=>({departmentName:row.group_value,orderCount:Number(row.value)}))).toEqual(top.map(({departmentName,orderCount})=>({departmentName,orderCount})));
+      const statement=evidence.at(-1)!.answer.claims[0]!.statement;
+      for(const value of [top[0]!.orderCount,top[4]!.orderCount,top[0]!.orderCount-top[4]!.orderCount])expect(statement).toContain(value.toLocaleString('en-US'));
+      await expect(page.locator('.bar-chart').last().locator('.bar-row')).toHaveCount(5);
+      await expect(page.locator('.bar-chart').last().locator('.bar-label')).toHaveText(top.map(row=>row.departmentName));
+      await expect(page.locator('.grouped-result').last().locator('tbody tr')).toHaveCount(5);
+      await expect(page.locator('.group-summary').last()).toContainText(`Highest: ${top[0]!.departmentName} (${top[0]!.orderCount})`);
+      await page.screenshot({path:'docs/acceptance/s2/home-group-by.png',fullPage:true});
+    }
+    if(question.startsWith('How many orders does each')){
+      const all=answerTruth.ordersPerDepartment.sqlServer;
+      const rows=evidence.at(-1)!.answer.bySource[0]!.rows?.map(row=>({departmentName:row.group_value,orderCount:Number(row.value)}));
+      expect([...rows??[]].sort((a,b)=>b.orderCount-a.orderCount||a.departmentName.localeCompare(b.departmentName))).toEqual([...all].sort((a,b)=>b.orderCount-a.orderCount||a.departmentName.localeCompare(b.departmentName)).map(({departmentName,orderCount})=>({departmentName,orderCount})));
+      const counts=all.map(row=>row.orderCount);const tied=counts.filter((value,index)=>counts.indexOf(value)!==index);
+      expect(tied.length).toBeGreaterThan(0);
+      const statement=evidence.at(-1)!.answer.claims[0]!.statement;
+      expect(statement).toMatch(/\btie[sd]?\b/i);for(const value of tied)expect(statement).toContain(String(value));
+      const tiedNames=all.filter(row=>tied.includes(row.orderCount)).map(row=>row.departmentName);
+      for(const name of tiedNames)await expect(page.locator('.group-summary').last()).toContainText(name);
+      await expect(page.locator('.bar-chart').last().locator('.bar-row')).toHaveCount(all.length);
+      await expect(page.locator('.grouped-result').last().locator('tbody tr')).toHaveCount(all.length);
+    }
+    if(question.startsWith('Average number')){
+      await expect(page.locator('.grouped-result').last().locator('.bar-chart')).toHaveCount(0);
+      await expect(page.locator('.grouped-result').last().locator('tbody tr')).toHaveCount(truth.answerChecks.averageEncountersPerPatientByProvider.sqlServer.length);
+    }
   }
-  expect(evidence[0]!.answer.bySource[0]!.value).toBe(truth.answerChecks.emergencyVisits2025.sqlServer);
-  expect(evidence[0]!.answer.claims[0]!.statement).toMatch(/117.*(?:emergency|2025)|(?:emergency|2025).*117/i);
+  expect(evidence[0]!.answer.bySource[0]!.value).toBe(answerTruth.emergencyVisits2025.sqlServer);
+  expect(evidence[0]!.answer.claims[0]!.statement).toContain(String(answerTruth.emergencyVisits2025.sqlServer));
   expect(evidence[0]!.answer.claims[0]!.statement).not.toMatch(/does not confirm|cannot confirm|cannot determine|unknown/i);
-  expect(evidence[1]!.answer.bySource[0]!.rows?.map(row=>({departmentName:row.group_value,orderCount:Number(row.value)}))).toEqual(truth.answerChecks.ordersPerDepartmentTop5.sqlServer.map(({departmentName,orderCount})=>({departmentName,orderCount})));
-  expect(evidence[2]!.answer.bySource[0]!.rows?.map(row=>({providerId:Number(row.group_value),average:Number(row.value)}))).toEqual(truth.answerChecks.averageEncountersPerPatientByProvider.sqlServer);
+  expect(round6(evidence[3]!.answer.bySource[0]!.rows?.map(row=>({providerId:Number(row.group_value),average:Number(row.value)}))??[])).toEqual(round6(truth.answerChecks.averageEncountersPerPatientByProvider.sqlServer));
+  await page.getByRole('button',{name:'New chat'}).click();
+  await page.getByLabel('Ask a question').fill('How many encounters were emergency visits in 2025?');
+  const choicePost=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/runs'&&response.request().method()==='POST');
+  await page.getByRole('button',{name:'Send question'}).click();
+  expect((await choicePost).status()).toBe(409);
+  await expect(page.getByRole('heading',{name:'Which source should I use?'})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Use PostgreSQL testbed'})).toBeVisible();
+  await page.screenshot({path:'docs/acceptance/s2/home-source-choice.png',fullPage:true});
+  const chosen=await askChecked('How many encounters were emergency visits in 2025?',1,/JOIN.*admitted_at/i,()=>page.getByRole('button',{name:'Use SQL Server hospital'}).click());
+  expect(chosen.answer.bySource[0]!.value).toBe(answerTruth.emergencyVisits2025.sqlServer);
   await page.getByRole('button',{name:'New chat'}).click();
   const comparison=await askChecked('Do the PostgreSQL and SQL Server testbeds have the same number of patients?',2,/patients/i);
   const bySourceType=(captured:{answer:Captured['answer']['answer']})=>({postgres:captured.answer.bySource.find(result=>result.connectorType==='postgres')?.value,sqlServer:captured.answer.bySource.find(result=>result.connectorType==='sql_server')?.value});
@@ -151,7 +196,7 @@ test('s2_empty_tenant_adds_real_sql_server_profiles_and_relationships', async ({
   for(const value of Object.values(truth.answerChecks.patientsWithPhone))expect(phone.answer.claims[0]!.statement).toContain(String(value));
   expect(phone.answer.claims[0]!.statement).not.toMatch(/every patient|all patients/i);
   for(const captured of [comparison,phone])for(const name of ['SQL Server hospital','PostgreSQL testbed'])expect(captured.answer.claims[0]!.statement).toContain(name);
-  writeFileSync('docs/acceptance/s2/answer-evidence.json',JSON.stringify([...evidence,comparison,phone].map(({question,answer,provenance})=>({question,answer:answer.claims[0]!.statement,sql:answer.evidence.map(item=>item.locator),provenance})),null,2)+'\n');
+  writeFileSync('docs/acceptance/s2/answer-evidence.json',JSON.stringify([...evidence,chosen,comparison,phone].map(({question,answer,provenance})=>({question,answer:answer.claims[0]!.statement,sql:answer.evidence.map(item=>item.locator),results:answer.bySource.map(result=>({connectorType:result.connectorType,value:result.value,rows:result.rows})),provenance})),null,2)+'\n');
 
 });
 

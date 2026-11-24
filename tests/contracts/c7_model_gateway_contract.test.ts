@@ -36,7 +36,8 @@ describe('contract 7 OpenAI gateway disclosure and budget boundary',()=>{
     expect(stored.rows).toHaveLength(1);expect(stored.rows[0]).toMatchObject({model_alias:'cheap',model_name:'test-cheap',input_tokens:75,output_tokens:14,outcome:'completed'});
     expect((sent.messages[0] as {role?:string;content:string}).content).toContain('Do not infer hidden row values');
     await gateway.complete({tenantId,alias:'cheap',purpose:'plan',question:`Count encounters for patient code ${identifier}`,identifierValues:[identifier],metadata:{classification:'METADATA_STRUCTURAL',structural:{qualified_name:'public.encounters'},descriptive:{},statistical:{},sensitivityTags:[]}});
-    const planned=JSON.parse(outgoing) as {messages:Array<{role:string;content:string}>};
+    const planned=JSON.parse(outgoing) as {messages:Array<{role:string;content:string}>;response_format?:{type:string}};
+    expect(planned.response_format).toEqual({type:'json_object'});expect((sent as {response_format?:unknown}).response_format).toBeUndefined();
     expect(planned.messages[0]).toMatchObject({role:'system'});expect(planned.messages[0]!.content).toContain('typed, read-only query plans');expect(planned.messages[0]!.content).not.toContain('Do not infer hidden row values');expect(planned.messages[1]!.content).not.toContain(identifier);
 
     const blockedFetcher=vi.fn(fetcher);

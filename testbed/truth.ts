@@ -72,6 +72,10 @@ try {
   const ordersPerDepartmentTop5 = await client.query<{ department_id: number; department_name: string; order_count: string }>(`SELECT d.department_id,d.department_name,count(*)::text AS order_count
     FROM public.departments d JOIN public.orders o ON o.department_id=d.department_id
     GROUP BY d.department_id,d.department_name ORDER BY count(*) DESC,d.department_id LIMIT 5`);
+  const ordersPerDepartment = await client.query<{ department_id: number; department_name: string; order_count: string }>(`SELECT d.department_id,d.department_name,count(*)::text AS order_count
+    FROM public.departments d JOIN public.orders o ON o.department_id=d.department_id
+    GROUP BY d.department_id,d.department_name ORDER BY count(*) DESC,d.department_id`);
+  const encountersPerPatient = await client.query<{ encounter_count: number; patients: string }>(`SELECT encounter_count,count(*)::text AS patients FROM (SELECT patient_id,count(*)::integer AS encounter_count FROM public.encounters GROUP BY patient_id) per_patient GROUP BY encounter_count ORDER BY encounter_count`);
   const averageEncountersPerPatientByProvider = await client.query<{ provider_id: number; average: string }>(`SELECT provider_id,avg(encounter_count)::text AS average
     FROM (SELECT provider_id,patient_id,count(*) AS encounter_count FROM public.encounters GROUP BY provider_id,patient_id) per_patient
     GROUP BY provider_id ORDER BY provider_id`);
@@ -101,6 +105,8 @@ try {
         postgres: ordersPerDepartmentTop5.rows.map((row) => ({ departmentId: row.department_id, departmentName: row.department_name, orderCount: Number(row.order_count) })),
         sqlServer: sqlServer.answerMetrics.ordersPerDepartmentTop5,
       },
+      ordersPerDepartment: { postgres: ordersPerDepartment.rows.map((row) => ({ departmentId: row.department_id, departmentName: row.department_name, orderCount: Number(row.order_count) })), sqlServer: sqlServer.answerMetrics.ordersPerDepartment },
+      encountersPerPatient: { postgres: Object.fromEntries(encountersPerPatient.rows.map((row) => [String(row.encounter_count), Number(row.patients)])) },
       averageEncountersPerPatientByProvider: {
         postgres: averageEncountersPerPatientByProvider.rows.map((row) => ({ providerId: row.provider_id, average: Number(row.average) })),
         sqlServer: sqlServer.answerMetrics.averageEncountersPerPatientByProvider,

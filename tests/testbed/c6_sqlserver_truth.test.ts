@@ -56,7 +56,7 @@ describe('contract 6 real SQL Server testbed metadata', () => {
     expect(truth.sqlServer.sharedPatientIds).toBe(truth.rowCounts.patients);
     expect(truth.sqlServer.sharedEncounterIds).toBe(truth.rowCounts.encounters);
     expect(truth.sqlServer.inferredRelationship).toMatchObject({
-      from: 'encounters.patient_id', to: 'patients.patient_id', matches: 700, declared: false,
+      from: 'encounters.patient_id', to: 'patients.patient_id', matches: truth.rowCounts.encounters, declared: false,
     });
     expect(truth.sqlServer.sensitiveColumns).toEqual(expect.arrayContaining([
       'patients.name','patients.date_of_birth','patients.mrn','patients.phone',
