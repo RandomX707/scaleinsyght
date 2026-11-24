@@ -1,0 +1,63 @@
+{
+  "source": "si_testbed_pg",
+  "generatedAt": "2026-11-24T07:49:09.561Z",
+  "rowCounts": {
+    "patients": 500,
+    "encounters": 700,
+    "orders": 1200,
+    "departments": 6,
+    "providers": 24
+  },
+  "columnCounts": {
+    "patients": 6,
+    "encounters": 6,
+    "orders": 7,
+    "departments": 3,
+    "providers": 4
+  },
+  "foreignKeys": [
+    {
+      "from": "orders.department_id",
+      "to": "departments.department_id"
+    },
+    {
+      "from": "orders.encounter_id",
+      "to": "encounters.encounter_id"
+    }
+  ],
+  "inferredRelationship": {
+    "from": "encounters.patient_id",
+    "to": "patients.patient_id",
+    "matches": 700,
+    "sourceCount": 500,
+    "targetCount": 500,
+    "declared": false
+  },
+  "sensitiveColumns": [
+    "encounters.encounter_id",
+    "encounters.patient_id",
+    "orders.encounter_id",
+    "patients.date_of_birth",
+    "patients.mrn",
+    "patients.name",
+    "patients.phone"
+  ],
+  "nullRates": {
+    "patients.phone": 0,
+    "encounters.discharged_at": 0.14285714285714285
+  },
+  "metrics": {
+    "patients": 500,
+    "encounters": 700,
+    "orders": 1200,
+    "completed_orders": 400,
+    "order_amount": 72900,
+    "encounter_per_patient": 1.4,
+    "orders_department_1": 200,
+    "orders_department_2": 200,
+    "orders_department_3": 200,
+    "orders_department_4": 200,
+    "orders_department_5": 200,
+    "orders_department_6": 200
+  }
+}
