@@ -34,9 +34,9 @@ See [real-product-s1-demo.md](./real-product-s1-demo.md). In short: run `pnpm de
 - `pnpm test` — 71 unit tests passed.
 - `pnpm test:sqlparse` — 3 tests passed.
 - `pnpm test:integration` — 4 integration tests passed.
-- `pnpm test:contracts` — 99 contract tests passed.
+- `pnpm test:contracts` — 96 product contract tests passed.
 - `pnpm test:e2e` — 11 tests passed.
-- `pnpm test:testbed` — 3 local PostgreSQL testbed contracts passed; the empty-tenant invite, real PostgreSQL profile, ER, dictionary import, and live answer Playwright walkthrough passed.
+- `pnpm test:testbed` — 3 local PostgreSQL testbed contracts passed; the empty-tenant invite, real PostgreSQL profile, ER, dictionary import, and live answer Playwright walkthrough passed (99 contract cases across both commands).
 
 All application database resets in this report target `si_test`; `testbed:up` resets only `si_testbed_pg`. The database tests use fictional hospital records and a local read-only testbed role. The approved real-model answer used the configured gateway credential, which remains only in ignored `.env`.
 
