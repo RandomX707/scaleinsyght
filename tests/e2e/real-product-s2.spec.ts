@@ -60,10 +60,13 @@ test('s2_empty_tenant_adds_real_sql_server_profiles_and_relationships', async ({
   await expect(page.getByText(/patients\.name/)).toBeVisible(); await page.screenshot({ path: 'docs/acceptance/s2/profile.png', fullPage: true });
   const erResponse=await page.request.get(`/api/connections/${connectionId}/er`);expect(erResponse.ok()).toBeTruthy();const erData=await erResponse.json() as {relationships:Array<{from_name:string;to_name:string;evidence_method:string;confidence_score:number}>;tables:Array<{qualified_name:string;object_type:string;columns:Array<{name:string;data_type:string}>}>};expect(erData.relationships.map(item=>({from:item.from_name,to:item.to_name,evidenceMethod:item.evidence_method,confidence:Number(item.confidence_score)})).sort((a,b)=>a.from.localeCompare(b.from))).toEqual([...truth.expectedRelationships.sqlServer].sort((a,b)=>a.from.localeCompare(b.from)));expect(erData.relationships).toHaveLength(6);expect(erData.tables.find(item=>item.qualified_name==='dbo.department_order_summary')?.object_type).toBe('view');expect(erData.tables.find(item=>item.qualified_name==='dbo.patients')?.columns.some(column=>column.name.endsWith('.patient_id')&&column.data_type)).toBe(true);
   await page.getByRole('button', { name: 'Explore relationships' }).click();
-  await expect(page.getByText('6 relationships')).toBeVisible();await expect(page.getByText('dbo.department_order_summary')).toBeVisible();await expect(page.locator('.er-link--inferred')).toHaveCount(4);await page.screenshot({ path: 'docs/acceptance/s2/er-inferred.png', fullPage: true });
+  await expect(page.getByText('6 relationships')).toBeVisible();await expect(page.getByRole('heading',{name:'dbo.department_order_summary',exact:true})).toHaveCSS('text-transform','none');await expect(page.locator('.er-node--view').first()).toHaveCSS('border-top-style','dashed');await expect(page.locator('.er-link--inferred')).toHaveCount(4);await page.screenshot({ path: 'docs/acceptance/s2/er-inferred.png', fullPage: true });
   await page.goto(`/dictionary?connection=${connectionId}`);
   await expect(page.locator('.dictionary-list summary').filter({ hasText: 'dbo.patients' })).toBeVisible();
   await expect(page.getByRole('button',{name:'Choose file'})).toBeVisible();
+  await page.getByLabel('Import dictionary file').setInputFiles('testbed/s2-dictionary.csv');
+  await expect(page.getByRole('status')).toContainText('1 descriptions imported.');
+
   await page.getByRole('tab', { name: /Procedures/ }).click();
   await expect(page.locator('summary').filter({ hasText: /dbo\.count_patient_encounters/ })).toBeVisible();
   await page.screenshot({ path: 'docs/acceptance/s2/dictionary-procedures.png', fullPage: true });
@@ -99,13 +102,14 @@ test('s2_empty_tenant_adds_real_sql_server_profiles_and_relationships', async ({
   await page.getByRole('button',{name:'Test connection'}).click();
   await page.getByRole('button',{name:'Start profiling'}).click();
   await expect(page.getByRole('heading',{name:'Discovery complete'})).toBeVisible();
+  await page.getByRole('button',{name:'Close dialog'}).click();
   type Captured={state:string;modelProvenance:Array<{purpose:string;model:string;inputTokens:number;outputTokens:number;typedPlan:unknown}>;answer:{answer:{claims:Array<{statement:string}>;evidence:Array<{locator:string}>;bySource:Array<{value:number;rows?:Array<{group_value:string;value:number}>}>}}};
   async function askChecked(question:string,expectedSources:number,sql:RegExp){
     const responsePromise=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/runs'&&response.request().method()==='POST');
     await page.getByLabel('Ask a question').fill(question);
     await page.getByRole('button',{name:'Send question'}).click();
     const response=await responsePromise;
-    expect(response.status(),JSON.stringify(await response.json())).toBe(201);
+    expect(response.status(),`${question}: ${JSON.stringify(await response.json())}`).toBe(201);
     const {runId}=await response.json() as {runId:string};
     let run:Captured|undefined;
     await expect.poll(async()=>{const detail=await page.request.get(`/api/runs/${runId}`);run=await detail.json() as Captured;return run.state;},{timeout:60_000}).toBe('COMPLETED');
@@ -133,6 +137,8 @@ test('s2_empty_tenant_adds_real_sql_server_profiles_and_relationships', async ({
     evidence.push(await askChecked(question,1,sql));
   }
   expect(evidence[0]!.answer.bySource[0]!.value).toBe(truth.answerChecks.emergencyVisits2025.sqlServer);
+  expect(evidence[0]!.answer.claims[0]!.statement).toMatch(/117.*(?:emergency|2025)|(?:emergency|2025).*117/i);
+  expect(evidence[0]!.answer.claims[0]!.statement).not.toMatch(/does not confirm|cannot confirm|cannot determine|unknown/i);
   expect(evidence[1]!.answer.bySource[0]!.rows?.map(row=>({departmentName:row.group_value,orderCount:Number(row.value)}))).toEqual(truth.answerChecks.ordersPerDepartmentTop5.sqlServer.map(({departmentName,orderCount})=>({departmentName,orderCount})));
   expect(evidence[2]!.answer.bySource[0]!.rows?.map(row=>({providerId:Number(row.group_value),average:Number(row.value)}))).toEqual(truth.answerChecks.averageEncountersPerPatientByProvider.sqlServer);
   await page.getByRole('button',{name:'New chat'}).click();

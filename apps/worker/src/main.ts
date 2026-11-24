@@ -77,8 +77,20 @@ while(!stopping){
       const prefix=`source_${index+1}`;
       return [[`${prefix}_aggregate_count`,result.rows?.length??1],...(result.rows?.map((row,i)=>[`${prefix}_aggregate_${i+1}`,Number(row.value)])??[[`${prefix}_aggregate_1`,result.value]])];
      })) as Record<string,number>;
-     const sources=results.map(result=>({source:result.evidence[0]?.locator.split(' · ')[0],connector_type:result.connectorType,executed_query:result.evidence[0]?.locator.split(' · ').slice(1).join(' · ')}));
-     const answer=await new OpenAIModelGateway(pool).complete({tenantId:claim.tenantId,alias:'default',question:`Write one concise answer to the exact user question using the disclosed aggregate statistics. Include a result value. Structured result rows are shown below your sentence. Source indexes match the statistics. Do not invent labels or facts. Question: ${plan.question}`,metadata:{classification:'METADATA_STATISTICAL',structural:{sources},descriptive:{},statistical,sensitivityTags:[],groupSize:Math.min(...results.map(result=>result.minimumCellSize??0)),minimumCellSize},maxOutputTokens:400});
+     const question=plan.question.toLowerCase();
+     const mentionedYears=[...question.matchAll(/\b(?:19|20)\d{2}\b/g)].map(match=>Number(match[0]));
+     const sources=results.map(result=>{
+      const intent=plan.steps.find(step=>step.source_id===result.sourceId)?.inputs.query_intent as Record<string,unknown>|undefined;
+      const candidates=Array.isArray(intent?.filters)?intent.filters:intent?.kind==='filtered_count'?[intent]:[];
+      const filters=candidates.map(({table,column,operator,value})=>{
+       const rendered=typeof value==='string'?value:'';
+       const rangeBoundary=/^\d{4}-01-01$/.test(rendered)&&mentionedYears.some(year=>Number(rendered.slice(0,4))===year||Number(rendered.slice(0,4))===year+1);
+       const knownCategory=/^[a-z][a-z -]{0,63}$/i.test(rendered)&&question.includes(rendered.toLowerCase());
+       return {table,column,operator,...(rangeBoundary?{calendar_boundary:rendered}:{}),...(knownCategory?{matches_category_in_question:true}:{})};
+      });
+      return {source:result.evidence[0]?.locator.split(' · ')[0],connector_type:result.connectorType,executed_query:result.evidence[0]?.locator.split(' · ').slice(1).join(' · '),filters};
+     });
+     const answer=await new OpenAIModelGateway(pool).complete({tenantId:claim.tenantId,alias:'default',question:`Write one concise answer to the exact user question using the disclosed aggregate statistics. Include a result value. Use each executed query and its disclosed filters to interpret its statistic. Group labels appear in the results table below your sentence. When answering grouped questions, summarize the aggregate values without repeating labels. Source indexes match the statistics. Do not invent facts. Question: ${plan.question}`,metadata:{classification:'METADATA_STATISTICAL',structural:{sources},descriptive:{},statistical,sensitivityTags:[],groupSize:Math.min(...results.map(result=>result.minimumCellSize??0)),minimumCellSize},maxOutputTokens:400});
      const statement=answer.text.trim().replace(/[\r\n]+/g,' ').slice(0,600);
      const numbers=(value:string)=>value.match(/-?\d+(?:,\d{3})*(?:\.\d+)?/g)?.map(token=>Number(token.replaceAll(',','')))??[];
      const counts=results.map(result=>result.rows?.length??1);
