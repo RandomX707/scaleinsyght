@@ -1,6 +1,6 @@
 {
   "source": "si_testbed_pg",
-  "generatedAt": "2026-11-24T16:38:02.647Z",
+  "generatedAt": "2026-11-24T17:33:19.426Z",
   "rowCounts": {
     "patients": 500,
     "encounters": 1291,
@@ -517,6 +517,284 @@
           "average": 1.375
         }
       ]
+    }
+  },
+  "excel": {
+    "file": "testbed/excel/hospital-operations.xlsx",
+    "sheets": [
+      {
+        "name": "Patients",
+        "rowCount": 391,
+        "columnCount": 5,
+        "columns": [
+          "patient_id",
+          "mrn",
+          "full_name",
+          "date_of_birth",
+          "phone"
+        ],
+        "headers": [
+          "Patient ID",
+          "MRN",
+          "Full Name",
+          "Date of Birth",
+          "Phone"
+        ]
+      },
+      {
+        "name": "Visits",
+        "rowCount": 768,
+        "columnCount": 6,
+        "columns": [
+          "visit_id",
+          "patient_id",
+          "department",
+          "provider_id",
+          "admitted_on",
+          "discharged_on"
+        ],
+        "headers": [
+          "Visit ID",
+          "Patient ID",
+          "Department",
+          "Provider ID",
+          "Admitted On",
+          "Discharged On"
+        ]
+      },
+      {
+        "name": "Charges",
+        "rowCount": 893,
+        "columnCount": 8,
+        "columns": [
+          "charge_id",
+          "visit_id",
+          "patient_id",
+          "department",
+          "charge_type",
+          "status",
+          "amount",
+          "charged_on"
+        ],
+        "headers": [
+          "Charge ID",
+          "Visit ID",
+          "Patient ID",
+          "Department",
+          "Charge Type",
+          "Status",
+          "Amount",
+          "Charged On"
+        ]
+      },
+      {
+        "name": "Registrations",
+        "rowCount": 134,
+        "columnCount": 6,
+        "columns": [
+          "patient_id",
+          "full_name",
+          "date_of_birth",
+          "mrn",
+          "phone_number",
+          "registered_on"
+        ],
+        "headers": [
+          "Patient ID",
+          "Full Name",
+          "Date of Birth",
+          "MRN",
+          "Phone Number",
+          "Registered On"
+        ]
+      }
+    ],
+    "expectedInferredSensitivity": {
+      "Registrations.full_name": [
+        "personal"
+      ],
+      "Registrations.date_of_birth": [
+        "regulated"
+      ],
+      "Registrations.mrn": [
+        "identifier"
+      ],
+      "Registrations.phone_number": [
+        "personal"
+      ]
+    },
+    "nullRates": {
+      "Patients.patient_id": 0,
+      "Patients.mrn": 0,
+      "Patients.full_name": 0,
+      "Patients.date_of_birth": 0,
+      "Patients.phone": 0.19948849104859334,
+      "Visits.visit_id": 0,
+      "Visits.patient_id": 0,
+      "Visits.department": 0,
+      "Visits.provider_id": 0,
+      "Visits.admitted_on": 0,
+      "Visits.discharged_on": 0.10416666666666667,
+      "Charges.charge_id": 0,
+      "Charges.visit_id": 0,
+      "Charges.patient_id": 0,
+      "Charges.department": 0,
+      "Charges.charge_type": 0,
+      "Charges.status": 0,
+      "Charges.amount": 0,
+      "Charges.charged_on": 0,
+      "Registrations.patient_id": 0,
+      "Registrations.full_name": 0,
+      "Registrations.date_of_birth": 0,
+      "Registrations.mrn": 0,
+      "Registrations.phone_number": 0.23880597014925373,
+      "Registrations.registered_on": 0
+    },
+    "sensitiveColumns": {
+      "Patients.mrn": [
+        "identifier"
+      ],
+      "Patients.full_name": [
+        "personal"
+      ],
+      "Patients.date_of_birth": [
+        "regulated"
+      ],
+      "Patients.phone": [
+        "personal"
+      ],
+      "Registrations.full_name": [
+        "personal"
+      ],
+      "Registrations.date_of_birth": [
+        "regulated"
+      ],
+      "Registrations.mrn": [
+        "identifier"
+      ],
+      "Registrations.phone_number": [
+        "personal"
+      ]
+    },
+    "relationships": [
+      {
+        "from": "Visits",
+        "to": "Patients",
+        "column": "patient_id",
+        "matches": 768,
+        "sourceCount": 768,
+        "confidence": 1
+      },
+      {
+        "from": "Charges",
+        "to": "Patients",
+        "column": "patient_id",
+        "matches": 893,
+        "sourceCount": 893,
+        "confidence": 1
+      },
+      {
+        "from": "Registrations",
+        "to": "Patients",
+        "column": "patient_id",
+        "matches": 134,
+        "sourceCount": 134,
+        "confidence": 1
+      },
+      {
+        "from": "Registrations",
+        "to": "Patients",
+        "column": "mrn",
+        "matches": 134,
+        "sourceCount": 134,
+        "confidence": 1
+      },
+      {
+        "from": "Charges",
+        "to": "Visits",
+        "column": "visit_id",
+        "matches": 893,
+        "sourceCount": 893,
+        "confidence": 1
+      }
+    ],
+    "answerChecks": {
+      "visitCount": 768,
+      "visitsWithDischargeDate": 688,
+      "cancelledCharges": 147,
+      "chargeAmountByDepartmentTop5": [
+        {
+          "department": "Emergency",
+          "amount": 41486.17
+        },
+        {
+          "department": "Laboratory",
+          "amount": 31562.52
+        },
+        {
+          "department": "Imaging",
+          "amount": 20507.49
+        },
+        {
+          "department": "Cardiology",
+          "amount": 16858.73
+        },
+        {
+          "department": "Surgery",
+          "amount": 11459.65
+        }
+      ],
+      "averageVisitsPerPatientByDepartment": [
+        {
+          "department": "Cardiology",
+          "average": 1.5142857142857142
+        },
+        {
+          "department": "Dermatology",
+          "average": 1
+        },
+        {
+          "department": "Emergency",
+          "average": 1.5194805194805194
+        },
+        {
+          "department": "Imaging",
+          "average": 1.7058823529411764
+        },
+        {
+          "department": "Laboratory",
+          "average": 1.1914893617021276
+        },
+        {
+          "department": "Neurology",
+          "average": 2.142857142857143
+        },
+        {
+          "department": "Oncology",
+          "average": 1.236842105263158
+        },
+        {
+          "department": "Orthopedics",
+          "average": 1.4705882352941178
+        },
+        {
+          "department": "Pediatrics",
+          "average": 1.5
+        },
+        {
+          "department": "Psychiatry",
+          "average": 1.5333333333333334
+        },
+        {
+          "department": "Rehabilitation",
+          "average": 1.3333333333333333
+        },
+        {
+          "department": "Surgery",
+          "average": 1.5277777777777777
+        }
+      ],
+      "patientCount": 391
     }
   },
   "answerChecks": {

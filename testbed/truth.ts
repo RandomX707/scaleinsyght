@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { config } from 'dotenv';
 import { Client } from 'pg';
 import { collectSqlServerTruth } from './sqlserver/truth.js';
+import { collectExcelTruth } from './excel/truth.js';
 
 config({ path: resolve('.env') });
 const connectionString = process.env.DATABASE_URL_TESTBED;
@@ -99,6 +100,7 @@ try {
     nullRates,
     metrics,
     sqlServer,
+    excel: await collectExcelTruth(),
     answerChecks: {
       emergencyVisits2025: { postgres: Number(emergencyVisits2025.rows[0]!.value), sqlServer: sqlServer.answerMetrics.emergencyVisits2025 },
       ordersPerDepartmentTop5: {

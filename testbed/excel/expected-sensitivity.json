@@ -1,0 +1,14 @@
+{
+  "Registrations.full_name": [
+    "personal"
+  ],
+  "Registrations.date_of_birth": [
+    "regulated"
+  ],
+  "Registrations.mrn": [
+    "identifier"
+  ],
+  "Registrations.phone_number": [
+    "personal"
+  ]
+}

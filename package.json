@@ -14,6 +14,7 @@
     "db:setup:sample": "tsx scripts/setup-sample-source.ts",
     "testbed:sqlserver:up": "tsx testbed/sqlserver/up.ts",
     "testbed:generate": "tsx testbed/generate.ts",
+    "testbed:excel": "tsx testbed/excel/generate.ts",
     "testbed:up": "pnpm testbed:generate && tsx testbed/up.ts && pnpm testbed:sqlserver:up && pnpm testbed:truth",
     "testbed:truth": "tsx testbed/truth.ts",
     "dbt:sample": "tsx scripts/run-sample-dbt.ts",

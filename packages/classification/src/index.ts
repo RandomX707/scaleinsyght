@@ -40,3 +40,4 @@ export function prepareMetadataForModel(input: ModelMetadataInput): ModelMetadat
   if (!hasTags && groupIsLargeEnough) result.statistical = input.statistical;
   return result;
 }
+export { classifyColumn, type SensitivityEvidence, type SensitivityTag, type SampleValue } from './detect.js';
