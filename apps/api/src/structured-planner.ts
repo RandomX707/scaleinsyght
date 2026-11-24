@@ -49,7 +49,7 @@ export function plannerSchema(catalog: PlannerCatalog, joins: PlannerJoin[]): Sc
         subject_table: literal(tables, 'The table whose records are counted, summed or averaged.'),
         measure: literal(MEASURES, 'count records, sum a numeric column, or average the number of records per entity.'),
         measure_column: nullable(columnPath),
-        grouping_column: nullable({...columnPath, description:'The column the answer is broken down by. For an entity with a name on a joined table (for example a department), group by the name and give the key as groupKey; group by a bare ID only when the question asks for IDs.'}),
+        grouping_column: nullable(columnPath),
         filter_columns: {type:'array',items:columnPath},
       }, 'What this step must compute, declared before the executable fields.'),
       kind: literal(['count','filtered_count','group_by','join_aggregate','grouped_join','average_count_by','compare_aggregates']),
@@ -205,7 +205,7 @@ export function describePlan(steps: DecodedStep[], catalog: PlannerCatalog): str
     if (plan.rightTable) parts.push(`joined to ${String(plan.rightTable)}`);
     if (plan.groupBy) {
       const groupTable = plan.groupByTable === 'right' ? String(plan.rightTable) : subject;
-      parts.push(`for each ${label(index, groupTable, String(plan.groupBy))} value${/(^|_)id$/i.test(String(plan.groupBy)) ? ' (groups are shown as ID numbers, not names)' : ''}`);
+      parts.push(`for each ${label(index, groupTable, String(plan.groupBy))}`);
     }
     const conditions = (plan.kind === 'filtered_count' ? [plan] : Array.isArray(plan.filters) ? plan.filters as Array<Record<string, unknown>> : [])
       .map(filter => `${String(filter.column)} ${String(filter.operator).replaceAll('_',' ')}${filter.value === undefined ? '' : ` ${JSON.stringify(filter.value)}`}${filter.upperExclusive === undefined ? '' : ` and before ${JSON.stringify(filter.upperExclusive)}`}`);
