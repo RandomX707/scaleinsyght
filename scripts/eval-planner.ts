@@ -24,11 +24,14 @@ database.pathname = '/si_test';
 const pool = new Pool({ connectionString: database.toString() });
 type Case = {id: string; sources: Source[]; turns: string[]};
 type Item = {id: string; status: 'correct' | 'refused correctly' | 'wrong' | 'failed'; costUsd: number; latencyMs: number; turns: unknown[]};
-const truth = await load('truth.json') as Record<string, Expected>;
+const onlySet = process.argv.find(arg=>arg.startsWith('--set='))?.slice('--set='.length);
+if (onlySet && onlySet !== 'heldout2') throw new Error('Only --set=heldout2 is supported');
+// heldout2 has its own SQL-derived truth and is run once, after tuning (testbed/eval/heldout2-truth.ts).
+const truth = {...await load('truth.json'), ...(onlySet === 'heldout2' ? await load('heldout2-truth.json') : {})} as Record<string, Expected>;
 const smoke = process.argv.includes('--smoke');
 const selectedDevelopmentCases = process.argv.find(arg=>arg.startsWith('--questions='))?.slice('--questions='.length).split(',');
 if (selectedDevelopmentCases?.some(id=>!/^Q[0-9]{2}$/.test(id))) throw new Error('Select development case IDs only');
-const sets = [
+const sets = onlySet === 'heldout2' ? [{name: 'heldout2', cases: await load('heldout2.json') as Case[], items: [] as Item[]}] : [
   {name: 'questions', cases: await load('questions.json') as Case[], items: [] as Item[]},
   ...(smoke || selectedDevelopmentCases ? [] : [{name: 'heldout', cases: await load('heldout.json') as Case[], items: [] as Item[]}]),
 ];

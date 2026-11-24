@@ -1,0 +1,12 @@
+[
+  {"id": "N01", "turns": ["How many patients does the PostgreSQL testbed hold?"], "sources": ["p"]},
+  {"id": "N02", "turns": ["In the Operations workbook, how many Registrations were recorded?"], "sources": ["x"]},
+  {"id": "N03", "turns": ["How many orders of type imaging exist in the SQL Server testbed?"], "sources": ["s"]},
+  {"id": "N04", "turns": ["How many encounters were admitted during 2024 in the PostgreSQL testbed?"], "sources": ["p"]},
+  {"id": "N05", "turns": ["How many Charges in the Operations workbook have an Amount of 400 or more?"], "sources": ["x"]},
+  {"id": "N06", "turns": ["Show encounter counts for the five provider IDs with the most encounters in the SQL Server testbed."], "sources": ["s"]},
+  {"id": "N07", "turns": ["What is the total order amount for the Emergency department in the PostgreSQL testbed?"], "sources": ["p"]},
+  {"id": "N08", "turns": ["Which three Departments have the most Visits in the Operations workbook? Give the counts."], "sources": ["x"]},
+  {"id": "N09", "turns": ["Does the Patients sheet in the Operations workbook have as many patients as the PostgreSQL testbed? Give both counts."], "sources": ["p", "x"]},
+  {"id": "N10", "turns": ["How many encounters are in the SQL Server testbed?", "And how many of those were in the Imaging department?"], "sources": ["s"]}
+]
