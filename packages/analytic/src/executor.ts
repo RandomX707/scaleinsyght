@@ -68,7 +68,7 @@ export async function finalizeAnalyticRun(pool: Pool, runId: string, compose?: (
     if (!plan) throw new Error('analytic_plan_not_found');
     const states = await client.query<{ state: string }>('SELECT state FROM runs.steps WHERE tenant_id=$1 AND run_id=$2 ORDER BY step_order', [stored.tenant_id, runId]);
     if (states.rows.some((step) => ['PENDING','CLAIMED','RUNNING'].includes(step.state))) return 'WAITING';
-    const resultRows = await client.query<{ result: StructuredResult }>('SELECT result FROM runs.analytic_results WHERE tenant_id=$1 AND run_id=$2 ORDER BY created_at,step_id', [stored.tenant_id, runId]);
+    const resultRows = await client.query<{ result: StructuredResult }>('SELECT r.result FROM runs.analytic_results r JOIN runs.steps s ON s.tenant_id=r.tenant_id AND s.run_id=r.run_id AND s.step_id=r.step_id WHERE r.tenant_id=$1 AND r.run_id=$2 ORDER BY s.step_order,r.step_id', [stored.tenant_id, runId]);
     const partial = states.rows.some((step) => step.state !== 'SUCCEEDED');
     const results = resultRows.rows.map((row) => row.result);
     const answer: StructuredAnswer = results.length ? collateGroupResults(results) : {

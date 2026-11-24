@@ -30,6 +30,9 @@ describe('production runtime fixture isolation', () => {
           /listGoldenStructuralReferences/,
           /importGoldenMetadata/,
           /createGoldenHubAdapters/,
+          /tests\/support/,
+          /test-generic-connectors/,
+          /create(?:Lake|Crm)Connector/,
         ];
         return forbidden
           .filter((pattern) => pattern.test(source))

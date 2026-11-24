@@ -1,6 +1,6 @@
 {
   "source": "si_testbed_pg",
-  "generatedAt": "2026-11-24T13:25:42.012Z",
+  "generatedAt": "2026-11-24T14:14:30.508Z",
   "rowCounts": {
     "patients": 500,
     "encounters": 700,
@@ -155,7 +155,7 @@
     "patients.phone"
   ],
   "nullRates": {
-    "patients.phone": 0,
+    "patients.phone": 0.142,
     "encounters.discharged_at": 0.14285714285714285
   },
   "metrics": {
@@ -216,11 +216,11 @@
       "patients.phone"
     ],
     "nullRates": {
-      "patients.phone": 0,
+      "patients.phone": 0.11,
       "encounters.discharged_at": 0.1428571429
     },
     "metrics": {
-      "patients_with_phone": 500,
+      "patients_with_phone": 445,
       "patients": 500,
       "encounters": 700,
       "orders": 1200,
@@ -710,8 +710,8 @@
       "same": true
     },
     "patientsWithPhone": {
-      "postgres": 500,
-      "sqlServer": 500
+      "postgres": 429,
+      "sqlServer": 445
     },
     "sharedPatientsCount": 500
   }

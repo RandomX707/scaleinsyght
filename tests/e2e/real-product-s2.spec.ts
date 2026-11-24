@@ -83,6 +83,7 @@ test('s2_empty_tenant_adds_real_sql_server_profiles_and_relationships', async ({
   const submitted=await followUpPost;expect(submitted.status(),JSON.stringify(await submitted.json())).toBe(201);
   await expect(page.locator('.question-bubble')).toHaveCount(2);
   await expect(page.locator('.evidence-list').last()).toContainText(/phone.*IS NOT NULL/i,{timeout:60_000});
+  await expect(page.locator('.answer-claim').last()).toContainText(String(truth.answerChecks.patientsWithPhone.sqlServer));
   await page.reload();await expect(page.locator('.question-bubble')).toHaveCount(2);
   await page.screenshot({ path: 'docs/acceptance/s2/home-answer.png', fullPage: true });
   await page.getByRole('button',{name:'New chat'}).click();
@@ -103,7 +104,7 @@ test('s2_empty_tenant_adds_real_sql_server_profiles_and_relationships', async ({
   await page.getByRole('button',{name:'Start profiling'}).click();
   await expect(page.getByRole('heading',{name:'Discovery complete'})).toBeVisible();
   await page.getByRole('button',{name:'Close dialog'}).click();
-  type Captured={state:string;modelProvenance:Array<{purpose:string;model:string;inputTokens:number;outputTokens:number;typedPlan:unknown}>;answer:{answer:{claims:Array<{statement:string}>;evidence:Array<{locator:string}>;bySource:Array<{value:number;rows?:Array<{group_value:string;value:number}>}>}}};
+  type Captured={state:string;modelProvenance:Array<{purpose:string;model:string;inputTokens:number;outputTokens:number;typedPlan:unknown}>;answer:{answer:{claims:Array<{statement:string}>;evidence:Array<{locator:string}>;bySource:Array<{connectorType:string;value:number;rows?:Array<{group_value:string;value:number}>}>}}};
   async function askChecked(question:string,expectedSources:number,sql:RegExp){
     const responsePromise=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/runs'&&response.request().method()==='POST');
     await page.getByLabel('Ask a question').fill(question);
@@ -143,9 +144,13 @@ test('s2_empty_tenant_adds_real_sql_server_profiles_and_relationships', async ({
   expect(evidence[2]!.answer.bySource[0]!.rows?.map(row=>({providerId:Number(row.group_value),average:Number(row.value)}))).toEqual(truth.answerChecks.averageEncountersPerPatientByProvider.sqlServer);
   await page.getByRole('button',{name:'New chat'}).click();
   const comparison=await askChecked('Do the PostgreSQL and SQL Server testbeds have the same number of patients?',2,/patients/i);
-  expect(comparison.answer.bySource.map(result=>result.value)).toEqual(Object.values(truth.answerChecks.patientCountComparison).filter(value=>typeof value==='number'));
+  const bySourceType=(captured:{answer:Captured['answer']['answer']})=>({postgres:captured.answer.bySource.find(result=>result.connectorType==='postgres')?.value,sqlServer:captured.answer.bySource.find(result=>result.connectorType==='sql_server')?.value});
+  expect(bySourceType(comparison)).toEqual({postgres:truth.answerChecks.patientCountComparison.postgres,sqlServer:truth.answerChecks.patientCountComparison.sqlServer});
   const phone=await askChecked('and how many of them have a phone number?',2,/phone.*IS NOT NULL/i);
-  expect(phone.answer.bySource.map(result=>result.value)).toEqual(Object.values(truth.answerChecks.patientsWithPhone));
+  expect(bySourceType(phone)).toEqual(truth.answerChecks.patientsWithPhone);
+  for(const value of Object.values(truth.answerChecks.patientsWithPhone))expect(phone.answer.claims[0]!.statement).toContain(String(value));
+  expect(phone.answer.claims[0]!.statement).not.toMatch(/every patient|all patients/i);
+  for(const captured of [comparison,phone])for(const name of ['SQL Server hospital','PostgreSQL testbed'])expect(captured.answer.claims[0]!.statement).toContain(name);
   writeFileSync('docs/acceptance/s2/answer-evidence.json',JSON.stringify([...evidence,comparison,phone].map(({question,answer,provenance})=>({question,answer:answer.claims[0]!.statement,sql:answer.evidence.map(item=>item.locator),provenance})),null,2)+'\n');
 
 });

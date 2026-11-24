@@ -34,6 +34,10 @@ describe('contract 7 OpenAI gateway disclosure and budget boundary',()=>{
     expect(captured.identifier_fingerprints).toHaveLength(1);expect(captured.identifier_fingerprints[0]).toMatch(/^[a-f0-9]{64}$/);
     const stored=await withTenant(migrate,tenantId,async(db)=>db.query<{model_alias:string;model_name:string;input_tokens:number;output_tokens:number;cost_usd:string;outcome:string}>('SELECT model_alias,model_name,input_tokens,output_tokens,cost_usd,outcome FROM core.model_usage WHERE tenant_id=$1',[tenantId]));
     expect(stored.rows).toHaveLength(1);expect(stored.rows[0]).toMatchObject({model_alias:'cheap',model_name:'test-cheap',input_tokens:75,output_tokens:14,outcome:'completed'});
+    expect((sent.messages[0] as {role?:string;content:string}).content).toContain('Do not infer hidden row values');
+    await gateway.complete({tenantId,alias:'cheap',purpose:'plan',question:`Count encounters for patient code ${identifier}`,identifierValues:[identifier],metadata:{classification:'METADATA_STRUCTURAL',structural:{qualified_name:'public.encounters'},descriptive:{},statistical:{},sensitivityTags:[]}});
+    const planned=JSON.parse(outgoing) as {messages:Array<{role:string;content:string}>};
+    expect(planned.messages[0]).toMatchObject({role:'system'});expect(planned.messages[0]!.content).toContain('typed, read-only query plans');expect(planned.messages[0]!.content).not.toContain('Do not infer hidden row values');expect(planned.messages[1]!.content).not.toContain(identifier);
 
     const blockedFetcher=vi.fn(fetcher);
     const capped=new OpenAIModelGateway(app,{...env,MODEL_DAILY_TOKEN_CAP:'1'},blockedFetcher);

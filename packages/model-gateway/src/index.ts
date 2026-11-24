@@ -6,7 +6,11 @@ import type { Pool } from 'pg';
 export type ModelAlias='cheap'|'default';
 export type ModelPrice={inputPerMillionUsd:number;outputPerMillionUsd:number};
 export type GatewayConfig={baseUrl:string;apiKey:string;cheapModel:string;defaultModel:string;dailyCostCapUsd:number;dailyTokenCap:number;fingerprintKey:string;prices:Record<string,ModelPrice>};
-export type GatewayRequest={tenantId:string;alias:ModelAlias;question:string;metadata:ModelMetadataInput;identifierValues?:string[];maxOutputTokens?:number};
+export type GatewayRequest={tenantId:string;alias:ModelAlias;question:string;metadata:ModelMetadataInput;identifierValues?:string[];maxOutputTokens?:number;purpose?:'answer'|'plan'};
+const SYSTEM_INSTRUCTIONS={
+  answer:'Answer only from the disclosed metadata. Do not infer hidden row values. If metadata is insufficient, say so.',
+  plan:'You write typed, read-only query plans from disclosed metadata. You never see row values, and you do not need to: a category, label or date named in the question is used as a filter value on the matching column, and is bound as a query parameter. Return an empty plan only when no table or column in the metadata can express the request. Never return SQL.',
+} as const;
 export type GatewayResponse={text:string;requestId:string;model:string;inputTokens:number;outputTokens:number;costUsd:number};
 export type FetchLike=(input:URL|string,init?:RequestInit)=>Promise<Response>;
 
@@ -79,7 +83,7 @@ export class OpenAIModelGateway{
     const question=safeQuestion(input.question,rawIdentifiers);
     const fingerprints=[...rawIdentifiers].map(value=>fingerprint(this.config.fingerprintKey,input.tenantId,value));
     const maxOutputTokens=Math.min(2048,Math.max(64,input.maxOutputTokens??1000));
-    const payload={model,messages:[{role:'system',content:'Answer only from the disclosed metadata. Do not infer hidden row values. If metadata is insufficient, say so.'},{role:'user',content:JSON.stringify({question,metadata:safeMetadata,identifier_fingerprints:fingerprints})}],max_completion_tokens:maxOutputTokens};
+    const payload={model,messages:[{role:'system',content:SYSTEM_INSTRUCTIONS[input.purpose??'answer']},{role:'user',content:JSON.stringify({question,metadata:safeMetadata,identifier_fingerprints:fingerprints})}],max_completion_tokens:maxOutputTokens};
     const body=JSON.stringify(payload);const estimatedInput=estimateTokens(body);const estimatedTokens=estimatedInput+maxOutputTokens;
     const reservedCost=priceTokens(price,estimatedInput,maxOutputTokens);const id=requestId();
     const reservation=await withTenant(this.pool,input.tenantId,async(client)=>{

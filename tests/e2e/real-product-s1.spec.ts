@@ -27,7 +27,7 @@ test('s1_empty_tenant_adds_real_postgres_profiles_metadata_and_answers_with_evid
   await page.goto(`/dictionary?connection=${connectionId}`);await page.locator('input[type=file][accept=".csv,.xlsx"]').setInputFiles('testbed/dictionary.csv');await expect(page.getByRole('status')).toContainText('4 descriptions imported.');await expect(page.getByText('4 / 31')).toBeVisible();await page.screenshot({path:'docs/acceptance/s1/dictionary.png',fullPage:true});
   await page.getByRole('tab',{name:/Procedures/}).click();await expect(page.locator('summary').filter({hasText:/count_patient_encounters/})).toBeVisible();
   await page.goto('/');await page.getByLabel('Ask a question').fill('How many patients are in Testbed hospital?');await page.getByRole('button',{name:'Send question'}).click();
-  await expect(page.getByText('Source result: 500',{exact:true})).toBeVisible({timeout:120_000});await expect(page.getByText(/Executed on Testbed hospital; returned 1 aggregate row/)).toBeVisible();await expect(page.getByText(/SELECT count\(\*\)::text AS value FROM "public"\."patients"/)).toBeVisible();await page.screenshot({path:'docs/acceptance/s1/home-answer.png',fullPage:true});
+  await expect(page.getByText('Source result: 500',{exact:true})).toBeVisible({timeout:120_000});await expect(page.getByText(/Executed on Testbed hospital; returned 1 aggregate row/)).toBeVisible();await expect(page.getByText(/SELECT count\(\*\)::text AS value,count\(\*\) AS cell_size FROM "public"\."patients"/)).toBeVisible();await page.screenshot({path:'docs/acceptance/s1/home-answer.png',fullPage:true});
 });
 
 test.afterAll(async()=>{await adminPool.end();});
