@@ -262,5 +262,126 @@
   "H09": {
     "s": 309
   },
-  "H10": null
+  "H10": null,
+  "Q31": {
+    "s": [
+      {
+        "label": "Cardiology",
+        "value": 152
+      },
+      {
+        "label": "Dermatology",
+        "value": 30
+      },
+      {
+        "label": "Emergency",
+        "value": 388
+      },
+      {
+        "label": "Imaging",
+        "value": 197
+      },
+      {
+        "label": "Laboratory",
+        "value": 301
+      },
+      {
+        "label": "Neurology",
+        "value": 52
+      },
+      {
+        "label": "Oncology",
+        "value": 88
+      },
+      {
+        "label": "Orthopedics",
+        "value": 41
+      },
+      {
+        "label": "Pediatrics",
+        "value": 64
+      },
+      {
+        "label": "Psychiatry",
+        "value": 41
+      },
+      {
+        "label": "Rehabilitation",
+        "value": 25
+      },
+      {
+        "label": "Surgery",
+        "value": 121
+      }
+    ]
+  },
+  "Q32": {
+    "p": [
+      {
+        "label": "completed",
+        "value": 908
+      },
+      {
+        "label": "placed",
+        "value": 359
+      },
+      {
+        "label": "cancelled",
+        "value": 233
+      }
+    ]
+  },
+  "Q33": {
+    "x": [
+      {
+        "label": "lab",
+        "value": 333
+      },
+      {
+        "label": "medication",
+        "value": 281
+      },
+      {
+        "label": "imaging",
+        "value": 148
+      },
+      {
+        "label": "procedure",
+        "value": 131
+      }
+    ]
+  },
+  "Q34": {
+    "p": 152
+  },
+  "Q35": {
+    "p": 359
+  },
+  "Q36": {
+    "p": 24
+  },
+  "Q37": {
+    "x": 368
+  },
+  "Q38": {
+    "p": 1500,
+    "s": 1500
+  },
+  "Q39": {
+    "p": [
+      {
+        "label": "3",
+        "value": 388
+      },
+      {
+        "label": "5",
+        "value": 301
+      },
+      {
+        "label": "4",
+        "value": 197
+      }
+    ]
+  },
+  "Q40": null
 }

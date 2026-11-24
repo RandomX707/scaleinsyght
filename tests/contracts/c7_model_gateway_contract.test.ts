@@ -37,7 +37,11 @@ describe('contract 7 OpenAI gateway disclosure and budget boundary',()=>{
     expect((sent.messages[0] as {role?:string;content:string}).content).toContain('Do not infer hidden row values');
     await gateway.complete({tenantId,alias:'cheap',purpose:'plan',question:`Count encounters for patient code ${identifier}`,identifierValues:[identifier],metadata:{classification:'METADATA_STRUCTURAL',structural:{qualified_name:'public.encounters'},descriptive:{},statistical:{},sensitivityTags:[]}});
     const planned=JSON.parse(outgoing) as {messages:Array<{role:string;content:string}>;response_format?:{type:string}};
-    expect(planned.response_format).toEqual({type:'json_object'});expect((sent as {response_format?:unknown}).response_format).toBeUndefined();
+    expect(planned.response_format).toEqual({type:'json_object'});
+    const planning=new OpenAIModelGateway(app,{...env,MODEL_PLANNING:'test-strong'},fetcher);
+    await planning.complete({tenantId,alias:'planning',purpose:'verify',question:'Does this plan answer the question?',metadata:{classification:'METADATA_STRUCTURAL',structural:{plan:'count rows'},descriptive:{},statistical:{},sensitivityTags:[]}});
+    const verifying=JSON.parse(outgoing) as {model:string;messages:Array<{content:string}>;response_format?:{type:string}};
+    expect(verifying.model).toBe('test-strong');expect(verifying.messages[0]!.content).toContain('check whether a typed');expect(verifying.response_format).toEqual({type:'json_object'});expect((sent as {response_format?:unknown}).response_format).toBeUndefined();
     expect(planned.messages[0]).toMatchObject({role:'system'});expect(planned.messages[0]!.content).toContain('typed, read-only query plans');expect(planned.messages[0]!.content).not.toContain('Do not infer hidden row values');expect(planned.messages[1]!.content).not.toContain(identifier);
 
     const blockedFetcher=vi.fn(fetcher);

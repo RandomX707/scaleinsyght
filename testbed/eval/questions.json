@@ -274,5 +274,106 @@
     "sources": [
       "x"
     ]
+  },
+  {
+    "id": "Q31",
+    "turns": [
+      "How many orders does each department have in the SQL Server testbed?"
+    ],
+    "sources": [
+      "s"
+    ],
+    "paraphraseOf": "Q17"
+  },
+  {
+    "id": "Q32",
+    "turns": [
+      "For every order status in the PostgreSQL testbed, what is the order count?"
+    ],
+    "sources": [
+      "p"
+    ],
+    "paraphraseOf": "Q10"
+  },
+  {
+    "id": "Q33",
+    "turns": [
+      "In the Operations workbook, how many Charges are there per Charge Type?"
+    ],
+    "sources": [
+      "x"
+    ],
+    "paraphraseOf": "Q12"
+  },
+  {
+    "id": "Q34",
+    "turns": [
+      "What is the number of Cardiology orders in the PostgreSQL testbed?"
+    ],
+    "sources": [
+      "p"
+    ],
+    "paraphraseOf": "Q16"
+  },
+  {
+    "id": "Q35",
+    "turns": [
+      "In the PostgreSQL testbed, how many orders are in placed status?"
+    ],
+    "sources": [
+      "p"
+    ],
+    "paraphraseOf": "Q04"
+  },
+  {
+    "id": "Q36",
+    "turns": [
+      "How many providers does the PostgreSQL testbed list?"
+    ],
+    "sources": [
+      "p"
+    ],
+    "paraphraseOf": "Q01"
+  },
+  {
+    "id": "Q37",
+    "turns": [
+      "Count the Operations workbook Visits with an admission date of July 1, 2025 or later."
+    ],
+    "sources": [
+      "x"
+    ],
+    "paraphraseOf": "Q09"
+  },
+  {
+    "id": "Q38",
+    "turns": [
+      "What are the order totals in the PostgreSQL testbed and in the SQL Server testbed?"
+    ],
+    "sources": [
+      "p",
+      "s"
+    ],
+    "paraphraseOf": "Q19"
+  },
+  {
+    "id": "Q39",
+    "turns": [
+      "Top three department IDs by number of orders in the PostgreSQL testbed, with their counts."
+    ],
+    "sources": [
+      "p"
+    ],
+    "paraphraseOf": "Q13"
+  },
+  {
+    "id": "Q40",
+    "turns": [
+      "How many denied insurance claims are recorded in the Operations workbook?"
+    ],
+    "sources": [
+      "x"
+    ],
+    "paraphraseOf": "Q28"
   }
 ]

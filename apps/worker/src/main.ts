@@ -38,7 +38,7 @@ async function processPlanning(claim: StepClaim): Promise<boolean> {
       WHERE p.run_id=$1 AND s.step_id=$2 AND s.step_order=0`,[claim.runId,claim.stepId])).rows[0]);
   if (!request) return false;
   let reason = 'analytic_planning_failed';
-  let attempts: Array<{model:string;inputTokens:number;outputTokens:number;error?:string}> = [];
+  let attempts: Array<{model:string;inputTokens:number;outputTokens:number;purpose?:'plan'|'verify';error?:string}> = [];
   let options: unknown;
   try {
     const allowed = await withRunTenant(pool,claim.runId,async client => (await client.query(
@@ -73,7 +73,7 @@ async function processPlanning(claim: StepClaim): Promise<boolean> {
     if (!run.rowCount) throw new Error('planning_state_changed');
     for (const attempt of attempts) await client.query(
       `INSERT INTO runs.model_provenance(tenant_id,run_id,call_purpose,model_name,input_tokens,output_tokens,typed_plan)
-       VALUES($1,$2,'plan',$3,$4,$5,$6::jsonb)`,[claim.tenantId,claim.runId,attempt.model,attempt.inputTokens,attempt.outputTokens,JSON.stringify({error:attempt.error??reason})]);
+       VALUES($1,$2,'plan',$3,$4,$5,$6::jsonb)`,[claim.tenantId,claim.runId,attempt.model,attempt.inputTokens,attempt.outputTokens,JSON.stringify({error:attempt.error??reason,...(attempt.purpose?{attempt:attempt.purpose}:{})})]);
     const latest=await client.query(`SELECT coalesce(max(sequence),0) AS last FROM runs.events WHERE run_id=$1`,[claim.runId]);
     const sequence=Number(latest.rows[0]!.last);
     await client.query(`INSERT INTO runs.events(tenant_id,run_id,sequence,event_type,step_id,fencing_token,safe_payload)

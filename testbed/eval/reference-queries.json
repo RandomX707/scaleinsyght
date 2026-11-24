@@ -181,5 +181,46 @@
   "H09": {
     "s": "SELECT count(*) AS value FROM orders WHERE amount < 25"
   },
-  "H10": null
+  "H10": null,
+  "Q31": {
+    "s": "SELECT d.department_name AS label,count(*) AS value FROM orders o JOIN departments d ON o.department_id=d.department_id GROUP BY d.department_name"
+  },
+  "Q32": {
+    "p": "SELECT order_status AS label,count(*) AS value FROM orders GROUP BY order_status ORDER BY value DESC, order_status"
+  },
+  "Q33": {
+    "x": [
+      "Charges",
+      "Charge Type",
+      "group",
+      null,
+      null
+    ]
+  },
+  "Q34": {
+    "p": "SELECT count(*) AS value FROM orders o JOIN departments d ON o.department_id=d.department_id WHERE d.department_name='Cardiology'"
+  },
+  "Q35": {
+    "p": "SELECT count(*) AS value FROM orders WHERE order_status='placed'"
+  },
+  "Q36": {
+    "p": "SELECT count(*) AS value FROM providers"
+  },
+  "Q37": {
+    "x": [
+      "Visits",
+      "Admitted On",
+      "gte",
+      "2025-07-01",
+      null
+    ]
+  },
+  "Q38": {
+    "p": "SELECT count(*) AS value FROM orders",
+    "s": "SELECT count(*) AS value FROM orders"
+  },
+  "Q39": {
+    "p": "SELECT department_id AS label,count(*) AS value FROM orders GROUP BY department_id ORDER BY value DESC, department_id OFFSET 0 ROWS FETCH NEXT 3 ROWS ONLY"
+  },
+  "Q40": null
 }
