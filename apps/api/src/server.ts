@@ -3,7 +3,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { withTenant, getUsage } from '@scaleinsyght/db';
 import { activateConnection, approveGovernedVersion, createConnectionDraft, createGovernedDraft, deletePersonalMemory, getApprovedGovernedVersion, getPersonalMemory, moveConnectionToGroup, putPersonalMemory, type ConnectorType, type PersonalMemoryData } from '@scaleinsyght/registry';
-import { type ReadOnlyConnector, type SourceConnectorType } from '@scaleinsyght/connectors';
+import { decryptConnectionSecret, encryptConnectionSecret, createPostgresConnector, type ReadOnlyConnector, type SourceConnectorType } from '@scaleinsyght/connectors';
 import { EncryptedArtifactStore } from '@scaleinsyght/artifacts';
 import { getNotifications, markNotificationRead, readConnectionScope, readWorkbook, retireConnection, runProfile, saveConnectionScope, storeWorkbook } from '@scaleinsyght/profiler';
 import { applyPersonalContext, createAnalyticPlan, startAnalyticRun, submitFeedback, type StructuredAnswer } from '@scaleinsyght/analytic';
@@ -53,10 +53,19 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
   const app=Fastify({logger:false,bodyLimit:25*1024*1024});
   const oidcFetch=options.oidcFetch??fetch;
   const postgresConnectors=new Map<string,ReadOnlyConnector>();
-  const connectorFor=(sourceId:string):ReadOnlyConnector=>{
-    const injectedConnector = options.testConnectorFor?.(sourceId);
-    if (injectedConnector) return injectedConnector;
-    throw new Error('source_connection_requires_credentials');
+  const connectorForConnection=async(tenantId:string,connectionId:string):Promise<ReadOnlyConnector>=>{
+    const saved=await withTenant(options.pool,tenantId,async(client)=>client.query<{connector_type:string;source_ref:string|null;display_name:string;ciphertext:Buffer|null;nonce:Buffer|null;auth_tag:Buffer|null}>(
+      `SELECT c.connector_type,c.source_ref,c.display_name,s.ciphertext,s.nonce,s.auth_tag
+       FROM registry.connections c LEFT JOIN LATERAL (SELECT ciphertext,nonce,auth_tag FROM registry.connection_secrets
+       WHERE tenant_id=c.tenant_id AND connection_id=c.connection_id ORDER BY secret_version DESC LIMIT 1) s ON true
+       WHERE c.tenant_id=$1 AND c.connection_id=$2`,[tenantId,connectionId]));
+    const row=saved.rows[0];if(!row)throw new Error('connection_not_found');
+    if(row.source_ref){const injected=options.testConnectorFor?.(row.source_ref);if(injected)return injected;}
+    const cached=postgresConnectors.get(connectionId);if(cached)return cached;
+    if(row.connector_type!=='postgres'||!row.ciphertext||!row.nonce||!row.auth_tag)throw new Error('source_connection_requires_credentials');
+    const secret=decryptConnectionSecret<{host:string;port:number;database:string;username:string;password:string;sslMode:'disable'|'require'|'verify-full'}>({version:1,ciphertext:row.ciphertext.toString('base64'),nonce:row.nonce.toString('base64'),authTag:row.auth_tag.toString('base64')});
+    const url=new URL('postgresql://placeholder');url.hostname=secret.host;url.port=String(secret.port);url.username=secret.username;url.password=secret.password;url.pathname=`/${secret.database}`;url.searchParams.set('sslmode',secret.sslMode);
+    const connector=createPostgresConnector({connectionString:url.toString(),id:connectionId,name:row.display_name||'PostgreSQL source',statementTimeoutMs:10_000,maxRows:1_000});postgresConnectors.set(connectionId,connector);return connector;
   };
   const availableConnectorSources=()=> (options.testSources??[]).filter(source=>['postgres','sql_server','snowflake','excel','lake','crm'].includes(source.type));
   app.get('/api/gateways',async(request,reply)=>{
@@ -915,12 +924,13 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
   app.get('/api/connections',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const result=await withTenant(options.pool,current.tenantId,async(client)=>client.query(
-      `SELECT c.connection_id,c.connector_type,c.status,c.source_ref,c.connector_agent_id,
+      `SELECT c.connection_id,c.connector_type,c.status,c.source_ref,c.display_name,c.connector_agent_id,
         (SELECT state FROM profiler.jobs j WHERE j.tenant_id=c.tenant_id AND j.connection_id=c.connection_id ORDER BY created_at DESC LIMIT 1) AS last_job_state
        FROM registry.connections c WHERE c.tenant_id=$1 ORDER BY c.created_at DESC`,[current.tenantId]));
     return reply.send({connections:result.rows.map((row)=>({
       connectionId:row.connection_id,
       connectorType:row.connector_type,
+      displayName:row.display_name,
       status:row.status,
       agentId:row.connector_agent_id,
       lastJobState:row.last_job_state,
@@ -968,30 +978,33 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
       return reply.code(201).send({...run,governedId:request.params.governedId,version:approved.version});
     }catch(error){const code=error instanceof Error?error.message:'governed_run_failed';if(['governed_version_not_found','governed_version_not_approved'].includes(code))return reply.code(404).send({error:code});if(code==='principal_not_entitled')return reply.code(403).send({error:code});if(code==='governed_plan_mismatch'||code.startsWith('analytic_plan'))return reply.code(400).send({error:code});throw error;}
   });
-  app.post<{Body:{sourceId?:string}}>('/api/connections',async(request,reply)=>{
+  app.post<{Body:{sourceId?:string;connectorType?:string;displayName?:string;credential?:{host?:string;port?:number;database?:string;username?:string;password?:string;sslMode?:string}}}>('/api/connections',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
-    const source=availableConnectorSources().find((item)=>item.id===request.body?.sourceId);
-    if(!source)return reply.code(400).send({error:'connector_source_not_found'});
-    const draft=await createConnectionDraft(options.pool,{tenantId:current.tenantId,connectorType:source.type as ConnectorType,sourceRef:source.id});
-    return reply.code(201).send({connectionId:draft.connectionId,status:'draft',connectorType:source.type,sourceName:source.name});
+    const source=request.body?.sourceId?availableConnectorSources().find((item)=>item.id===request.body?.sourceId):undefined;
+    if(request.body?.sourceId&&!source)return reply.code(400).send({error:'connector_source_not_found'});
+    const connectorType=source?.type??request.body?.connectorType;
+    if(connectorType!=='postgres')return reply.code(400).send({error:'connector_type_unsupported'});
+    const displayName=(request.body?.displayName??source?.name??'').trim();if(displayName.length<1||displayName.length>120)return reply.code(400).send({error:'connection_name_invalid'});
+    if(source){const draft=await createConnectionDraft(options.pool,{tenantId:current.tenantId,connectorType:source.type as ConnectorType,sourceRef:source.id});await withTenant(options.pool,current.tenantId,client=>client.query('UPDATE registry.connections SET display_name=$3 WHERE tenant_id=$1 AND connection_id=$2',[current.tenantId,draft.connectionId,displayName]));return reply.code(201).send({connectionId:draft.connectionId,status:'draft',connectorType:source.type,sourceName:displayName});}
+    const input=request.body?.credential;const sslMode=input?.sslMode??'require';
+    if(!input?.host||input.host.length>253||!Number.isInteger(input.port)||input.port!<1||input.port!>65535||!input.database||input.database.length>63||!input.username||input.username.length>128||!input.password||input.password.length>1024||!['disable','require','verify-full'].includes(sslMode))return reply.code(400).send({error:'postgres_credentials_invalid'});
+    const encrypted=encryptConnectionSecret({host:input.host,port:input.port,database:input.database,username:input.username,password:input.password,sslMode});
+    const draft=await withTenant(options.pool,current.tenantId,async(client)=>{const inserted=await client.query<{connection_id:string}>("INSERT INTO registry.connections(tenant_id,connector_type,status,display_name) VALUES($1,'postgres','draft',$2) RETURNING connection_id",[current.tenantId,displayName]);const id=inserted.rows[0]!.connection_id;await client.query('INSERT INTO registry.connection_secrets(tenant_id,connection_id,secret_version,ciphertext,nonce,auth_tag) VALUES($1,$2,1,$3,$4,$5)',[current.tenantId,id,Buffer.from(encrypted.ciphertext,'base64'),Buffer.from(encrypted.nonce,'base64'),Buffer.from(encrypted.authTag,'base64')]);return{id};});
+    return reply.code(201).send({connectionId:draft.id,status:'draft',connectorType:'postgres',sourceName:displayName});
   });
   app.post<{Params:{connectionId:string}}>('/api/connections/:connectionId/test',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
-    const draft=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{source_ref:string|null;connector_type:string;status:string}>(
-      'SELECT source_ref,connector_type,status FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2',[current.tenantId,request.params.connectionId]));
-    const row=draft.rows[0];if(!row||row.status!=='draft'||!row.source_ref)return reply.code(404).send({error:'connection_draft_not_found'});
-    const source=availableConnectorSources().find((item)=>item.id===row.source_ref);if(!source||source.type!==row.connector_type)return reply.code(400).send({error:'connection_source_mismatch'});
-    return reply.send(await connectorFor(source.id).test());
+    const draft=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{status:string}>('SELECT status FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2',[current.tenantId,request.params.connectionId]));
+    if(draft.rows[0]?.status!=='draft')return reply.code(404).send({error:'connection_draft_not_found'});
+    try{return reply.send(await (await connectorForConnection(current.tenantId,request.params.connectionId)).test());}catch(error){const code=error instanceof Error?error.message:'connection_test_failed';if(['postgres_connector_role_not_read_only','source_connection_requires_credentials','postgres_connection_string_required'].includes(code))return reply.code(400).send({error:code});throw error;}
   });
   app.post<{Params:{connectionId:string};Body:{scope?:Array<{qualifiedName:string;objectType:string;scopeMode:'profile'|'list_only'|'exclude'}>}}>('/api/connections/:connectionId/activate',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
-    const draft=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{source_ref:string|null;connector_type:string;status:string}>(
-      'SELECT source_ref,connector_type,status FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2',[current.tenantId,request.params.connectionId]));
-    const row=draft.rows[0];if(!row||row.status!=='draft'||!row.source_ref)return reply.code(404).send({error:'connection_draft_not_found'});
-    const source=availableConnectorSources().find((item)=>item.id===row.source_ref);if(!source||source.type!==row.connector_type)return reply.code(400).send({error:'connection_source_mismatch'});
-    const connector=connectorFor(source.id);const checked=await connector.test();if(!checked.ok)return reply.code(400).send({error:'connection_test_failed'});
+    const draft=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{source_ref:string|null;connector_type:string;display_name:string;status:string}>('SELECT source_ref,connector_type,display_name,status FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2',[current.tenantId,request.params.connectionId]));
+    const row=draft.rows[0];if(!row||row.status!=='draft'||row.connector_type!=='postgres')return reply.code(404).send({error:'connection_draft_not_found'});
+    let connector:ReadOnlyConnector;try{connector=await connectorForConnection(current.tenantId,request.params.connectionId);const checked=await connector.test();if(!checked.ok)return reply.code(400).send({error:'connection_test_failed'});}catch(error){const code=error instanceof Error?error.message:'connection_test_failed';if(['postgres_connector_role_not_read_only','source_connection_requires_credentials'].includes(code))return reply.code(400).send({error:code});throw error;}
     const scope=request.body?.scope??[];
-    const activated=await activateConnection(options.pool,{tenantId:current.tenantId,principalId:current.userId,connectorType:source.type as ConnectorType,connectionId:request.params.connectionId,sourceRef:source.id,scope});
+    const activated=await activateConnection(options.pool,{tenantId:current.tenantId,principalId:current.userId,connectorType:'postgres',connectionId:request.params.connectionId,...(row.source_ref?{sourceRef:row.source_ref}:{}),scope});
     await withTenant(options.pool,current.tenantId,async(client)=>{
       await client.query("INSERT INTO registry.capabilities(tenant_id,capability_id,active_version,effect_class,effect_safety,enabled) VALUES($1,'analytic.read',1,'READ','not_applicable',true) ON CONFLICT(tenant_id,capability_id) DO UPDATE SET enabled=true,effect_class='READ',effect_safety='not_applicable'",[current.tenantId]);
       await client.query("INSERT INTO registry.capability_versions(tenant_id,capability_id,version,input_schema,output_schema) VALUES($1,'analytic.read',1,'{}'::jsonb,'{}'::jsonb) ON CONFLICT DO NOTHING",[current.tenantId]);
@@ -999,15 +1012,15 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
       if(!existing.rowCount)await client.query("INSERT INTO core.entitlements(tenant_id,principal_id,capability_id,resource_id,allowed) VALUES($1,$2,'analytic.read',$3,true)",[current.tenantId,current.userId,activated.connectionId]);
     });
     const profile=await runProfile(options.pool,{tenantId:current.tenantId,connectionId:activated.connectionId,connector,jobType:'discovery'});
-    return reply.send({connectionId:activated.connectionId,agentId:activated.agentId,sourceName:source.name,profile});
+    return reply.send({connectionId:activated.connectionId,agentId:activated.agentId,sourceName:row.display_name,profile});
   });
   app.post<{Params:{connectionId:string};Body:{jobType?:'profile'|'nightly'}}>('/api/connections/:connectionId/discover',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const connection=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{source_ref:string|null;status:string}>(
       'SELECT source_ref,status FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2',[current.tenantId,request.params.connectionId]));
-    const row=connection.rows[0];if(!row||row.status!=='active'||!row.source_ref)return reply.code(404).send({error:'active_connection_not_found'});
+    const row=connection.rows[0];if(!row||row.status!=='active')return reply.code(404).send({error:'active_connection_not_found'});
     if(request.body?.jobType&&!['profile','nightly'].includes(request.body.jobType))return reply.code(400).send({error:'invalid_job_type'});
-    const result=await runProfile(options.pool,{tenantId:current.tenantId,connectionId:request.params.connectionId,connector:connectorFor(row.source_ref),jobType:request.body?.jobType??'profile'});
+    const result=await runProfile(options.pool,{tenantId:current.tenantId,connectionId:request.params.connectionId,connector:await connectorForConnection(current.tenantId,request.params.connectionId),jobType:request.body?.jobType??'profile'});
     return reply.send(result);
   });
   app.get<{Params:{connectionId:string}}>('/api/connections/:connectionId/profile',async(request,reply)=>{
