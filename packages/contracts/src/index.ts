@@ -1,4 +1,5 @@
 import { z } from 'zod';
+export { QueryIntentSchema, parseQueryIntent, type QueryIntent } from './query-intent.js';
 
 export const PrincipalSchema = z.object({
   tenant_id: z.string().min(1),

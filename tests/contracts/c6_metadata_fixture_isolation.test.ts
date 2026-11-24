@@ -3,7 +3,7 @@ import { config } from 'dotenv';
 import { Pool } from 'pg';
 import { withTenant } from '@scaleinsyght/db';
 import { activateConnection } from '@scaleinsyght/registry';
-import { importGoldenMetadata } from '@scaleinsyght/graph';
+import { importGoldenMetadata } from '../support/golden-graph.js';
 
 config({path:'.env'});
 function testUrl(key:'DATABASE_URL'|'DATABASE_URL_MIGRATE'):string{

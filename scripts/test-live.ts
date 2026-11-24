@@ -39,7 +39,7 @@ try {
     await db.query('INSERT INTO core.users(tenant_id,email,password_hash) VALUES($1,$2,$3)', [tenantId, loginEmail, hashPassword('synthetic-local-password')]);
   });
 
-  const server = await buildServer({ pool: appPool, sessionSecret: secret, goldenAccounts: [{ tenantId, email: loginEmail }] });
+  const server = await buildServer({ pool: appPool, sessionSecret: secret, testAccounts: [{ tenantId, email: loginEmail }] });
   try {
     const login = await server.inject({ method: 'POST', url: '/api/auth/login', payload: { email: loginEmail, password: 'synthetic-local-password' } });
     if (login.statusCode !== 200) throw new Error('live_demo_login_failed');

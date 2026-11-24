@@ -1,11 +1,11 @@
 import { config } from 'dotenv';
 import { Pool } from 'pg';
 import { withTenant } from '@scaleinsyght/db';
-import golden from '../tests/golden/phase0.json' with { type:'json' };
-import phase3E2e from '../tests/golden/phase3-e2e.json' with { type:'json' };
-import phase4 from '../tests/golden/phase4.json' with { type:'json' };
-import phase4E2e from '../tests/golden/phase4-e2e.json' with { type:'json' };
-import { hashPassword } from '../apps/api/src/server.js';
+import golden from '../golden/phase0.json' with { type:'json' };
+import phase3E2e from '../golden/phase3-e2e.json' with { type:'json' };
+import phase4 from '../golden/phase4.json' with { type:'json' };
+import phase4E2e from '../golden/phase4-e2e.json' with { type:'json' };
+import { hashPassword } from '../../apps/api/src/server.js';
 
 config({path:'.env'});
 const password='golden-local-only';

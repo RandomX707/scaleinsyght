@@ -1,7 +1,7 @@
 # UI rebuild phase
 
-**Status:** approved by agent, pending review  
-**Branch:** `ui-rebuild`  
+**Status:** approved by agent, pending review
+**Branch:** `ui-rebuild`
 **Scope:** frontend and local demo seed only. Backend routes, schemas, database migrations, and service behavior remain unchanged.
 
 ## Contracts implemented

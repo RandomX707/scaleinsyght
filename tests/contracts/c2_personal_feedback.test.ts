@@ -1,10 +1,12 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { config } from 'dotenv';
 import { Pool } from 'pg';
-import { buildServer, hashPassword } from '@scaleinsyght/api/server';
+import { buildTestServer as buildServer } from '../support/test-api.js';
+import { hashPassword } from '@scaleinsyght/api/server';
 import { activateConnection } from '@scaleinsyght/registry';
-import { createAnalyticPlan, executeGoldenStep, finalizeAnalyticRun, startAnalyticRun } from '@scaleinsyght/analytic';
+import { createAnalyticPlan, finalizeAnalyticRun, startAnalyticRun } from '@scaleinsyght/analytic';
 import { completeStep, type StepClaim } from '@scaleinsyght/runner';
+import { executeGoldenStep } from '../support/test-analytic-executor.js';
 import { withTenant } from '@scaleinsyght/db';
 
 config({ path: '.env' });
@@ -37,7 +39,7 @@ describe('contract 2 personal memory and feedback', () => {
     expect(await completeStep(worker, claim, { resultRef: 'golden://feedback/result', analyticResult: result })).toBe(true);
     expect(await finalizeAnalyticRun(worker, plan.run_id)).toBe('COMPLETED');
 
-    const server = await buildServer({ pool: app, sessionSecret: 's'.repeat(64), goldenAccounts: [
+    const server = await buildServer({ pool: app, sessionSecret: 's'.repeat(64), testAccounts: [
       { tenantId, email: `${tenantId}@synthetic.example` }, { tenantId, email: `${tenantId}-other@synthetic.example` },
     ] });
     try {

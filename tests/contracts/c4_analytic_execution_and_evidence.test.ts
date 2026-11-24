@@ -1,9 +1,10 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { config } from 'dotenv';
 import { Pool } from 'pg';
+import { executeGoldenStep } from '../support/test-analytic-executor.js';
 import { withTenant } from '@scaleinsyght/db';
 import { activateConnection } from '@scaleinsyght/registry';
-import { createAnalyticPlan, executeGoldenStep, finalizeAnalyticRun, startAnalyticRun } from '@scaleinsyght/analytic';
+import { createAnalyticPlan, finalizeAnalyticRun, startAnalyticRun } from '@scaleinsyght/analytic';
 import { completeStep, failStep, type StepClaim } from '@scaleinsyght/runner';
 import { authorise } from '@scaleinsyght/policy';
 

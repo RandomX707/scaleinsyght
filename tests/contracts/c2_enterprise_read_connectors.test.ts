@@ -3,8 +3,9 @@ import { afterAll, beforeAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { config } from 'dotenv';
 import { Pool } from 'pg';
-import { createCrmConnector, createLakeConnector } from '@scaleinsyght/connectors';
-import { buildServer, hashPassword } from '@scaleinsyght/api/server';
+import { createCrmConnector, createLakeConnector } from '../support/test-generic-connectors.js';
+import { buildTestServer as buildServer } from '../support/test-api.js';
+import { hashPassword } from '@scaleinsyght/api/server';
 import { withTenant } from '@scaleinsyght/db';
 
 config({path:'.env'});
@@ -16,7 +17,7 @@ let server:Awaited<ReturnType<typeof buildServer>>;let cookie='';
 describe('contract 2 generic enterprise read connectors', () => {
   beforeAll(async()=>{
     await withTenant(adminPool,tenantId,async(db)=>{await db.query('INSERT INTO core.tenants(tenant_id,name) VALUES($1,$1)',[tenantId]);await db.query('INSERT INTO core.users(tenant_id,email,password_hash) VALUES($1,$2,$3)',[tenantId,email,hashPassword('synthetic-enterprise-password')]);});
-    server=await buildServer({pool:appPool,sessionSecret:'phase6-enterprise-connector-session-secret-0123456789',goldenAccounts:[{tenantId,email}]});
+    server=await buildServer({pool:appPool,sessionSecret:'phase6-enterprise-connector-session-secret-0123456789',testAccounts:[{tenantId,email}]});
     const login=await server.inject({method:'POST',url:'/api/auth/login',payload:{email,password:'synthetic-enterprise-password'}});cookie=String(login.headers['set-cookie']).split(';')[0]!;
   });
   afterAll(async()=>{await server?.close();await appPool.end();await adminPool.end();});
@@ -37,14 +38,9 @@ describe('contract 2 generic enterprise read connectors', () => {
     }
   });
 
-  it('c2_generic_lake_and_crm_sources_register_test_and_activate_through_api',async()=>{
+  it('c2_runtime_rejects_fixture_source_ids_instead_of_activating_test_connectors',async()=>{
     for(const sourceId of ['synthetic-lake','synthetic-crm']){
-      const draft=await server.inject({method:'POST',url:'/api/connections',headers:{cookie},payload:{sourceId}});expect(draft.statusCode).toBe(201);
-      const connectionId=draft.json<{connectionId:string}>().connectionId;
-      const tested=await server.inject({method:'POST',url:`/api/connections/${connectionId}/test`,headers:{cookie}});expect(tested.json()).toMatchObject({ok:true,readOnly:true});
-      const activated=await server.inject({method:'POST',url:`/api/connections/${connectionId}/activate`,headers:{cookie},payload:{scope:[]}});expect(activated.statusCode).toBe(200);
-      const stored=await withTenant(adminPool,tenantId,db=>db.query<{connector_type:string;status:string}>('SELECT connector_type,status FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2',[tenantId,connectionId]));
-      expect(stored.rows[0]).toEqual({connector_type:sourceId==='synthetic-lake'?'lake':'crm',status:'active'});
+      const rejected=await server.inject({method:'POST',url:'/api/connections',headers:{cookie},payload:{sourceId}});expect(rejected.statusCode).toBe(400);expect(rejected.json()).toMatchObject({error:'connector_type_unsupported'});
     }
   });
 });

@@ -1,10 +1,12 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { config } from 'dotenv';
 import { Pool } from 'pg';
-import { buildServer, hashPassword } from '@scaleinsyght/api/server';
+import { buildTestServer as buildServer } from '../support/test-api.js';
+import { hashPassword } from '@scaleinsyght/api/server';
 import { activateConnection } from '@scaleinsyght/registry';
-import { createAnalyticPlan, executeGoldenStep, finalizeAnalyticRun, startAnalyticRun } from '@scaleinsyght/analytic';
+import { createAnalyticPlan, finalizeAnalyticRun, startAnalyticRun } from '@scaleinsyght/analytic';
 import { completeStep, type StepClaim } from '@scaleinsyght/runner';
+import { executeGoldenStep } from '../support/test-analytic-executor.js';
 import { withTenant } from '@scaleinsyght/db';
 import { safeEvidencePack } from '@scaleinsyght/reports';
 
@@ -47,7 +49,7 @@ describe('contract 4 reproducible evidence pack exports', () => {
     expect(await completeStep(worker, claim, { resultRef: 'golden://phase2/evidence-pack', analyticResult: result })).toBe(true);
     expect(await finalizeAnalyticRun(worker, plan.run_id)).toBe('COMPLETED');
 
-    const server = await buildServer({ pool: app, sessionSecret: 's'.repeat(64), goldenAccounts: [{ tenantId, email: `${tenantId}@synthetic.example` }] });
+    const server = await buildServer({ pool: app, sessionSecret: 's'.repeat(64), testAccounts: [{ tenantId, email: `${tenantId}@synthetic.example` }] });
     try {
       const login = await server.inject({ method: 'POST', url: '/api/auth/login', payload: { email: `${tenantId}@synthetic.example`, password: 'synthetic-password' } });
       const response = await server.inject({ method: 'POST', url: `/api/runs/${plan.run_id}/evidence-pack`, headers: { cookie: String(login.headers['set-cookie']), 'content-type': 'application/json' }, payload: { format } });

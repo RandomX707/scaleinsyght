@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { ConnectorScope, DiscoveryResult, ObjectProfile, ReadOnlyConnector, SourceConnectorType } from './index.js';
+import type { ConnectorScope, DiscoveryResult, ObjectProfile, ReadOnlyConnector, SourceConnectorType } from '@scaleinsyght/connectors';
 
 type MetadataAsset = { name: string; kind: 'table' | 'view'; columns: Array<{ name: string; type: string; nullable: boolean }> };
 const definitions: Record<'lake' | 'crm', MetadataAsset[]> = {

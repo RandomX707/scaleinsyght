@@ -2,7 +2,6 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import { EncryptedArtifactStore, type StoredArtifact } from '@scaleinsyght/artifacts';
 import type { ConnectorScope, DiscoveryResult, ObjectProfile, ReadOnlyConnector, ScopeMode } from '@scaleinsyght/connectors';
-import { listGoldenStructuralReferences } from '@scaleinsyght/connectors';
 import { withTenant } from '@scaleinsyght/db';
 
 export interface ScopeRule {
@@ -74,7 +73,7 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
-export async function runGoldenProfile(
+export async function runProfile(
   pool: Pool,
   input: { tenantId: string; connectionId: string; connector: ReadOnlyConnector; jobType: 'discovery' | 'profile' | 'nightly' },
 ): Promise<ProfileSummary> {
@@ -143,7 +142,7 @@ export async function runGoldenProfile(
       }
     }
 
-    const structuralReferences=input.connector.structuralReferences?await input.connector.structuralReferences():listGoldenStructuralReferences();
+    const structuralReferences=input.connector.structuralReferences?await input.connector.structuralReferences():[];
     for (const reference of structuralReferences) {
       const fromId = fieldAssets.get(`${reference.from}.${reference.fromColumn}`);
       const toId = fieldAssets.get(`${reference.to}.${reference.toColumn}`);
@@ -155,21 +154,22 @@ export async function runGoldenProfile(
          DO UPDATE SET relationship_type=EXCLUDED.relationship_type RETURNING relationship_id`,
         [input.tenantId, fromId, toId],
       );
+      const evidenceMethod=reference.evidenceMethod??'declared';
       const existingAssertion = await client.query(
-        `SELECT 1 FROM graph.assertions WHERE tenant_id=$1 AND relationship_id=$2 AND evidence_method='declared' LIMIT 1`,
-        [input.tenantId, relationship.rows[0]!.relationship_id],
+        `SELECT 1 FROM graph.assertions WHERE tenant_id=$1 AND relationship_id=$2 AND evidence_method=$3 LIMIT 1`,
+        [input.tenantId, relationship.rows[0]!.relationship_id,evidenceMethod],
       );
       if (!existingAssertion.rowCount) {
         const evidence = await client.query<{ evidence_id: string }>(
           `INSERT INTO graph.evidence(tenant_id,evidence_type,safe_metadata)
-           VALUES($1,'declared_foreign_key','{"collector":"golden_schema","source":"synthetic"}'::jsonb)
+           VALUES($1,$2,$3::jsonb)
            RETURNING evidence_id`,
-          [input.tenantId],
+          [input.tenantId,evidenceMethod==='declared'?'declared_foreign_key':'inferred_reference', JSON.stringify({ collector: input.connector.name, connector_type: input.connector.type,from_column:reference.fromColumn,to_column:reference.toColumn })],
         );
         await client.query(
           `INSERT INTO graph.assertions(tenant_id,relationship_id,evidence_method,evidence_ids,confidence_score,explanation,collector_version)
-           VALUES($1,$2,'declared',$3,1,'Synthetic declared field metadata','phase1-golden-v1')`,
-          [input.tenantId, relationship.rows[0]!.relationship_id, [evidence.rows[0]!.evidence_id]],
+           VALUES($1,$2,$3,$4,$5,$6,$7)`,
+          [input.tenantId, relationship.rows[0]!.relationship_id,evidenceMethod, [evidence.rows[0]!.evidence_id], evidenceMethod==='declared'?1:0.98,evidenceMethod==='declared'?null:'Column values matched a primary key during source-local structural analysis.', `profile-${input.connector.type}-v1`],
         );
       }
     }

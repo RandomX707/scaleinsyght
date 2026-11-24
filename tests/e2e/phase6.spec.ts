@@ -4,6 +4,7 @@ import { Pool } from 'pg';
 import { hashPassword } from '@scaleinsyght/api/server';
 import { activateConnection } from '@scaleinsyght/registry';
 import { withTenant } from '@scaleinsyght/db';
+import { signInToTestWorkspace } from '../support/e2e-auth.js';
 
 config({path:'.env'});
 function testUrl(key:'DATABASE_URL'|'DATABASE_URL_MIGRATE'){const value=process.env[key];if(!value)throw new Error(`${key} is required for Phase 6 E2E setup`);const url=new URL(value);url.pathname='/si_test';return url.toString();}
@@ -17,7 +18,7 @@ async function createTenant(){
   const source=await activateConnection(app,{tenantId,principalId:userId,connectorType:'postgres'});
   return{tenantId,userId,email,sourceId:source.connectionId};
 }
-async function signIn(page:Page,email:string){await page.goto('/login');await page.getByLabel('Email').fill(email);await page.getByLabel('Password').fill('phase6-ui-password');const pending=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/auth/login');await page.getByRole('button',{name:'Sign in',exact:true}).click();expect((await pending).status()).toBe(200);await page.waitForURL(url=>url.pathname==='/');}
+async function signIn(page:Page,email:string){await signInToTestWorkspace(page,email,'phase6-ui-password');}
 
 test('phase6_gateway_and_sso_settings_ui_shows_secret_once_and_never_again',async({page})=>{
   const tenant=await createTenant();await signIn(page,tenant.email);await page.getByRole('link',{name:/Connectors/}).click();

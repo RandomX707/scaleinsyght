@@ -1,6 +1,6 @@
 # UI Rebuild Design
 
-**Status:** approved by the user's detailed UI brief; implementation branch `ui-rebuild`  
+**Status:** approved by the user's detailed UI brief; implementation branch `ui-rebuild`
 **Reference:** `docs/prototype/index.html`, with `CLAUDE.md` sections 10–11
 
 ## Intent

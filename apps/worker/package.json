@@ -10,6 +10,8 @@
     "@scaleinsyght/db": "workspace:*",
     "@scaleinsyght/runner": "workspace:*",
     "@scaleinsyght/analytic": "workspace:*",
+    "@scaleinsyght/connectors": "workspace:*",
+    "@scaleinsyght/model-gateway": "workspace:*",
     "@scaleinsyght/contracts": "workspace:*",
     "@scaleinsyght/policy": "workspace:*",
     "@scaleinsyght/reports": "workspace:*"

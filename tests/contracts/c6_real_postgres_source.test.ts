@@ -3,7 +3,8 @@ import { config } from 'dotenv';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Pool, Client } from 'pg';
-import { buildServer, hashPassword } from '@scaleinsyght/api/server';
+import { buildTestServer as buildServer } from '../support/test-api.js';
+import { hashPassword } from '@scaleinsyght/api/server';
 import { withTenant } from '@scaleinsyght/db';
 
 config({ path: '.env' });
@@ -24,7 +25,7 @@ describe('contract 6 real PostgreSQL source connector',()=>{
       await db.query('INSERT INTO core.tenants(tenant_id,name) VALUES($1,$1)',[tenantId]);
       await db.query('INSERT INTO core.users(tenant_id,email,password_hash) VALUES($1,$2,$3)',[tenantId,`${tenantId}@synthetic.example`,hashPassword('synthetic-password')]);
     });
-    const server=await buildServer({pool:appPool,sessionSecret:'p'.repeat(64),goldenAccounts:[{tenantId,email:`${tenantId}@synthetic.example`}]});
+    const server=await buildServer({pool:appPool,sessionSecret:'p'.repeat(64),testAccounts:[{tenantId,email:`${tenantId}@synthetic.example`}]});
     const source=new Client({connectionString:sourceUrl});
     try{
       const login=await server.inject({method:'POST',url:'/api/auth/login',payload:{email:`${tenantId}@synthetic.example`,password:'synthetic-password'}});

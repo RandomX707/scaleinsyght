@@ -1,0 +1,5 @@
+table,column,description
+patients,name,Name recorded in the source patient registry.
+patients,date_of_birth,Date of birth recorded for the patient.
+encounters,admitted_at,Timestamp when the encounter began.
+orders,amount,Recorded amount for the order.

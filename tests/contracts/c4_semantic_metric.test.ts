@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { config } from 'dotenv';
 import { Pool } from 'pg';
-import { buildServer, hashPassword } from '@scaleinsyght/api/server';
-import { createGoldenHubAdapters, getGoldenHubFixtures } from '@scaleinsyght/hub-adapters';
+import { buildTestServer as buildServer } from '../support/test-api.js';
+import { hashPassword } from '@scaleinsyght/api/server';
+import { createGoldenHubAdapters, getGoldenHubFixtures } from '../support/golden-hub-adapters.js';
 import { withTenant } from '@scaleinsyght/db';
 
 config({ path: '.env' });
@@ -42,7 +43,7 @@ describe('contract 4 certified metrics through Semantics', () => {
     server = await buildServer({
       pool: appPool,
       sessionSecret: 's'.repeat(64),
-      goldenAccounts: [{ tenantId, email: `${tenantId}@synthetic.example` }],
+      testAccounts: [{ tenantId, email: `${tenantId}@synthetic.example` }],
       hubAdapters: createGoldenHubAdapters(fixture),
     } as Parameters<typeof buildServer>[0]);
     const login = await server.inject({ method: 'POST', url: '/api/auth/login', payload: { email: `${tenantId}@synthetic.example`, password: 'synthetic-password' } });
