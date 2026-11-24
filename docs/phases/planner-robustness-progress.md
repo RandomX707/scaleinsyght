@@ -33,3 +33,17 @@ The stock testbed setup rotates credentials and rebuilds shared sources. Do
 not run it against the review app's sources. Before the three full testbed
 runs, isolate the source setup or arrange a safe path with the user. Do not
 read held-out wording or turn-level outputs for tuning.
+
+## Step 2 checkpoint
+
+The API now supplies a strict catalog-derived JSON response schema, including
+source, table, qualified columns, original headers, valid join pairs, and
+operators. It decodes the response into the existing typed intent, tries up to
+two repairs when decoding or validation fails, and records attempts for accepted
+plans. It also supports inclusive-start, exclusive-end same-column date
+filters on all three connectors. Refusal for absent subjects is currently
+instructed in the planner. Its live reliability has yet to be measured.
+
+The baseline is still the latest full evaluation. Run the live evaluation after
+the async changes. Check refusal reliability and provenance for terminal
+planning refusals in the durable planning work.
