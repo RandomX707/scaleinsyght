@@ -16,12 +16,12 @@ Run migrations with `pnpm db:migrate:test`. Start these three processes from
 the worktree root:
 
 ```sh
-MODEL_DAILY_COST_CAP_USD=1.50 API_PORT=3340 PUBLIC_APP_URL=http://127.0.0.1:4290 ARTIFACT_VOLUME_PATH=.local/planner-eval-artifacts pnpm exec tsx scripts/testbed-api-main.ts
-MODEL_DAILY_COST_CAP_USD=1.50 WORKER_HEALTH_PORT=3341 ARTIFACT_VOLUME_PATH=.local/planner-eval-artifacts pnpm exec tsx scripts/testbed-worker-main.ts
+MODEL_DAILY_COST_CAP_USD=1.50 MODEL_DAILY_TOKEN_CAP=3000000 API_PORT=3340 PUBLIC_APP_URL=http://127.0.0.1:4290 ARTIFACT_VOLUME_PATH=.local/planner-eval-artifacts pnpm exec tsx scripts/testbed-api-main.ts
+MODEL_DAILY_COST_CAP_USD=1.50 MODEL_DAILY_TOKEN_CAP=3000000 WORKER_HEALTH_PORT=3341 ARTIFACT_VOLUME_PATH=.local/planner-eval-artifacts pnpm exec tsx scripts/testbed-worker-main.ts
 API_PROXY_TARGET=http://127.0.0.1:3340 pnpm --filter @scaleinsyght/web dev --host 127.0.0.1 --port 4290 --strictPort
 ```
 
-With the live gateway configured, run `pnpm eval:planner`. It makes a fresh
+The default daily token cap (100,000 per tenant) runs out after about 20 cases, which then fail with `model_budget_daily_cap_reached`; raise it for the evaluation processes as shown. To compare planning models, set `MODEL_CHEAP` on the API and worker processes (planning uses the `cheap` alias); for the larger model raise `MODEL_DAILY_COST_CAP_USD` too. With the live gateway configured, run `pnpm eval:planner`. Run `pnpm eval:planner --set=heldout2` only once, after tuning is finished. It makes a fresh
 tenant in local `si_test`, loads all three sources through the API, and runs
 one case at a time. Follow-ups reuse the conversation. Scoring checks the final
 turn's source identities, numeric values, group labels, and the presence of a
