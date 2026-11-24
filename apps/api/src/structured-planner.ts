@@ -32,7 +32,7 @@ const singular = (word: string) => word.toLowerCase().replace(/ies$/, 'y').repla
 const tokens = (value: string) => value.match(/[a-z]+/gi)?.map(singular) ?? [];
 
 function namedCountSubject(question: string): string | undefined {
-  const subject = /^how many ([a-z][a-z -]{1,85}?)(?: (?:are|were|was|is|have|had|belong|cost|link|exist)(?:\b)|[?!.]|$)/i.exec(question)?.[1];
+  const subject = /^how many ([a-z][a-z -]{1,85}?)(?: (?:are|were|was|is|do|does|did|have|has|had|belong|cost|link|exist)(?:\b)|[?!.]|$)/i.exec(question)?.[1];
   if (!subject) return;
   const nounPhrase = subject.split(/ (?:in|from|on|at|with|of) /i)[0]!;
   const generic = new Set(['record','row','entry','item','one']);

@@ -61,7 +61,7 @@ export async function collectExcelTruth() {
   const visitPatients = column('Visits', 'Patient ID') as number[];
   const perDepartmentPatient = new Map<string, Map<number, number>>();
   departments.forEach((department, index) => { const patients = perDepartmentPatient.get(department) ?? new Map<number, number>(); patients.set(visitPatients[index]!, (patients.get(visitPatients[index]!) ?? 0) + 1); perDepartmentPatient.set(department, patients); });
-  const averageVisitsPerPatientByDepartment = [...perDepartmentPatient.entries()].map(([department, patients]) => ({ department, average: [...patients.values()].reduce((sum, count) => sum + count, 0) / patients.size })).sort((left, right) => left.department.localeCompare(right.department));
+  const averageVisitsPerPatientByDepartment = [...perDepartmentPatient.entries()].map(([department, patients]) => ({ department, average: [...patients.values()].reduce((sum, count) => sum + count, 0) / patients.size, patients: patients.size })).sort((left, right) => left.department.localeCompare(right.department));
   const amounts = column('Charges', 'Amount') as number[];
   const chargeDepartments = column('Charges', 'Department') as string[];
   const totals = new Map<string, number>();

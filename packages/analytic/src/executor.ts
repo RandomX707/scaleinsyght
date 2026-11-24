@@ -104,7 +104,7 @@ export async function finalizeAnalyticRun(pool: Pool, runId: string, compose?: (
         const statement = missing
           ? `${name}: That category does not exist in ${missing.column}. Available values: ${available.slice(0, 400) || 'none'}.`
           : source.withheld
-          ? source.rows ? `${name}: See the displayed counts. Cells marked <11 are withheld to protect privacy.` : `${name}: Fewer than 11, withheld to protect privacy`
+          ? source.rows ? `${name}: See the values in the table. Cells marked <11 cover fewer than 11 records and are withheld to protect privacy.` : `${name}: Fewer than 11, withheld to protect privacy`
           : `${name}: ${source.rows ? 'See the grouped results' : source.value?.toLocaleString('en-US')}`;
         return ClaimSchema.parse({ claim_id: randomUUID(), kind: 'metric', statement, evidence_ids: refs.map(ref => ref.evidence_id) });
       });

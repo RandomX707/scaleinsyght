@@ -15,7 +15,7 @@ type ExcelTruth = {
   nullRates: Record<string, number>;
   sensitiveColumns: Record<string, string[]>;
   relationships: Array<{ from: string; to: string; column: string; matches: number; sourceCount: number; confidence: number }>;
-  answerChecks: { visitCount: number; visitsWithDischargeDate: number; cancelledCharges: number; chargeAmountByDepartmentTop5: Array<{ department: string; amount: number }>; averageVisitsPerPatientByDepartment: Array<{ department: string; average: number }>; patientCount: number };
+  answerChecks: { visitCount: number; visitsWithDischargeDate: number; cancelledCharges: number; chargeAmountByDepartmentTop5: Array<{ department: string; amount: number }>; averageVisitsPerPatientByDepartment: Array<{ department: string; average: number; patients: number }>; patientCount: number };
 };
 const allTruth = JSON.parse(readFileSync('testbed/truth.json', 'utf8')) as { excel: ExcelTruth; rowCounts: Record<string, number> };
 const truth = allTruth.excel;
@@ -109,7 +109,7 @@ test('s3_empty_tenant_uploads_workbook_profiles_and_answers_with_evidence', asyn
   await page.screenshot({ path: 'docs/acceptance/s3/dictionary.png', fullPage: true });
 
   type Captured = { state: string; modelProvenance: Array<{ purpose: string; model: string; inputTokens: number; outputTokens: number; typedPlan: unknown }>; answer: { answer: { claims: Array<{ statement: string }>; evidence: Array<{ locator: string }>; bySource: Array<{ connectorType: string; value: number; rows?: Array<{ group_value: string; value: number }> }> } } };
-  async function askChecked(question: string, expectedSources: number, sql: RegExp) {
+  async function askChecked(question: string, expectedSources: number, sql: RegExp, modelCalls: string[] = ['plan', 'answer']) {
     const responsePromise = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/runs' && response.request().method() === 'POST',{timeout:15_000});
     await page.getByLabel('Ask a question').fill(question);
     await page.getByRole('button', { name: 'Send question' }).click();
@@ -118,7 +118,7 @@ test('s3_empty_tenant_uploads_workbook_profiles_and_answers_with_evidence', asyn
     const { runId } = await response.json() as { runId: string };
     let run: Captured | undefined;
     await expect.poll(async () => { run = await (await page.request.get(`/api/runs/${runId}`)).json() as Captured; return run.state; }, { timeout: 90_000 }).toBe('COMPLETED');
-    expect(run!.modelProvenance.map((call) => call.purpose)).toEqual(['plan', 'answer']);
+    expect(run!.modelProvenance.map((call) => call.purpose)).toEqual(modelCalls);
     for (const call of run!.modelProvenance) { expect(call.model).toBeTruthy(); expect(call.inputTokens).toBeGreaterThan(0); expect(call.outputTokens).toBeGreaterThan(0); }
     const answer = run!.answer.answer;
     expect(answer.bySource).toHaveLength(expectedSources); expect(answer.claims).toHaveLength(1); expect(answer.evidence).toHaveLength(expectedSources);
@@ -154,9 +154,15 @@ test('s3_empty_tenant_uploads_workbook_profiles_and_answers_with_evidence', asyn
   await page.screenshot({ path: 'docs/acceptance/s3/home-group-by.png', fullPage: true });
 
   await page.getByRole('button', { name: 'New chat' }).click();
-  const average = await askChecked('Average number of visits per patient by department in the workbook', 1, /avg/i);
-  expect(average.answer.bySource[0]!.rows?.map((row) => ({ department: row.group_value, average: round(Number(row.value), 6) })).sort((a, b) => a.department.localeCompare(b.department))).toEqual(checks.averageVisitsPerPatientByDepartment.map((row) => ({ department: row.department, average: round(row.average, 6) })));
-  await expect(page.locator('.bar-chart').last().locator('.bar-row')).toHaveCount(checks.averageVisitsPerPatientByDepartment.length);
+  // Departments with fewer than 11 patients are withheld (decision 42): their cells show <11, no chart or summary is drawn,
+  // and the sentence is written in code, so no answer model call is made.
+  const small = checks.averageVisitsPerPatientByDepartment.filter((row) => row.patients < 11);
+  expect(small.length).toBeGreaterThan(0);
+  const average = await askChecked('Average number of visits per patient by department in the workbook', 1, /avg/i, ['plan']);
+  expect(average.answer.bySource[0]!.rows?.map((row) => ({ department: row.group_value, average: row.value as unknown === '<11' ? '<11' : round(Number(row.value), 6) })).sort((a, b) => a.department.localeCompare(b.department))).toEqual(checks.averageVisitsPerPatientByDepartment.map((row) => ({ department: row.department, average: row.patients < 11 ? '<11' : round(row.average, 6) })));
+  await expect(page.locator('.grouped-result').last().locator('.bar-chart')).toHaveCount(0);
+  for (const row of small) await expect(page.locator('.grouped-result').last().locator('tr').filter({ hasText: row.department })).toContainText('<11');
+  expect(average.answer.claims[0]!.statement).toContain('withheld to protect privacy');
 
   // Add the PostgreSQL testbed through the UI and compare patient counts across the two sources.
   await page.goto('/connectors');

@@ -21,6 +21,13 @@ describe('structured planner', () => {
     expect(hasNamedCountSubject('How many insurance claims were denied?',catalog,[])).toBe(false);
     expect(hasNamedCountSubject('How many Charges were cancelled?',catalog,[])).toBe(true);
   });
+  it('reads the subject before do, does or did in a per-group count question', () => {
+    // Regression: the subject used to run on to the last noun ("department"), so plans counting orders were rejected.
+    const orders = [{assets: [{qualified_name:'dbo.orders',columns:[{name:'order_id'},{name:'department_id'}]},{qualified_name:'dbo.departments',columns:[{name:'department_id'},{name:'department_name'}]}]}];
+    const grouped = {source_index:0,kind:'grouped_join',table:'dbo.orders',join:null,groupBy:'dbo.departments.department_name',groupKey:null,entityColumn:null,operation:'count',aggregateColumn:null,order:'desc',limit:null,filters:[]};
+    expect(() => decodePlannerOutput(wrap(grouped), orders, [], 'How many orders does each department have?')).not.toThrow('count_the_named_subject_table');
+    expect(hasNamedCountSubject('How many orders does each department have?',[{assets:[{qualified_name:'dbo.orders',columns:[{name:'order_id'}]}]}],[])).toBe(true);
+  });
   it('separates the subject from a source qualifier', () => {
     expect(hasNamedCountSubject('How many Charges in the workbook were recorded?',catalog,[])).toBe(true);
   });
