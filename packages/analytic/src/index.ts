@@ -66,17 +66,24 @@ function validatePlanGraph(plan: AnalyticPlan): void {
 }
 
 async function validateIntentAssets(client:import('pg').PoolClient,sourceId:string,intent:QueryIntent):Promise<void>{
-  const tables=intent.kind==='join_aggregate'?[intent.leftTable,intent.rightTable]:[intent.table];
+  const tables=intent.kind==='join_aggregate'||intent.kind==='grouped_join'?[intent.leftTable,intent.rightTable]:[intent.table];
   const found=await client.query<{qualified_name:string}>('SELECT qualified_name FROM graph.assets WHERE tenant_id=$1 AND source_id=$2 AND asset_type=\'dataset\' AND active AND qualified_name=ANY($3::text[])',[await client.query("SELECT current_setting('app.tenant_id') AS tenant_id").then(result=>result.rows[0]!.tenant_id),sourceId,tables]);
   if(found.rowCount!==new Set(tables).size)throw new Error('analytic_query_asset_not_found');
   const requiredColumns:string[]=[];
   if(intent.kind==='filtered_count')requiredColumns.push(`${intent.table}.${intent.column}`);
-  if(intent.kind==='group_by'){requiredColumns.push(`${intent.table}.${intent.groupBy}`);if(intent.aggregate.operation==='sum')requiredColumns.push(`${intent.table}.${intent.aggregate.column}`);}
-  if(intent.kind==='join_aggregate'){requiredColumns.push(`${intent.leftTable}.${intent.leftColumn}`,`${intent.rightTable}.${intent.rightColumn}`);if(intent.aggregate.operation==='sum')requiredColumns.push(`${intent.leftTable}.${intent.aggregate.column}`);}
+  if(intent.kind==='group_by')requiredColumns.push(`${intent.table}.${intent.groupBy}`);
+  if(intent.kind==='group_by'&&intent.aggregate.operation==='sum')requiredColumns.push(`${intent.table}.${intent.aggregate.column}`);
+  if(intent.kind==='average_count_by')requiredColumns.push(`${intent.table}.${intent.entityColumn}`,`${intent.table}.${intent.groupBy}`);
+  if(intent.kind==='join_aggregate'||intent.kind==='grouped_join'){
+    requiredColumns.push(`${intent.leftTable}.${intent.leftColumn}`,`${intent.rightTable}.${intent.rightColumn}`);
+    if(intent.kind==='grouped_join')requiredColumns.push(`${intent.groupByTable==='left'?intent.leftTable:intent.rightTable}.${intent.groupBy}`);
+    if(intent.aggregate.operation==='sum')requiredColumns.push(`${intent.leftTable}.${intent.aggregate.column}`);
+    for(const filter of intent.filters??[])requiredColumns.push(`${filter.table==='left'?intent.leftTable:filter.table==='right'?intent.rightTable:filter.table}.${filter.column}`);
+  }
   if(intent.kind==='compare_aggregates'&&intent.aggregate.operation==='sum')requiredColumns.push(`${intent.table}.${intent.aggregate.column}`);
   if(requiredColumns.length){const columns=await client.query<{qualified_name:string}>('SELECT qualified_name FROM graph.assets WHERE tenant_id=current_setting(\'app.tenant_id\') AND source_id=$1 AND asset_type=\'field\' AND active AND qualified_name=ANY($2::text[])',[sourceId,requiredColumns]);if(columns.rowCount!==new Set(requiredColumns).size)throw new Error('analytic_query_column_not_found');}
-  if(intent.kind==='join_aggregate'){
-    const join=await client.query(`SELECT 1 FROM graph.assets sourceField JOIN graph.relationships r ON r.tenant_id=sourceField.tenant_id AND r.from_asset_id=sourceField.asset_id AND r.relationship_type='REFERENCES' JOIN graph.assets targetField ON targetField.tenant_id=r.tenant_id AND targetField.asset_id=r.to_asset_id JOIN graph.assertions a ON a.tenant_id=r.tenant_id AND a.relationship_id=r.relationship_id WHERE sourceField.tenant_id=current_setting('app.tenant_id') AND sourceField.source_id=$1 AND targetField.source_id=$1 AND sourceField.qualified_name=$2 AND targetField.qualified_name=$3 LIMIT 1`,[sourceId,`${intent.leftTable}.${intent.leftColumn}`,`${intent.rightTable}.${intent.rightColumn}`]);
+  if(intent.kind==='join_aggregate'||intent.kind==='grouped_join'){
+    const join=await client.query(`SELECT 1 FROM graph.assets sourceField JOIN graph.relationships r ON r.tenant_id=sourceField.tenant_id AND r.from_asset_id=sourceField.asset_id AND r.relationship_type='REFERENCES' JOIN graph.assets targetField ON targetField.tenant_id=r.tenant_id AND targetField.asset_id=r.to_asset_id JOIN graph.assertions a ON a.tenant_id=r.tenant_id AND a.relationship_id=r.relationship_id WHERE sourceField.tenant_id=current_setting('app.tenant_id') AND sourceField.source_id=$1 AND targetField.source_id=$1 AND sourceField.qualified_name=$2 AND targetField.qualified_name=$3 AND (a.evidence_method='declared' OR (a.evidence_method='inferred' AND a.confidence_score>0.90)) LIMIT 1`,[sourceId,`${intent.leftTable}.${intent.leftColumn}`,`${intent.rightTable}.${intent.rightColumn}`]);
     if(!join.rowCount)throw new Error('analytic_query_join_unasserted');
   }
 }
@@ -113,7 +120,7 @@ export async function validateAnalyticPlan(pool: Pool, input: { tenantId: string
   return { tenantId: input.tenantId, principalId: input.principalId, plan };
 }
 
-export async function startAnalyticRun(pool: Pool, input: { tenantId: string; principalId: string; plan: unknown; governed?: { governedId: string; version: number } }): Promise<{ runId: string }> {
+export async function startAnalyticRun(pool: Pool, input: { tenantId: string; principalId: string; plan: unknown; governed?: { governedId: string; version: number }; conversationId?: string; plannerProvenance?: {model:string;inputTokens:number;outputTokens:number;typedPlan:unknown} }): Promise<{ runId: string }> {
   const validated = await validateAnalyticPlan(pool, input);
   const { plan } = validated; const planHash = plan.plan_hash;
   await withTenant(pool, input.tenantId, async (client) => {
@@ -149,7 +156,17 @@ export async function startAnalyticRun(pool: Pool, input: { tenantId: string; pr
         if(await fingerprint(approved.rows[0]!.plan)!==await fingerprint(plan))throw new Error('governed_plan_mismatch');
       }
       const runId = plan.run_id;
-      await client.query(`INSERT INTO runs.runs(tenant_id,run_id,principal_id,state,plan_id) VALUES($1,$2,$3,'CREATED',$4)`, [input.tenantId, runId, input.principalId, plan.plan_id]);
+      if(input.conversationId){
+        const thread=await client.query('SELECT 1 FROM runs.conversations WHERE tenant_id=$1 AND principal_id=$2 AND conversation_id=$3 FOR UPDATE',[input.tenantId,input.principalId,input.conversationId]);
+        if(!thread.rowCount)throw new Error('conversation_not_found');
+        await client.query(`UPDATE runs.conversations SET title=CASE WHEN NOT EXISTS(SELECT 1 FROM runs.runs WHERE tenant_id=$1 AND conversation_id=$3) THEN $4 ELSE title END,updated_at=clock_timestamp() WHERE tenant_id=$1 AND principal_id=$2 AND conversation_id=$3`,[input.tenantId,input.principalId,input.conversationId,plan.question.slice(0,200)]);
+      }
+
+      await client.query(`INSERT INTO runs.runs(tenant_id,run_id,principal_id,state,plan_id,conversation_id) VALUES($1,$2,$3,'CREATED',$4,$5)`, [input.tenantId, runId, input.principalId, plan.plan_id,input.conversationId??null]);
+      if(input.plannerProvenance){
+        const call=input.plannerProvenance;
+        await client.query("INSERT INTO runs.model_provenance(tenant_id,run_id,call_purpose,model_name,input_tokens,output_tokens,typed_plan) VALUES($1,$2,'plan',$3,$4,$5,$6::jsonb)",[input.tenantId,runId,call.model,call.inputTokens,call.outputTokens,JSON.stringify(call.typedPlan)]);
+      }
       if(input.governed)await client.query('INSERT INTO runs.governed_run_pins(tenant_id,run_id,governed_id,version) VALUES($1,$2,$3,$4)',[input.tenantId,runId,input.governed.governedId,input.governed.version]);
       await client.query('INSERT INTO runs.analytic_plans(tenant_id,run_id,plan,plan_hash) VALUES($1,$2,$3::jsonb,$4)', [input.tenantId, runId, JSON.stringify(plan), planHash]);
       const decision = await client.query<{ decision_id: string }>(

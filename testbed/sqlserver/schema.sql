@@ -17,7 +17,7 @@ CREATE TABLE dbo.patients (
   name nvarchar(120) NOT NULL,
   date_of_birth date NOT NULL,
   mrn nvarchar(40) NOT NULL CONSTRAINT UQ_patients_mrn UNIQUE,
-  phone nvarchar(40) NOT NULL,
+  phone nvarchar(40) NULL,
   created_at datetime2(0) NOT NULL
 );
 CREATE TABLE dbo.encounters (

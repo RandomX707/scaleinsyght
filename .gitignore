@@ -11,3 +11,4 @@ __pycache__/
 *.log
 *.tsbuildinfo
 .DS_Store
+docs/acceptance/testbed/

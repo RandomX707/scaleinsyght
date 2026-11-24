@@ -9,7 +9,7 @@ FROM generate_series(1, 24) AS n;
 
 INSERT INTO patients
 SELECT n, 'Patient ' || lpad(n::text, 4, '0'), date '1940-01-01' + ((n * 37) % 26000),
-       'MRN-' || lpad(n::text, 6, '0'), '555-01' || lpad(n::text, 5, '0'),
+       'MRN-' || lpad(n::text, 6, '0'), CASE WHEN n % 7 = 0 THEN NULL ELSE '555-01' || lpad(n::text, 5, '0') END,
        timestamptz '2024-01-01 00:00:00+00' + n * interval '1 minute'
 FROM generate_series(1, 500) AS n;
 

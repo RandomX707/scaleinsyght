@@ -17,7 +17,7 @@ CREATE TABLE patients (
   name text NOT NULL,
   date_of_birth date NOT NULL,
   mrn text NOT NULL UNIQUE,
-  phone text NOT NULL,
+  phone text,
   created_at timestamptz NOT NULL
 );
 CREATE TABLE encounters (

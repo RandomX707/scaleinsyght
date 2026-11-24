@@ -1,0 +1,2 @@
+table,column,description
+departments,department_name,An emergency visit is an encounter assigned to the department named emergency. Join encounters to departments using department_id. The source spells that label Emergency.

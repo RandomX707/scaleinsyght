@@ -21,7 +21,7 @@ INSERT INTO dbo.patients(patient_id,name,date_of_birth,mrn,phone,created_at)
 SELECT n,N'Patient '+RIGHT(N'0000'+CONVERT(nvarchar(10),n),4),
        DATEADD(day,(n*37)%26000,CONVERT(date,'1940-01-01')),
        N'MRN-'+RIGHT(N'000000'+CONVERT(nvarchar(10),n),6),
-       N'555-01'+RIGHT(N'00000'+CONVERT(nvarchar(10),n),5),
+       CASE WHEN n%9=0 THEN NULL ELSE N'555-01'+RIGHT(N'00000'+CONVERT(nvarchar(10),n),5) END,
        DATEADD(minute,n,CONVERT(datetime2(0),'2024-01-01T00:00:00'))
 FROM n;
 

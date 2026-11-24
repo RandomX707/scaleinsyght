@@ -18,6 +18,11 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primar
 export function Button({ variant = 'secondary', size = 'default', className = '', ...props }: ButtonProps) { return <button className={`ui-button ui-button--${variant}${size === 'small' ? ' ui-button--small' : ''} ${className}`.trim()} {...props} />; }
 
 export function Input({ className = '', ...props }: InputHTMLAttributes<HTMLInputElement>) { return <input className={`ui-input ${className}`.trim()} {...props} />; }
+export function FileInput({ label, accept, onChange }: { label: string; accept?: string; onChange: (event: React.ChangeEvent<HTMLInputElement>) => void }) {
+  const ref = React.useRef<HTMLInputElement>(null);
+  const [filename, setFilename] = React.useState('No file selected');
+  return <div className="ui-file-input"><input ref={ref} className="ui-file-input__native" type="file" aria-label={label} accept={accept} onChange={event => { setFilename(event.currentTarget.files?.[0]?.name ?? 'No file selected'); onChange(event); }} /><Button type="button" onClick={() => ref.current?.click()}>Choose file</Button><span aria-live="polite">{filename}</span></div>;
+}
 export function Textarea({ className = '', ...props }: TextareaHTMLAttributes<HTMLTextAreaElement>) { return <textarea className={`ui-textarea ${className}`.trim()} {...props} />; }
 export function Select({ className = '', ...props }: SelectHTMLAttributes<HTMLSelectElement>) { return <select className={`ui-select ${className}`.trim()} {...props} />; }
 

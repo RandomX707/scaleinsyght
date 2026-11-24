@@ -12,6 +12,8 @@ export type SqlServerTruth = {
   nullRates: Record<string, number>;
   metrics: Record<string, number>;
   inferredRelationship: { from: string; to: string; matches: number; sourceCount: number; targetCount: number; declared: false };
+  inferredRelationships:Array<{from:string;to:string;matches:number;sourceCount:number;confidence:number;declared:false}>;
+  expectedRelationships:Array<{from:string;to:string;evidenceMethod:'declared'|'inferred';confidence:number}>;
   sharedPatientIds: number;
   sharedEncounterIds: number;
   answerMetrics: {
@@ -44,6 +46,7 @@ UNION ALL SELECT 'sensitiveColumns|' + t.name + '.' + c.name + '|' + CONVERT(var
   WHERE ep.class=1 AND ep.name='sensitivity' AND t.schema_id=SCHEMA_ID('dbo')
 UNION ALL SELECT 'nullRates|patients.phone|' + CONVERT(varchar(40),CONVERT(decimal(18,10),SUM(CASE WHEN phone IS NULL THEN 1 ELSE 0 END)*1.0/NULLIF(COUNT_BIG(*),0))) FROM dbo.patients
 UNION ALL SELECT 'nullRates|encounters.discharged_at|' + CONVERT(varchar(40),CONVERT(decimal(18,10),SUM(CASE WHEN discharged_at IS NULL THEN 1 ELSE 0 END)*1.0/NULLIF(COUNT_BIG(*),0))) FROM dbo.encounters
+UNION ALL SELECT 'metrics|patients_with_phone|' + CONVERT(varchar(40),COUNT_BIG(phone)) FROM dbo.patients
 UNION ALL SELECT 'metrics|patients|' + CONVERT(varchar(40),COUNT_BIG(*)) FROM dbo.patients
 UNION ALL SELECT 'metrics|encounters|' + CONVERT(varchar(40),COUNT_BIG(*)) FROM dbo.encounters
 UNION ALL SELECT 'metrics|orders|' + CONVERT(varchar(40),COUNT_BIG(*)) FROM dbo.orders
@@ -102,6 +105,19 @@ SELECT 'encounterId|' + CONVERT(varchar(20),encounter_id) FROM dbo.encounters OR
   const patientIds = new Set(ids.split(/\r?\n/).filter((line) => line.startsWith('patientId|')).map((line) => line.slice('patientId|'.length)));
   const encounterIds = new Set(ids.split(/\r?\n/).filter((line) => line.startsWith('encounterId|')).map((line) => line.slice('encounterId|'.length)));
   const sharedCount = (left: Set<string>, right: Set<string>) => [...left].filter((id) => right.has(id)).length;
+  const candidateLines=runSqlServerAdminQuery(`SET NOCOUNT ON;
+SELECT ss.name+'.'+st.name+'|'+sc.name+'|'+ts.name+'.'+tt.name+'|'+tc.name
+FROM sys.columns sc JOIN sys.tables st ON st.object_id=sc.object_id JOIN sys.schemas ss ON ss.schema_id=st.schema_id
+JOIN sys.columns tc ON tc.name=sc.name JOIN sys.tables tt ON tt.object_id=tc.object_id JOIN sys.schemas ts ON ts.schema_id=tt.schema_id
+JOIN sys.types stype ON stype.user_type_id=sc.user_type_id JOIN sys.types ttype ON ttype.user_type_id=tc.user_type_id AND ttype.system_type_id=stype.system_type_id
+JOIN sys.index_columns ik ON ik.object_id=tc.object_id AND ik.column_id=tc.column_id JOIN sys.indexes ix ON ix.object_id=ik.object_id AND ix.index_id=ik.index_id AND ix.is_primary_key=1
+WHERE st.object_id<>tt.object_id AND ss.name='dbo' AND ts.name='dbo'
+AND NOT EXISTS(SELECT 1 FROM sys.index_columns sik JOIN sys.indexes six ON six.object_id=sik.object_id AND six.index_id=sik.index_id AND six.is_primary_key=1 WHERE sik.object_id=sc.object_id AND sik.column_id=sc.column_id)
+AND NOT EXISTS(SELECT 1 FROM sys.foreign_key_columns f JOIN sys.columns fc ON fc.object_id=f.parent_object_id AND fc.column_id=f.parent_column_id JOIN sys.columns tc2 ON tc2.object_id=f.referenced_object_id AND tc2.column_id=f.referenced_column_id WHERE f.parent_object_id=st.object_id AND f.referenced_object_id=tt.object_id AND fc.name=sc.name AND tc2.name=tc.name)
+ORDER BY ss.name,st.name,sc.name,ts.name,tt.name,tc.name;`, 'si_testbed_sqlserver');
+  const inferredRelationships:Array<{from:string;to:string;matches:number;sourceCount:number;confidence:number;declared:false}>=[];
+  const quoteSql=(value:string)=>`[${value.replaceAll(']',']]')}]`;
+  for(const line of candidateLines.split(/\r?\n/).filter(Boolean)){const [fromTable,fromColumn,toTable,toColumn]=line.split('|');if(!fromTable||!fromColumn||!toTable||!toColumn)continue;const sourceParts=fromTable.split('.'),targetParts=toTable.split('.');const counts=runSqlServerAdminQuery(`SET NOCOUNT ON;SELECT COUNT_BIG(src.${quoteSql(fromColumn)}) AS source_count,COUNT_BIG(dst.${quoteSql(toColumn)}) AS matches FROM ${quoteSql(sourceParts[0]!)}.${quoteSql(sourceParts[1]!)} src LEFT JOIN ${quoteSql(targetParts[0]!)}.${quoteSql(targetParts[1]!)} dst ON src.${quoteSql(fromColumn)}=dst.${quoteSql(toColumn)};`,'si_testbed_sqlserver').split(/\r?\n/).filter(Boolean).at(-1)?.split(/\s+/)??[];const sourceCount=Number(counts[0]),matches=Number(counts[1]);if(sourceCount&&matches/sourceCount>=0.98)inferredRelationships.push({from:`${fromTable}.${fromColumn}`,to:`${toTable}.${toColumn}`,matches,sourceCount,confidence:matches/sourceCount,declared:false});}
   const inferred = parsed.get('inferredRelationship|count') ?? [];
   const inferredMatches = Number(inferred[0] ?? 0);
   const inferredSourceCount = Number(inferred[1] ?? 0);
@@ -136,6 +152,8 @@ SELECT 'encounterId|' + CONVERT(varchar(20),encounter_id) FROM dbo.encounters OR
       from: 'encounters.patient_id', to: 'patients.patient_id', matches: inferredMatches,
       sourceCount: inferredSourceCount, targetCount: inferredTargetCount, declared: false,
     },
+    inferredRelationships,
+    expectedRelationships:[...foreignKeys.map(item=>({from:`dbo.${item.from}`,to:`dbo.${item.to}`,evidenceMethod:'declared' as const,confidence:1})),...inferredRelationships.map(item=>({from:item.from,to:item.to,evidenceMethod:'inferred' as const,confidence:item.confidence}))],
     sharedPatientIds: sharedCount(pgPatientIds, patientIds),
     sharedEncounterIds: sharedCount(pgEncounterIds, encounterIds),
     answerMetrics: { emergencyVisits2025, ordersPerDepartmentTop5, averageEncountersPerPatientByProvider },
