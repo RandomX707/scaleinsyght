@@ -14,6 +14,11 @@ export type SqlServerTruth = {
   inferredRelationship: { from: string; to: string; matches: number; sourceCount: number; targetCount: number; declared: false };
   sharedPatientIds: number;
   sharedEncounterIds: number;
+  answerMetrics: {
+    emergencyVisits2025: number;
+    ordersPerDepartmentTop5: Array<{ departmentId: number; departmentName: string; orderCount: number }>;
+    averageEncountersPerPatientByProvider: Array<{ providerId: number; average: number }>;
+  };
 };
 
 const truthQuery = `
@@ -68,6 +73,17 @@ function numericMap(parsed: Map<string, string[]>, key: string): Record<string, 
 
 export async function collectSqlServerTruth(postgres: Client): Promise<SqlServerTruth> {
   const parsed = parseMetricLines(runSqlServerAdminQuery(truthQuery, 'si_testbed_sqlserver'));
+  const answerLines = runSqlServerAdminQuery(`SET NOCOUNT ON;
+SELECT 'emergencyVisits2025|' + CONVERT(varchar(30),COUNT_BIG(*))
+FROM dbo.encounters e JOIN dbo.departments d ON d.department_id=e.department_id
+WHERE d.department_name=N'Emergency' AND e.admitted_at>='2025-01-01' AND e.admitted_at<'2026-01-01'
+UNION ALL SELECT 'ordersPerDepartmentTop5|' + CONVERT(varchar(10),department_id) + '|' + department_name + '|' + CONVERT(varchar(30),order_count)
+FROM (SELECT TOP (5) d.department_id,d.department_name,COUNT_BIG(*) AS order_count
+  FROM dbo.departments d JOIN dbo.orders o ON o.department_id=d.department_id
+  GROUP BY d.department_id,d.department_name ORDER BY COUNT_BIG(*) DESC,d.department_id) top_departments
+UNION ALL SELECT 'averageEncountersPerPatientByProvider|' + CONVERT(varchar(10),provider_id) + '|' + CONVERT(varchar(40),AVG(encounter_count*1.0))
+FROM (SELECT provider_id,patient_id,COUNT_BIG(*) AS encounter_count FROM dbo.encounters GROUP BY provider_id,patient_id) per_patient
+GROUP BY provider_id;`, 'si_testbed_sqlserver');
   const foreignKeys = [...parsed.entries()]
     .filter(([key]) => key.startsWith('foreignKeys|'))
     .map(([key, value]) => ({ from: key.slice('foreignKeys|'.length), to: value[0] ?? '' }))
@@ -90,6 +106,18 @@ SELECT 'encounterId|' + CONVERT(varchar(20),encounter_id) FROM dbo.encounters OR
   const inferredMatches = Number(inferred[0] ?? 0);
   const inferredSourceCount = Number(inferred[1] ?? 0);
   const inferredTargetCount = Number(inferred[2] ?? 0);
+  const answerMetricLines = answerLines.split(/\r?\n/).filter(Boolean);
+  const emergencyVisits2025 = Number(answerMetricLines.find((line) => line.startsWith('emergencyVisits2025|'))?.split('|')[1] ?? NaN);
+  const ordersPerDepartmentTop5 = answerMetricLines.filter((line) => line.startsWith('ordersPerDepartmentTop5|')).map((line) => {
+    const [, departmentId, departmentName, orderCount] = line.split('|');
+    return { departmentId: Number(departmentId), departmentName: departmentName ?? '', orderCount: Number(orderCount) };
+  });
+  const averageEncountersPerPatientByProvider = answerMetricLines.filter((line) => line.startsWith('averageEncountersPerPatientByProvider|')).map((line) => {
+    const [, providerId, average] = line.split('|');
+    return { providerId: Number(providerId), average: Number(average) };
+  });
+  ordersPerDepartmentTop5.sort((left, right) => left.departmentId - right.departmentId);
+  averageEncountersPerPatientByProvider.sort((left, right) => left.providerId - right.providerId);
   const sensitiveColumns = [...parsed.entries()]
     .filter(([key]) => key.startsWith('sensitiveColumns|'))
     .map(([key]) => key.slice('sensitiveColumns|'.length))
@@ -110,5 +138,6 @@ SELECT 'encounterId|' + CONVERT(varchar(20),encounter_id) FROM dbo.encounters OR
     },
     sharedPatientIds: sharedCount(pgPatientIds, patientIds),
     sharedEncounterIds: sharedCount(pgEncounterIds, encounterIds),
+    answerMetrics: { emergencyVisits2025, ordersPerDepartmentTop5, averageEncountersPerPatientByProvider },
   };
 }

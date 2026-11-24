@@ -1,6 +1,6 @@
 {
   "source": "si_testbed_pg",
-  "generatedAt": "2026-11-24T12:06:12.635Z",
+  "generatedAt": "2026-11-24T12:37:42.169Z",
   "rowCounts": {
     "patients": 500,
     "encounters": 700,
@@ -130,6 +130,400 @@
       "declared": false
     },
     "sharedPatientIds": 500,
-    "sharedEncounterIds": 700
+    "sharedEncounterIds": 700,
+    "answerMetrics": {
+      "emergencyVisits2025": 117,
+      "ordersPerDepartmentTop5": [
+        {
+          "departmentId": 1,
+          "departmentName": "Cardiology",
+          "orderCount": 200
+        },
+        {
+          "departmentId": 2,
+          "departmentName": "Neurology",
+          "orderCount": 200
+        },
+        {
+          "departmentId": 3,
+          "departmentName": "Emergency",
+          "orderCount": 200
+        },
+        {
+          "departmentId": 4,
+          "departmentName": "Imaging",
+          "orderCount": 200
+        },
+        {
+          "departmentId": 5,
+          "departmentName": "Laboratory",
+          "orderCount": 200
+        }
+      ],
+      "averageEncountersPerPatientByProvider": [
+        {
+          "providerId": 1,
+          "average": 1
+        },
+        {
+          "providerId": 2,
+          "average": 1
+        },
+        {
+          "providerId": 3,
+          "average": 1
+        },
+        {
+          "providerId": 4,
+          "average": 1
+        },
+        {
+          "providerId": 5,
+          "average": 1
+        },
+        {
+          "providerId": 6,
+          "average": 1
+        },
+        {
+          "providerId": 7,
+          "average": 1
+        },
+        {
+          "providerId": 8,
+          "average": 1
+        },
+        {
+          "providerId": 9,
+          "average": 1
+        },
+        {
+          "providerId": 10,
+          "average": 1
+        },
+        {
+          "providerId": 11,
+          "average": 1
+        },
+        {
+          "providerId": 12,
+          "average": 1
+        },
+        {
+          "providerId": 13,
+          "average": 1
+        },
+        {
+          "providerId": 14,
+          "average": 1
+        },
+        {
+          "providerId": 15,
+          "average": 1
+        },
+        {
+          "providerId": 16,
+          "average": 1
+        },
+        {
+          "providerId": 17,
+          "average": 1
+        },
+        {
+          "providerId": 18,
+          "average": 1
+        },
+        {
+          "providerId": 19,
+          "average": 1
+        },
+        {
+          "providerId": 20,
+          "average": 1
+        },
+        {
+          "providerId": 21,
+          "average": 1
+        },
+        {
+          "providerId": 22,
+          "average": 1
+        },
+        {
+          "providerId": 23,
+          "average": 1
+        },
+        {
+          "providerId": 24,
+          "average": 1
+        }
+      ]
+    }
+  },
+  "answerChecks": {
+    "emergencyVisits2025": {
+      "postgres": 117,
+      "sqlServer": 117
+    },
+    "ordersPerDepartmentTop5": {
+      "postgres": [
+        {
+          "departmentId": 1,
+          "departmentName": "Cardiology",
+          "orderCount": 200
+        },
+        {
+          "departmentId": 2,
+          "departmentName": "Neurology",
+          "orderCount": 200
+        },
+        {
+          "departmentId": 3,
+          "departmentName": "Emergency",
+          "orderCount": 200
+        },
+        {
+          "departmentId": 4,
+          "departmentName": "Imaging",
+          "orderCount": 200
+        },
+        {
+          "departmentId": 5,
+          "departmentName": "Laboratory",
+          "orderCount": 200
+        }
+      ],
+      "sqlServer": [
+        {
+          "departmentId": 1,
+          "departmentName": "Cardiology",
+          "orderCount": 200
+        },
+        {
+          "departmentId": 2,
+          "departmentName": "Neurology",
+          "orderCount": 200
+        },
+        {
+          "departmentId": 3,
+          "departmentName": "Emergency",
+          "orderCount": 200
+        },
+        {
+          "departmentId": 4,
+          "departmentName": "Imaging",
+          "orderCount": 200
+        },
+        {
+          "departmentId": 5,
+          "departmentName": "Laboratory",
+          "orderCount": 200
+        }
+      ]
+    },
+    "averageEncountersPerPatientByProvider": {
+      "postgres": [
+        {
+          "providerId": 1,
+          "average": 1
+        },
+        {
+          "providerId": 2,
+          "average": 1
+        },
+        {
+          "providerId": 3,
+          "average": 1
+        },
+        {
+          "providerId": 4,
+          "average": 1
+        },
+        {
+          "providerId": 5,
+          "average": 1
+        },
+        {
+          "providerId": 6,
+          "average": 1
+        },
+        {
+          "providerId": 7,
+          "average": 1
+        },
+        {
+          "providerId": 8,
+          "average": 1
+        },
+        {
+          "providerId": 9,
+          "average": 1
+        },
+        {
+          "providerId": 10,
+          "average": 1
+        },
+        {
+          "providerId": 11,
+          "average": 1
+        },
+        {
+          "providerId": 12,
+          "average": 1
+        },
+        {
+          "providerId": 13,
+          "average": 1
+        },
+        {
+          "providerId": 14,
+          "average": 1
+        },
+        {
+          "providerId": 15,
+          "average": 1
+        },
+        {
+          "providerId": 16,
+          "average": 1
+        },
+        {
+          "providerId": 17,
+          "average": 1
+        },
+        {
+          "providerId": 18,
+          "average": 1
+        },
+        {
+          "providerId": 19,
+          "average": 1
+        },
+        {
+          "providerId": 20,
+          "average": 1
+        },
+        {
+          "providerId": 21,
+          "average": 1
+        },
+        {
+          "providerId": 22,
+          "average": 1
+        },
+        {
+          "providerId": 23,
+          "average": 1
+        },
+        {
+          "providerId": 24,
+          "average": 1
+        }
+      ],
+      "sqlServer": [
+        {
+          "providerId": 1,
+          "average": 1
+        },
+        {
+          "providerId": 2,
+          "average": 1
+        },
+        {
+          "providerId": 3,
+          "average": 1
+        },
+        {
+          "providerId": 4,
+          "average": 1
+        },
+        {
+          "providerId": 5,
+          "average": 1
+        },
+        {
+          "providerId": 6,
+          "average": 1
+        },
+        {
+          "providerId": 7,
+          "average": 1
+        },
+        {
+          "providerId": 8,
+          "average": 1
+        },
+        {
+          "providerId": 9,
+          "average": 1
+        },
+        {
+          "providerId": 10,
+          "average": 1
+        },
+        {
+          "providerId": 11,
+          "average": 1
+        },
+        {
+          "providerId": 12,
+          "average": 1
+        },
+        {
+          "providerId": 13,
+          "average": 1
+        },
+        {
+          "providerId": 14,
+          "average": 1
+        },
+        {
+          "providerId": 15,
+          "average": 1
+        },
+        {
+          "providerId": 16,
+          "average": 1
+        },
+        {
+          "providerId": 17,
+          "average": 1
+        },
+        {
+          "providerId": 18,
+          "average": 1
+        },
+        {
+          "providerId": 19,
+          "average": 1
+        },
+        {
+          "providerId": 20,
+          "average": 1
+        },
+        {
+          "providerId": 21,
+          "average": 1
+        },
+        {
+          "providerId": 22,
+          "average": 1
+        },
+        {
+          "providerId": 23,
+          "average": 1
+        },
+        {
+          "providerId": 24,
+          "average": 1
+        }
+      ]
+    },
+    "patientCountComparison": {
+      "postgres": 500,
+      "sqlServer": 500,
+      "same": true
+    },
+    "sharedPatientsCount": 500
   }
 }

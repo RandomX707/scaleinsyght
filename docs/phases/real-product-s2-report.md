@@ -1,6 +1,6 @@
 # S2 SQL Server report
 
-**Status:** implemented on `real-product-s2`; PR pending CI
+**Status:** S2 implementation merged by PR #12; SQL-derived review answer truth extended on the S2 branch
 **Spec:** [`real-product-s2.md`](real-product-s2.md)
 **Demo:** [`real-product-s2-demo.md`](real-product-s2-demo.md)
 
@@ -12,6 +12,7 @@
 
 - Added a fictional 2,430-row SQL Server 2022 hospital test source under Colima. It contains five tables, declared foreign keys, an undeclared patient relationship, two views, and two real stored procedures. Patient and encounter identifiers match the PostgreSQL testbed; only shared counts are saved into truth.
 - Added SQL-derived SQL Server counts, column counts, foreign keys, routine/view names, null rates, sensitivity labels, and shared key counts to `testbed/truth.json`.
+- Added SQL-derived answer checks for emergency encounters in 2025, the top five departments by order count, per-provider average encounters per patient, equal patient counts, and the shared-patient count.
 - Added an encrypted SQL Server connector. It requires encrypted transport, defaults to certificate validation, rejects elevated or write-capable logins, limits metadata and analytic result sizes to 1,000 rows, and applies a 10-second driver timeout. Catalog discovery includes views, routines, declared edges, and statistically supported inferred references.
 - Extended the existing API/worker lifecycle and Add Connector UI. Credentials are encrypted before persistence; activation refuses a writer role. Certificate trust override is accepted only for loopback hosts.
 - Added a SQL Server empty-tenant browser walkthrough that checks writer refusal, remote certificate override refusal, encrypted credential storage, seven profiled tables/views, sensitive field labels, inferred ER, stored procedure SQL, and a real Home answer of 500 with query and source evidence.
@@ -33,7 +34,7 @@ Ask “How many patients are in SQL Server hospital?” The checked answer is 50
 |---|---|
 | `pnpm lint` | Passed |
 | `pnpm typecheck` | Passed |
-| `pnpm test` | Passed, 28 files / 78 tests |
+| `pnpm test` | Passed, 28 files / 79 tests after adding the S2 truth-answer regression case |
 | `pnpm test:sqlparse` | Passed, 3 tests |
 | `pnpm test:integration` | Passed, 4 files / 4 tests |
 | `pnpm test:contracts` | Passed, 37 files / 96 tests |

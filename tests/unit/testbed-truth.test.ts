@@ -10,6 +10,13 @@ const truth = JSON.parse(readFileSync('testbed/truth.json', 'utf8')) as {
   sensitiveColumns: string[];
   nullRates: Record<string, number>;
   metrics: Record<string, number>;
+  answerChecks: {
+    emergencyVisits2025: { postgres: number; sqlServer: number };
+    ordersPerDepartmentTop5: { postgres: Array<{ departmentId: number; departmentName: string; orderCount: number }>; sqlServer: Array<{ departmentId: number; departmentName: string; orderCount: number }> };
+    averageEncountersPerPatientByProvider: { postgres: Array<{ providerId: number; average: number }>; sqlServer: Array<{ providerId: number; average: number }> };
+    patientCountComparison: { postgres: number; sqlServer: number; same: boolean };
+    sharedPatientsCount: number;
+  };
 };
 
 describe('real PostgreSQL testbed truth', () => {
@@ -29,6 +36,20 @@ describe('real PostgreSQL testbed truth', () => {
     ]));
     expect(Object.keys(truth.nullRates).length).toBeGreaterThan(0);
     expect(Object.keys(truth.metrics).length).toBeGreaterThan(0);
+  });
+
+  it('truth_contains_sql_derived_answers_for_the_s2_review_questions', () => {
+    expect(truth.answerChecks.emergencyVisits2025).toEqual({ postgres: 117, sqlServer: 117 });
+    for (const source of [truth.answerChecks.ordersPerDepartmentTop5.postgres, truth.answerChecks.ordersPerDepartmentTop5.sqlServer]) {
+      expect(source).toEqual([1, 2, 3, 4, 5].map((departmentId) => ({ departmentId, departmentName: ['Cardiology','Neurology','Emergency','Imaging','Laboratory'][departmentId - 1], orderCount: 200 })));
+    }
+    for (const source of [truth.answerChecks.averageEncountersPerPatientByProvider.postgres, truth.answerChecks.averageEncountersPerPatientByProvider.sqlServer]) {
+      expect(source).toHaveLength(24);
+      expect(source.map((item) => item.providerId)).toEqual(Array.from({ length: 24 }, (_, index) => index + 1));
+      expect(source.every((item) => item.average === 1)).toBe(true);
+    }
+    expect(truth.answerChecks.patientCountComparison).toEqual({ postgres: 500, sqlServer: 500, same: true });
+    expect(truth.answerChecks.sharedPatientsCount).toBe(500);
   });
 
   it('testbed_pg_has_five_hospital_tables_two_views_two_functions_sensitive_tags_and_undeclared_pair', () => {
