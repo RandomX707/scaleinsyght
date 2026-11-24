@@ -83,7 +83,11 @@ async function runCli(): Promise<void> {
     const pool = new Pool({ connectionString: databaseUrl.toString(), max: 1 });
     try {
       const created = await createTenant(pool, { tenantId, name, displayName, email, password });
-      process.stdout.write(`Workspace ID: ${created.tenantId}\nFirst user: ${email}\n`);
+      const appUrl = new URL(process.env.PUBLIC_APP_URL ?? 'http://localhost:5173');
+      appUrl.pathname = '/login';
+      appUrl.search = '';
+      appUrl.searchParams.set('tenant', created.tenantId);
+      process.stdout.write(`First user: ${email}\nSign-in link: ${appUrl.toString()}\n`);
     } finally { await pool.end(); }
   } finally { rl.close(); }
 }

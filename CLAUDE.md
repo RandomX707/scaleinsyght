@@ -482,6 +482,7 @@ The full outcomes and pass-or-fail criteria are in design section 2.5. The numer
 - Its spec is approved.
 - All of its acceptance and contract tests pass in CI.
 - No earlier test regresses.
+- Any phase that adds or changes a screen includes a 1440×900 screenshot beside its matching `docs/prototype/index.html` screen in `docs/ui/screens/`; review and fix visual differences until the screen matches the prototype. Record every pair and intentional differences with reasons in `docs/ui/ui-report.md`.
 - The outcome demo has been recorded.
 - `docs/decisions.md` is updated.
 - INSYGHT shows no new commits and no new database connections.

@@ -25,18 +25,19 @@ See [real-product-s1-demo.md](./real-product-s1-demo.md). In short: run `pnpm de
 - ER relationships: [er.png](../acceptance/s1/er.png)
 - Dictionary import and coverage: [dictionary.png](../acceptance/s1/dictionary.png)
 - Live answer and evidence: [home-answer.png](../acceptance/s1/home-answer.png)
-- Browser walkthrough: [walkthrough.webm](../acceptance/s1/walkthrough.webm)
+- Browser walkthrough (invite tokens are masked in the UI): [walkthrough.webm](../acceptance/s1/walkthrough.webm)
 
 ## Verification
 
 - `pnpm lint` — passed.
 - `pnpm typecheck` — passed.
-- `pnpm test` — 71 unit tests passed.
+- `pnpm test` — 76 unit/UI tests passed (27 test files).
 - `pnpm test:sqlparse` — 3 tests passed.
 - `pnpm test:integration` — 4 integration tests passed.
 - `pnpm test:contracts` — 96 product contract tests passed.
-- `pnpm test:e2e` — 11 tests passed.
-- `pnpm test:testbed` — 3 local PostgreSQL testbed contracts passed; the empty-tenant invite, real PostgreSQL profile, ER, dictionary import, and live answer Playwright walkthrough passed (99 contract cases across both commands).
+- `pnpm test:e2e` — 12 tests passed.
+- `pnpm test:testbed` — 3 local PostgreSQL testbed contracts passed; the empty-tenant invite, real PostgreSQL profile, ER, dictionary import, and live answer Playwright walkthrough passed (latest run: 1 Playwright test passed in 9 seconds; 99 contract cases across `test:contracts` and `test:testbed`).
+- Latest focused verification after masking the invite token: `pnpm lint`, `pnpm typecheck`, and `pnpm test` all passed; 27 test files and 76 unit/UI tests passed.
 
 All application database resets in this report target `si_test`; `testbed:up` resets only `si_testbed_pg`. The database tests use fictional hospital records and a local read-only testbed role. The approved real-model answer used the configured gateway credential, which remains only in ignored `.env`.
 

@@ -12,7 +12,7 @@ function productionSources(root: string): string[] {
 
 describe('production runtime fixture isolation', () => {
   it('keeps golden data and deterministic providers out of app and package runtime code', () => {
-    const roots = ['apps/api/src', 'apps/worker/src', ...readdirSync('packages')
+    const roots = ['apps/api/src', 'apps/worker/src', 'apps/web/src', ...readdirSync('packages')
       .map((name) => join('packages', name, 'src'))
       .filter(existsSync)];
     const violations = roots

@@ -1,6 +1,6 @@
 {
   "source": "si_testbed_pg",
-  "generatedAt": "2026-11-24T07:49:09.561Z",
+  "generatedAt": "2026-11-24T10:30:02.339Z",
   "rowCounts": {
     "patients": 500,
     "encounters": 700,

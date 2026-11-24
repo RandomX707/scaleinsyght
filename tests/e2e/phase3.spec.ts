@@ -5,7 +5,7 @@ test('empty_lineage_and_bi_reports_offer_source_setup_without_fixture_controls',
   await signInToTestWorkspace(page, 'phase3-lineage@synthetic.example');
   await page.getByRole('link', { name: /Lineage/ }).click();
   await expect(page.getByRole('heading', { name: 'Lineage workspace' })).toBeVisible();
-  await expect(page.getByText('Lineage appears here after you connect a source and import its transformation metadata.')).toBeVisible();
+  await expect(page.getByText('No lineage to show yet')).toBeVisible();
   await expect(page.getByRole('button', { name: /synthetic|fixture|golden/i })).toHaveCount(0);
 
   const idTraceLink = page.getByRole('link', { name: 'ID trace' });
@@ -15,9 +15,9 @@ test('empty_lineage_and_bi_reports_offer_source_setup_without_fixture_controls',
   await expect(page.getByRole('heading', { name: 'ID trace' })).toBeVisible();
   await expect(page.getByText('No identifier fields detected yet.')).toBeVisible();
 
-  await page.getByRole('link', { name: 'BI reports', exact: true }).click();
+  await page.getByRole('navigation', { name: 'Lineage workspace views' }).getByRole('link', { name: 'BI reports', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'BI reports' })).toBeVisible();
-  await expect(page.getByText('Reports appear here after you connect a BI source and import its metadata file.')).toBeVisible();
+  await expect(page.getByText('No reports connected')).toBeVisible();
 });
 
 test('empty_graph_does_not_offer_canned_inferred_assertions', async ({ page }) => {

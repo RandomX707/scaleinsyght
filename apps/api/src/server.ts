@@ -1092,7 +1092,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
        FROM graph.relationships r JOIN graph.assets f ON f.tenant_id=r.tenant_id AND f.asset_id=r.from_asset_id
        JOIN graph.assets t ON t.tenant_id=r.tenant_id AND t.asset_id=r.to_asset_id
        LEFT JOIN graph.assertions a ON a.tenant_id=r.tenant_id AND a.relationship_id=r.relationship_id
-       WHERE r.tenant_id=$1 AND (f.source_id=$2 OR t.source_id=$2) AND r.family='structural' AND r.relationship_type='REFERENCES' ORDER BY f.qualified_name,t.qualified_name`,
+       WHERE r.tenant_id=$1 AND (f.source_id=$2 OR t.source_id=$2) AND r.family='structural' ORDER BY r.relationship_type,f.qualified_name,t.qualified_name`,
       [current.tenantId,request.params.connectionId]));
     return reply.send({relationships:result.rows});
   });

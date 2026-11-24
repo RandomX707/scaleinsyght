@@ -17,7 +17,7 @@ export function workspaceForTestEmail(email: string): string {
 
 export async function signInToTestWorkspace(page: Page, email: string, password = 'golden-local-only'): Promise<void> {
   if (new URL(page.url()).pathname !== '/login') await page.goto('/login');
-  await page.getByLabel('Workspace ID').fill(workspaceForTestEmail(email));
+  await page.goto(`/login?tenant=${encodeURIComponent(workspaceForTestEmail(email))}`);
   await page.getByLabel('Email').fill(email);
   await page.getByLabel('Password').fill(password);
   const pending = page.waitForResponse(response => new URL(response.url()).pathname === '/api/auth/login');

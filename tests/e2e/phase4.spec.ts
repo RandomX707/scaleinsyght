@@ -26,8 +26,8 @@ test('hub_integrations_show_disconnected_empty_state_for_a_new_tenant', async ({
   await signInToTestWorkspace(page, tenant.email);
   await page.getByRole('link', { name: 'Hub integrations' }).click();
   await expect(page.getByRole('heading', { name: 'Hub integrations' })).toBeVisible();
-  await expect(page.getByText('No integrations are connected.')).toBeVisible();
-  await expect(page.getByText('Connect an integration to see certified metrics.')).toBeVisible();
+  await expect(page.getByText('No integrations connected')).toBeVisible();
+  await expect(page.getByText('This workspace has no connected Hub integrations.')).toBeVisible();
   await expect(page.getByRole('button', { name: /Create FlowSpec/ })).toHaveCount(0);
   const state = await page.evaluate(async () => {
     const [adapters, metrics] = await Promise.all([
@@ -44,5 +44,5 @@ test('hub_page_does_not_show_canned_metric_or_delivery_examples', async ({ page 
   await signInToTestWorkspace(page, tenant.email);
   await page.getByRole('link', { name: 'Hub integrations' }).click();
   await expect(page.getByText(/active customers|customer report|synthetic|fixture|golden/i)).toHaveCount(0);
-  await expect(page.getByText('Create a delivery after you connect a supported integration and select real source data.')).toBeVisible();
+  await expect(page.getByText('Handoffs will appear after a supported destination and a real report definition are connected.')).toBeVisible();
 });
