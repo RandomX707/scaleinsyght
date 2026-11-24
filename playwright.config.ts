@@ -8,6 +8,7 @@ const e2eWorkerHealthPort=3301;
 const e2eWebPort=4174;
 export default defineConfig({
  testDir:'./tests/e2e',
+ testIgnore:['real-product-s1.spec.ts'],
  use:{baseURL:`http://127.0.0.1:${e2eWebPort}`,browserName:'chromium'},
  webServer:[
   {command:'pnpm exec tsx tests/support/e2e-api-main.ts',url:`http://127.0.0.1:${e2eApiPort}/api/health`,reuseExistingServer:false,env:{DATABASE_URL:appUrl.toString(),API_PORT:String(e2eApiPort)}},

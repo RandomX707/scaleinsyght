@@ -33,6 +33,7 @@ export function buildTestServer(options: ServerOptions) {
   ];
   return buildServer({
     ...options,
+    testAnalyticPlanner: options.testAnalyticPlanner ?? (async () => null),
     testAccounts: options.testAccounts ?? fixtureAccounts(),
     testSources: [...listGoldenSources(), ...metadataSources, ...sampleSources, ...genericSources],
     testConnectorFor: (sourceId) => sourceId === 'local-hospital' ? sampleConnector : sourceId === 'synthetic-lake' ? createLakeConnector() : sourceId === 'synthetic-crm' ? createCrmConnector() : createGoldenConnector(sourceId),

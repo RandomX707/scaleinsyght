@@ -3,13 +3,13 @@ import { Pool } from 'pg';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { EncryptedArtifactStore } from '@scaleinsyght/artifacts';
-import { buildTestServer } from './test-api.js';
+import { buildServer } from '@scaleinsyght/api/server';
 
 config({ path: fileURLToPath(new URL('../../.env', import.meta.url)) });
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const artifactMasterKey = process.env.ARTIFACT_MASTER_KEY;
 if (!artifactMasterKey) throw new Error('ARTIFACT_MASTER_KEY is required for E2E tests');
-const server = await buildTestServer({
+const server = await buildServer({
   pool,
   sessionSecret: process.env.SESSION_SECRET ?? '',
   artifactStore: new EncryptedArtifactStore(resolve(process.env.ARTIFACT_VOLUME_PATH ?? '.local/e2e-artifacts'), Buffer.from(artifactMasterKey, 'base64')),

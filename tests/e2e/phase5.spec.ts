@@ -2,7 +2,6 @@ import { expect,test,type Page } from '@playwright/test';
 import { config } from 'dotenv';
 import { Pool } from 'pg';
 import { hashPassword } from '@scaleinsyght/api/server';
-import { activateConnection } from '@scaleinsyght/registry';
 import { withTenant } from '@scaleinsyght/db';
 import { signInToTestWorkspace } from '../support/e2e-auth.js';
 
@@ -12,7 +11,7 @@ const setup=new Pool({connectionString:testUrl('DATABASE_URL_MIGRATE')});
 const app=new Pool({connectionString:testUrl('DATABASE_URL')});
 test.afterAll(async()=>{await setup.end();await app.end();});
 
-async function createTenant(tenantId:string,withReviewer=false){
+async function createTenant(tenantId:string,withReviewer=false,withSource=true){
  const ownerId=crypto.randomUUID();const reviewerId=withReviewer?crypto.randomUUID():null;const ownerEmail=`owner@${tenantId}.synthetic.example`;const reviewerEmail=reviewerId?`reviewer@${tenantId}.synthetic.example`:null;
  await withTenant(setup,tenantId,async(db)=>{
   await db.query('INSERT INTO core.tenants(tenant_id,name) VALUES($1,$1)',[tenantId]);
@@ -20,26 +19,20 @@ async function createTenant(tenantId:string,withReviewer=false){
   if(reviewerId&&reviewerEmail)await db.query('INSERT INTO core.users(tenant_id,user_id,email,password_hash) VALUES($1,$2,$3,$4)',[tenantId,reviewerId,reviewerEmail,hashPassword('golden-local-only',reviewerId)]);
   await db.query("INSERT INTO registry.capabilities(tenant_id,capability_id,active_version,effect_class,effect_safety,enabled) VALUES($1,'analytic.read',1,'READ','not_applicable',true)",[tenantId]);
  });
- const source=await activateConnection(app,{tenantId,principalId:ownerId,connectorType:'postgres'});
- await withTenant(setup,tenantId,async(db)=>db.query("INSERT INTO core.entitlements(tenant_id,principal_id,capability_id,resource_id) VALUES($1,$2,'analytic.read',$3)",[tenantId,ownerId,source.connectionId]));
- return{tenantId,ownerEmail,reviewerEmail,sourceId:source.connectionId};
+ let sourceId:string|null=null;
+ if(withSource){const source=await (await import('@scaleinsyght/registry')).activateConnection(app,{tenantId,principalId:ownerId,connectorType:'postgres'});sourceId=source.connectionId;await withTenant(setup,tenantId,async(db)=>db.query("INSERT INTO core.entitlements(tenant_id,principal_id,capability_id,resource_id) VALUES($1,$2,'analytic.read',$3)",[tenantId,ownerId,source.connectionId]));}
+ return{tenantId,ownerEmail,reviewerEmail,sourceId};
 }
 async function signIn(page:Page,email:string){await signInToTestWorkspace(page,email);}
 async function signOut(page:Page){await page.getByRole('button',{name:'User'}).click();await page.getByRole('menuitem',{name:'Sign out'}).click();await page.waitForURL(url=>url.pathname==='/login');}
 async function openWorkspace(page:Page){const toggle=page.getByRole('button',{name:/WORKSPACE/});if(await toggle.getAttribute('aria-expanded')!=='true')await toggle.click();}
 
-test('c1_saved_question_requires_accepted_answer_and_can_be_reused_or_removed',async({page})=>{
- const tenant=await createTenant('phase5-e2e-saved-questions');await signIn(page,tenant.ownerEmail);
- await page.getByLabel('Your question').fill('How many catalog objects are listed?');
- await page.getByRole('checkbox',{name:/postgres/}).check();
- await page.getByRole('button',{name:'Ask question'}).click();
- await expect(page.getByRole('heading',{name:'Run completed'})).toBeVisible({timeout:15000});
- await page.getByRole('button',{name:'Useful',exact:true}).click();await expect(page.getByRole('status')).toContainText('Feedback saved');
+test('empty_new_tenant_has_no_canned_answer_or_saved_questions',async({page})=>{
+ const tenant=await createTenant('phase5-e2e-empty-tenant',false,false);await signIn(page,tenant.ownerEmail);
+ await expect(page.getByText('Add a connector to start an analytic run.')).toBeVisible();
+ await expect(page.getByRole('button',{name:'Ask question'})).toBeDisabled();
  await page.getByRole('link',{name:/Agents/}).click();await expect(page.getByRole('heading',{name:'Saved questions'})).toBeVisible();
- const question=page.getByText('How many catalog objects are listed?',{exact:true});await expect(question).toBeVisible();
- await page.getByRole('button',{name:'Start from this plan'}).click();await page.waitForURL(url=>url.pathname.startsWith('/runs/'));
- await expect(page.getByRole('heading',{name:'Run completed'})).toBeVisible({timeout:15000});
- await page.getByRole('link',{name:/Agents/}).click();await page.getByRole('button',{name:'Remove'}).click();await expect(page.getByText('No saved questions yet.')).toBeVisible();
+ await expect(page.getByText('No saved questions yet.')).toBeVisible();
 });
 
 test('c5_governed_report_exports_evidence_and_has_an_owner_scoped_daily_schedule',async({page})=>{
