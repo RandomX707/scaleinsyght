@@ -22,18 +22,6 @@ Baseline scores remain the latest measured values. Questions 23/30 acceptable
 pending. Typecheck and the focused analytic executor unit test are the local
 checks for this checkpoint.
 
-## Next
-
-Step 2 adds catalog-constrained schema planning, two validation repairs,
-attempt provenance, subject grounding, and correct count and date semantics.
-Then move planning into the durable runner (step 3), compare both models
-(step 4), and verify gates and three consecutive testbed runs (step 5).
-
-The stock testbed setup rotates credentials and rebuilds shared sources. Do
-not run it against the review app's sources. Before the three full testbed
-runs, isolate the source setup or arrange a safe path with the user. Do not
-read held-out wording or turn-level outputs for tuning.
-
 ## Step 2 checkpoint
 
 The API now supplies a strict catalog-derived JSON response schema, including
