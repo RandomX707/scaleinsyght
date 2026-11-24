@@ -1,6 +1,6 @@
 {
   "source": "si_testbed_pg",
-  "generatedAt": "2026-11-24T13:15:43.853Z",
+  "generatedAt": "2026-11-24T13:25:42.012Z",
   "rowCounts": {
     "patients": 500,
     "encounters": 700,
@@ -220,6 +220,7 @@
       "encounters.discharged_at": 0.1428571429
     },
     "metrics": {
+      "patients_with_phone": 500,
       "patients": 500,
       "encounters": 700,
       "orders": 1200,
@@ -707,6 +708,10 @@
       "postgres": 500,
       "sqlServer": 500,
       "same": true
+    },
+    "patientsWithPhone": {
+      "postgres": 500,
+      "sqlServer": 500
     },
     "sharedPatientsCount": 500
   }

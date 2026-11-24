@@ -57,22 +57,35 @@ while(!stopping){
     else{const sourceUrl=new URL('postgresql://placeholder');sourceUrl.hostname=String(secret.host);sourceUrl.port=String(secret.port);sourceUrl.username=String(secret.username);sourceUrl.password=String(secret.password);sourceUrl.pathname=`/${String(secret.database)}`;sourceUrl.searchParams.set('sslmode',String(secret.sslMode));connector=createPostgresConnector({connectionString:sourceUrl.toString(),id:step.source_id,name:task.displayName||'PostgreSQL source',statementTimeoutMs:10_000,maxRows:1_000});}
     try{
       await connector.test();await connector.discover({mode:'profile'});
-      const executed=await connector.executeQueryIntent?.(intent);if(!executed)throw new Error('source_query_executor_unavailable');
+      const executed=await connector.executeQueryIntent?.(intent,true);if(!executed)throw new Error('source_query_executor_unavailable');
       if(!executed.rows.length||executed.rows.length>100||executed.rows.some(row=>!row||typeof row!=='object'||!('value'in row)||!Number.isFinite(Number(row.value))))throw new Error('analytic_query_result_shape_invalid');
-      const rows=executed.rows.map(row=>Object.fromEntries(Object.entries(row).filter(([key])=>key!=='group_key')));const value=Number(rows[0]!.value);if(!Number.isFinite(value))throw new Error('analytic_query_result_shape_invalid');
+      const rows=executed.rows.map(row=>Object.fromEntries(Object.entries(row).filter(([key])=>key!=='group_key'&&key!=='cell_size')));const value=Number(rows[0]!.value);if(!Number.isFinite(value))throw new Error('analytic_query_result_shape_invalid');
       const evidenceId=randomUUID();const queryIntent=intent as Record<string,unknown>;const assetNames=[queryIntent.table,queryIntent.leftTable,queryIntent.rightTable].filter((name):name is string=>typeof name==='string');
       const assets=await withRunTenant(pool,claim.runId,client=>client.query<{asset_id:string}>('SELECT asset_id FROM graph.assets WHERE tenant_id=current_setting(\'app.tenant_id\') AND source_id=$1 AND asset_type=\'dataset\' AND qualified_name=ANY($2::text[])',[step.source_id,assetNames]));
-      const answer=await new OpenAIModelGateway(pool).complete({tenantId:claim.tenantId,alias:'default',question:`Write one concise answer sentence to the user's exact question from these aggregate query results only. Never guess or add facts. If the results do not answer the question, say so. User question: ${plan.question} Aggregate rows: ${JSON.stringify(rows.map(row=>Object.fromEntries(Object.entries(row).filter(([key])=>key!=='group_key'))))}`,metadata:{classification:'METADATA_STATISTICAL',structural:{source:task.displayName||'Data source',query:executed.sql},descriptive:{},statistical:{aggregate_value:value,group_count:rows.length},sensitivityTags:[],groupSize:100,minimumCellSize:5},maxOutputTokens:180});
-      const modelText=answer.text.trim().replace(/[\r\n]+/g,' ').slice(0,600);const numericValues=modelText.match(/\d+(?:,\d{3})*(?:\.\d+)?/g)?.map(token=>Number(token.replaceAll(',','')))??[];const allowedNumbers=new Set([...rows.flatMap(row=>Object.entries(row).filter(([key])=>key==='value').map(([,item])=>Number(item))),rows.length]);if(!modelText||numericValues.some(number=>!allowedNumbers.has(number)))throw new Error('model_answer_validation_failed');const statement=modelText;
-      await withRunTenant(pool,claim.runId,client=>client.query('INSERT INTO runs.model_provenance(tenant_id,run_id,call_purpose,model_name,input_tokens,output_tokens) VALUES(current_setting(\'app.tenant_id\'),$1,\'answer\',$2,$3,$4)',[claim.runId,answer.model,answer.inputTokens,answer.outputTokens]));
-      const analyticResult={sourceId:step.source_id,connectorType:task.connectorType,groupId:task.groupId,metric:String((intent as {kind?:unknown}).kind??'query'),value,rows:rows.length===1&&!('group_value'in rows[0]!)?undefined:rows,claims:[{claim_id:randomUUID(),kind:'metric',statement,evidence_ids:[evidenceId]}],evidence:[{evidence_id:evidenceId,kind:'query',source_id:step.source_id,asset_ids:assets.rows.map(item=>item.asset_id),locator:`${task.displayName||'Data source'} · ${executed.sql}`,content_hash:createHash('sha256').update(executed.sql).digest('hex'),captured_at:new Date().toISOString(),collector_version:`${task.connectorType}-query-v1`,redacted_summary:`Executed on ${task.displayName||'Data source'}; returned ${executed.rows.length} aggregate row(s).`}]};
+      const analyticResult={sourceId:step.source_id,connectorType:task.connectorType,groupId:task.groupId,metric:String((intent as {kind?:unknown}).kind??'query'),value,rows:rows.length===1&&!('group_value'in rows[0]!)?undefined:rows,minimumCellSize:Math.min(...executed.rows.map(row=>Number(row.cell_size??0))),claims:[],evidence:[{evidence_id:evidenceId,kind:'query',source_id:step.source_id,asset_ids:assets.rows.map(item=>item.asset_id),locator:`${task.displayName||'Data source'} · ${executed.sql}`,content_hash:createHash('sha256').update(executed.sql).digest('hex'),captured_at:new Date().toISOString(),collector_version:`${task.connectorType}-query-v1`,redacted_summary:`Executed on ${task.displayName||'Data source'}; returned ${executed.rows.length} aggregate row(s).`}]};
       if(!await completeStep(pool,claim,{resultRef:`postgres-query:${evidenceId}`,analyticResult}))throw new Error('worker_fence_lost');
     }finally{await connector.close?.();}
    }catch(error){
     const reason=error instanceof Error&&error.message==='source_timeout'?'source_timeout':error instanceof Error&&error.message==='policy_revoked'?'authorization_revoked':'source_query_executor_unavailable';
     await failStep(pool,claim,{reasonCode:reason});
    }
-   await finalizeAnalyticRun(pool,claim.runId);
+   await finalizeAnalyticRun(pool,claim.runId,async ({plan,results})=>{
+     const minimumCellSize=5;
+     if(results.some(result=>(result.minimumCellSize??0)<minimumCellSize))throw new Error('model_answer_disclosure_suppressed');
+     const values=results.flatMap(result=>result.rows?.map(row=>Number(row.value))??[result.value]);
+     const statistical=Object.fromEntries(results.flatMap((result,index)=>{
+      const prefix=`source_${index+1}`;
+      return [[`${prefix}_aggregate_count`,result.rows?.length??1],...(result.rows?.map((row,i)=>[`${prefix}_aggregate_${i+1}`,Number(row.value)])??[[`${prefix}_aggregate_1`,result.value]])];
+     })) as Record<string,number>;
+     const sources=results.map(result=>({source:result.evidence[0]?.locator.split(' · ')[0],connector_type:result.connectorType,executed_query:result.evidence[0]?.locator.split(' · ').slice(1).join(' · ')}));
+     const answer=await new OpenAIModelGateway(pool).complete({tenantId:claim.tenantId,alias:'default',question:`Write one concise answer to the exact user question using the disclosed aggregate statistics. Include a result value. Structured result rows are shown below your sentence. Source indexes match the statistics. Do not invent labels or facts. Question: ${plan.question}`,metadata:{classification:'METADATA_STATISTICAL',structural:{sources},descriptive:{},statistical,sensitivityTags:[],groupSize:Math.min(...results.map(result=>result.minimumCellSize??0)),minimumCellSize},maxOutputTokens:400});
+     const statement=answer.text.trim().replace(/[\r\n]+/g,' ').slice(0,600);
+     const numbers=(value:string)=>value.match(/-?\d+(?:,\d{3})*(?:\.\d+)?/g)?.map(token=>Number(token.replaceAll(',','')))??[];
+     const counts=results.map(result=>result.rows?.length??1);
+     const allowed=new Set([...values,...counts,...numbers(plan.question)]);
+     if(!numbers(statement).some(number=>values.includes(number))||numbers(statement).some(number=>!allowed.has(number)))throw new Error('model_answer_validation_failed');
+     return {statement,model:answer.model,inputTokens:answer.inputTokens,outputTokens:answer.outputTokens};
+   });
    await persistReportSnapshot(pool,claim.runId);
   }else{
    await failStep(pool,claim,{reasonCode:'source_query_executor_unavailable'});

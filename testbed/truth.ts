@@ -106,6 +106,7 @@ try {
         sqlServer: sqlServer.answerMetrics.averageEncountersPerPatientByProvider,
       },
       patientCountComparison: { postgres: rowCounts.patients!, sqlServer: sqlServer.rowCounts.patients!, same: rowCounts.patients === sqlServer.rowCounts.patients },
+      patientsWithPhone: {postgres:Number((await client.query('SELECT count(phone) AS n FROM public.patients')).rows[0]!.n),sqlServer:sqlServer.metrics.patients_with_phone},
       sharedPatientsCount: sqlServer.sharedPatientIds,
     },
   };

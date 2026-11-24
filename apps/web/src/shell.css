@@ -288,3 +288,7 @@ h3 { font-size: 14px; line-height: 1.3; }
 @media(max-width:560px){.connector-grid,.connector-type-grid{grid-template-columns:1fr;}}
 @media(max-width:760px) { .profile-overview { gap:18px; padding:16px; }.profile-ring { width:112px;height:112px; }.profile-ring>div { width:90px;height:90px; }.profile-categories { grid-template-columns:1fr; }.dictionary-summary { grid-template-columns:1fr; }.profile-stats { grid-template-columns:1fr 1fr; } }
 @media(max-width:760px) { .app { grid-template-columns: 64px minmax(0,1fr); } .sidebar { padding: 12px 8px; } .brand b,.collapse-sidebar,.sidebar .new-chat:not(:focus),.nav-notifications span:not(:first-child),.section-toggle,.nav-items a span:nth-child(2),.recent,.profile-name,.profile>button>span:last-child { display:none; } .brand { justify-content:center; padding-right:0;padding-left:0; } .nav-items a { justify-content:center;padding:8px 4px; } .main>.topbar { padding:8px 14px; } .view { padding:18px 14px; } .lineage-layout { grid-template-columns:1fr; } .phase3-toolbar label { width:100%; } }
+
+.er-node--view { border-style: dashed; border-color: var(--primary); }
+.er-link text { fill: var(--muted); font-size: 10px; }
+.plan-card pre { max-width: 100%; overflow: auto; }

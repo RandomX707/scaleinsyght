@@ -120,7 +120,7 @@ export async function validateAnalyticPlan(pool: Pool, input: { tenantId: string
   return { tenantId: input.tenantId, principalId: input.principalId, plan };
 }
 
-export async function startAnalyticRun(pool: Pool, input: { tenantId: string; principalId: string; plan: unknown; governed?: { governedId: string; version: number }; conversationId?: string }): Promise<{ runId: string }> {
+export async function startAnalyticRun(pool: Pool, input: { tenantId: string; principalId: string; plan: unknown; governed?: { governedId: string; version: number }; conversationId?: string; plannerProvenance?: {model:string;inputTokens:number;outputTokens:number;typedPlan:unknown} }): Promise<{ runId: string }> {
   const validated = await validateAnalyticPlan(pool, input);
   const { plan } = validated; const planHash = plan.plan_hash;
   await withTenant(pool, input.tenantId, async (client) => {
@@ -156,7 +156,17 @@ export async function startAnalyticRun(pool: Pool, input: { tenantId: string; pr
         if(await fingerprint(approved.rows[0]!.plan)!==await fingerprint(plan))throw new Error('governed_plan_mismatch');
       }
       const runId = plan.run_id;
+      if(input.conversationId){
+        const thread=await client.query('SELECT 1 FROM runs.conversations WHERE tenant_id=$1 AND principal_id=$2 AND conversation_id=$3 FOR UPDATE',[input.tenantId,input.principalId,input.conversationId]);
+        if(!thread.rowCount)throw new Error('conversation_not_found');
+        await client.query(`UPDATE runs.conversations SET title=CASE WHEN NOT EXISTS(SELECT 1 FROM runs.runs WHERE tenant_id=$1 AND conversation_id=$3) THEN $4 ELSE title END,updated_at=clock_timestamp() WHERE tenant_id=$1 AND principal_id=$2 AND conversation_id=$3`,[input.tenantId,input.principalId,input.conversationId,plan.question.slice(0,200)]);
+      }
+
       await client.query(`INSERT INTO runs.runs(tenant_id,run_id,principal_id,state,plan_id,conversation_id) VALUES($1,$2,$3,'CREATED',$4,$5)`, [input.tenantId, runId, input.principalId, plan.plan_id,input.conversationId??null]);
+      if(input.plannerProvenance){
+        const call=input.plannerProvenance;
+        await client.query("INSERT INTO runs.model_provenance(tenant_id,run_id,call_purpose,model_name,input_tokens,output_tokens,typed_plan) VALUES($1,$2,'plan',$3,$4,$5,$6::jsonb)",[input.tenantId,runId,call.model,call.inputTokens,call.outputTokens,JSON.stringify(call.typedPlan)]);
+      }
       if(input.governed)await client.query('INSERT INTO runs.governed_run_pins(tenant_id,run_id,governed_id,version) VALUES($1,$2,$3,$4)',[input.tenantId,runId,input.governed.governedId,input.governed.version]);
       await client.query('INSERT INTO runs.analytic_plans(tenant_id,run_id,plan,plan_hash) VALUES($1,$2,$3::jsonb,$4)', [input.tenantId, runId, JSON.stringify(plan), planHash]);
       const decision = await client.query<{ decision_id: string }>(

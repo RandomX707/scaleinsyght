@@ -7,8 +7,8 @@
 | Prototype feature | Status | Evidence or remaining work |
 |---|---|---|
 | Tenant creation, login, and workspace membership | Real | `pnpm tenant:create`; database-backed sign-in and one-use, expiring invite link accepted in `tests/e2e/real-product-s1.spec.ts`. |
-| Workspace shell, navigation, recent conversations | Missing | Authenticated user identity is shown; prototype-faithful shell and recent conversation history remain to be implemented. |
-| Home chat and source selection | Real | Count question runs through selected real PostgreSQL source and typed plan; S1 Playwright test checks answer, SQL, source, and row-count evidence. Remaining query-shape coverage is S7. |
+| Workspace shell, navigation, recent conversations | Fake | Persisted threads and reopening are implemented on the S2 fix branch. The live testbed walkthrough is pending. |
+| Home chat and source selection | Fake | Conversation persistence passes its contract test. Reopening and resolving follow-ups await the live testbed walkthrough. |
 | Connectors list and PostgreSQL add flow | Real | UI credential entry, connection test, activation, and real profile are exercised by the S1 Playwright test. Credentials are encrypted and not returned after submission. |
 | PostgreSQL profile and sensitive-field classification | Real | Real metadata/profile route exercised; test asserts MRN classification and compares profile to `testbed/truth.json`. |
 | ER explorer | Real | Declared and inferred references are returned from the real graph; S1 checks the patient relationship from the live source. |
@@ -34,7 +34,7 @@
 | Sensitive-column classification | Real | `testbed/truth.json` carries expected classifications; S1 acceptance verifies the live PostgreSQL metadata labels. |
 | Dictionary CSV/XLSX import | Real | S1 imports a real testbed CSV dictionary and checks documented-versus-harvested coverage. |
 | Typed analytic plan query shapes | Real | Contract test executes count, filtered count, group-by, within-source join, and two-source comparison against PostgreSQL and verifies SQL-derived truth. UI end-to-end coverage expands in S7. |
-| Live OpenAI answer over PostgreSQL | Real | S1 Home walkthrough runs one aggregate question via configured gateway and checks value, executed SQL, source, and returned-row evidence. |
+| Live OpenAI planning and answer provenance | Fake | Connector tests verify the query shapes against both sources. Model provenance, answer wording, and evidence await the live testbed walkthrough. |
 | SQL Server connector and testbed | Real | SQL Server 2022 runs in Colima as a local test source; UI acceptance tests cover writer refusal, encrypted credential storage, real profiling, view/routine metadata, inferred ER, Dictionary, and a real Home answer. SQL-derived counts and shared-key counts match `testbed/truth.json`. |
 | Excel workbook connector | Missing | S3 will add and profile the three-sheet overlapping workbook. |
 | dbt manifest/catalog lineage | Missing | S4 will import real generated artifacts. |

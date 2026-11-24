@@ -73,7 +73,7 @@ describe('contract 1 S2 conversation history', () => {
     const firstRunId = firstRunResponse.json<{ runId: string }>().runId;
     const persistedConversation = await withTenant(adminPool, tenantA, (db) => db.query<{ conversation_id:string }>('SELECT conversation_id FROM runs.runs WHERE tenant_id=$1 AND run_id=$2',[tenantA,firstRunId]));
     expect(persistedConversation.rows[0]?.conversation_id).toBe(conversationId);
-    await withTenant(adminPool, tenantA, (db) => db.query("INSERT INTO runs.analytic_answers(tenant_id,run_id,status,answer) VALUES($1,$2,'COMPLETED',$3::jsonb)", [tenantA, firstRunId, JSON.stringify({ claims: [{ statement: 'There are 500 patients.' }] })]));
+    await withTenant(adminPool, tenantA, (db) => db.query("INSERT INTO runs.analytic_answers(tenant_id,run_id,status,answer) VALUES($1,$2,'COMPLETED',$3::jsonb)", [tenantA, firstRunId, JSON.stringify({ metric:'count',claims: [{ statement: 'There are 500 patients.' }],evidence:[],bySource:[],trust:{groupCount:1,sourceCount:1,joins:['group']} })]));
     await withTenant(adminPool, tenantA, (db) => db.query("INSERT INTO runs.model_provenance(tenant_id,run_id,call_purpose,model_name,input_tokens,output_tokens,typed_plan) VALUES($1,$2,'plan','test-model',41,9,$3::jsonb)",[tenantA,firstRunId,JSON.stringify([{kind:'count',table:'public.patients'}])]));
     const runDetail=await server.inject({method:'GET',url:`/api/runs/${firstRunId}`,headers:{cookie:ownerCookie}});
     expect(runDetail.json<{modelProvenance:Array<{model:string;inputTokens:number;typedPlan:unknown}>}>().modelProvenance).toEqual([expect.objectContaining({model:'test-model',inputTokens:41,typedPlan:[{kind:'count',table:'public.patients'}]})]);

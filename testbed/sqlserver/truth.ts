@@ -46,6 +46,7 @@ UNION ALL SELECT 'sensitiveColumns|' + t.name + '.' + c.name + '|' + CONVERT(var
   WHERE ep.class=1 AND ep.name='sensitivity' AND t.schema_id=SCHEMA_ID('dbo')
 UNION ALL SELECT 'nullRates|patients.phone|' + CONVERT(varchar(40),CONVERT(decimal(18,10),SUM(CASE WHEN phone IS NULL THEN 1 ELSE 0 END)*1.0/NULLIF(COUNT_BIG(*),0))) FROM dbo.patients
 UNION ALL SELECT 'nullRates|encounters.discharged_at|' + CONVERT(varchar(40),CONVERT(decimal(18,10),SUM(CASE WHEN discharged_at IS NULL THEN 1 ELSE 0 END)*1.0/NULLIF(COUNT_BIG(*),0))) FROM dbo.encounters
+UNION ALL SELECT 'metrics|patients_with_phone|' + CONVERT(varchar(40),COUNT_BIG(phone)) FROM dbo.patients
 UNION ALL SELECT 'metrics|patients|' + CONVERT(varchar(40),COUNT_BIG(*)) FROM dbo.patients
 UNION ALL SELECT 'metrics|encounters|' + CONVERT(varchar(40),COUNT_BIG(*)) FROM dbo.encounters
 UNION ALL SELECT 'metrics|orders|' + CONVERT(varchar(40),COUNT_BIG(*)) FROM dbo.orders

@@ -169,7 +169,7 @@ export async function runProfile(
         await client.query(
           `INSERT INTO graph.assertions(tenant_id,relationship_id,evidence_method,evidence_ids,confidence_score,explanation,collector_version)
            VALUES($1,$2,$3,$4,$5,$6,$7)`,
-          [input.tenantId, relationship.rows[0]!.relationship_id,evidenceMethod, [evidence.rows[0]!.evidence_id], evidenceMethod==='declared'?1:0.98,evidenceMethod==='declared'?null:'Column values matched a primary key during source-local structural analysis.', `profile-${input.connector.type}-v1`],
+          [input.tenantId, relationship.rows[0]!.relationship_id,evidenceMethod, [evidence.rows[0]!.evidence_id], evidenceMethod==='declared'?1:reference.confidence??0.98,evidenceMethod==='declared'?null:reference.sourceCount===undefined?'Column values matched a primary key during source-local structural analysis.':`${reference.matchedCount} of ${reference.sourceCount} non-null values matched the target primary key.`, `profile-${input.connector.type}-v1`],
         );
       }
     }
