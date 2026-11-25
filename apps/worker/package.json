@@ -13,6 +13,7 @@
     "@scaleinsyght/contracts": "workspace:*",
     "@scaleinsyght/db": "workspace:*",
     "@scaleinsyght/graph": "workspace:*",
+    "@scaleinsyght/profiler": "workspace:*",
     "@scaleinsyght/model-gateway": "workspace:*",
     "@scaleinsyght/policy": "workspace:*",
     "@scaleinsyght/reports": "workspace:*",

@@ -76,13 +76,16 @@ export class PostgresConnector implements ReadOnlyConnector {
   async discover(input:{mode:'profile'|'nightly';scope?:ConnectorScope}):Promise<DiscoveryResult>{
     const tables=await this.tables();this.current.clear();
     const result:DiscoveryResult={objects:[],listOnlyObjects:[],excludedObjects:[],inaccessibleObjects:[],coverage:{listed:0,accessible:0,inaccessible:0},unchanged:0,unchangedObjects:[]};
-    const profiles=new Map<string,{table:Table;columns:Column[];key:string}>();
+    const profiles=new Map<string,{table:Table;columns:Column[];key:string;signature:string}>();
     for(const table of tables){
       const qualifiedName=`${table.schema_name}.${table.table_name}`;this.current.set(qualifiedName,table);result.coverage.listed++;
       // Listed but not readable by this login (no schema USAGE or no SELECT): recorded by name only, never profiled.
       if(table.readable===false){result.inaccessibleObjects.push({qualifiedName,type:table.table_type==='VIEW'?'view':'table'});result.coverage.inaccessible++;continue;}
-      const columns=await this.columns(table);const signature=createHash('sha256').update(JSON.stringify(columns.map(({column_name,data_type,is_nullable,comment})=>({column_name,data_type,is_nullable,comment})))).digest('hex');
-      const key=assetKey(qualifiedName);profiles.set(qualifiedName,{table,columns,key});result.coverage.accessible++;
+      // The change signature covers the columns and the row count, so a nightly run re-profiles a table that only gained
+      // or lost rows (decision 48).
+      const columns=await this.columns(table);const rows=(await this.pool.query<{n:string}>(`SELECT count(*)::text AS n FROM ${quoteIdentifier(table.schema_name)}.${quoteIdentifier(table.table_name)}`)).rows[0]!.n;
+      const signature=createHash('sha256').update(JSON.stringify({rows,columns:columns.map(({column_name,data_type,is_nullable,comment})=>({column_name,data_type,is_nullable,comment}))})).digest('hex');
+      const key=assetKey(qualifiedName);profiles.set(qualifiedName,{table,columns,key,signature});result.coverage.accessible++;
       if(input.scope?.exclude?.includes(qualifiedName)){result.excludedObjects.push({qualifiedName,type:table.table_type==='VIEW'?'view':'table'});continue;}
       if(input.scope?.listOnly?.includes(qualifiedName)){result.listOnlyObjects.push({qualifiedName,type:table.table_type==='VIEW'?'view':'table'});continue;}
       if(input.scope?.profile?.length&&!input.scope.profile.includes(qualifiedName)){result.excludedObjects.push({qualifiedName,type:table.table_type==='VIEW'?'view':'table'});continue;}
@@ -90,7 +93,7 @@ export class PostgresConnector implements ReadOnlyConnector {
       if(input.mode==='nightly'&&this.seen.get(qualifiedName)===signature){result.unchanged++;result.unchangedObjects.push(object);continue;}
       result.objects.push(object);
     }
-    for(const [name,{columns}] of profiles){this.seen.set(name,createHash('sha256').update(JSON.stringify(columns.map(({column_name,data_type,is_nullable,comment})=>({column_name,data_type,is_nullable,comment})))).digest('hex'));}
+    for(const [name,{signature}] of profiles)this.seen.set(name,signature);
     return result;
   }
 
