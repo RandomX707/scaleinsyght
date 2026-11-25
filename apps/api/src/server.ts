@@ -819,7 +819,32 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
        WHERE r.tenant_id=$1 AND r.principal_id=$2 AND r.conversation_id=$3
        ORDER BY r.created_at,r.run_id`,[current.tenantId,current.userId,request.params.conversationId]));
     const row=conversation.rows[0]!;
-    return reply.send({conversation:{conversationId:row.conversation_id,title:row.title,createdAt:row.created_at.toISOString(),updatedAt:row.updated_at.toISOString()},turns:result.rows.map(turn=>({runId:turn.run_id,state:turn.state,question:turn.question,plan:turn.plan,answer:turn.answer,createdAt:turn.created_at.toISOString()}))});
+    // Display turns (decision 56) reuse an earlier run's stored answer in another form; they hold no rows.
+    const displays=await withTenant(options.pool,current.tenantId,client=>client.query<{display_turn_id:string;source_run_id:string;form:string;size:number|null;question:string;created_at:Date}>(
+      'SELECT display_turn_id,source_run_id,form,size,question,created_at FROM runs.conversation_display_turns WHERE tenant_id=$1 AND principal_id=$2 AND conversation_id=$3 ORDER BY created_at',[current.tenantId,current.userId,request.params.conversationId]));
+    const turns=[...result.rows.map(turn=>({kind:'run' as const,runId:turn.run_id,state:turn.state,question:turn.question,plan:turn.plan,answer:turn.answer,createdAt:turn.created_at.toISOString()})),
+      ...displays.rows.map(turn=>({kind:'display' as const,displayTurnId:turn.display_turn_id,sourceRunId:turn.source_run_id,form:turn.form,size:turn.size,question:turn.question,createdAt:turn.created_at.toISOString()}))]
+      .sort((a,b)=>a.createdAt.localeCompare(b.createdAt));
+    return reply.send({conversation:{conversationId:row.conversation_id,title:row.title,createdAt:row.created_at.toISOString(),updatedAt:row.updated_at.toISOString()},turns});
+  });
+  app.post<{Params:{conversationId:string};Body:{sourceRunId?:unknown;form?:unknown;size?:unknown;question?:unknown}}>('/api/conversations/:conversationId/display-turns',async(request,reply)=>{
+    // A form-only follow-up: no plan, no source query, no model call. Only a completed run of this person's
+    // conversation with a stored answer can be reshown.
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const {sourceRunId,form,size,question}=request.body??{};
+    const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    const forms=['table','chart','number','all','top','bottom','sort_name','sort_value'];
+    if(!uuid.test(request.params.conversationId)||typeof sourceRunId!=='string'||!uuid.test(sourceRunId)||typeof form!=='string'||!forms.includes(form)
+      ||typeof question!=='string'||!question.trim()||question.length>500||((form==='top'||form==='bottom')!==(typeof size==='number'&&Number.isInteger(size)&&size>=1&&size<=100)))return reply.code(400).send({error:'display_turn_invalid'});
+    const created=await withTenant(options.pool,current.tenantId,async client=>{
+      const source=await client.query(`SELECT 1 FROM runs.runs r JOIN runs.analytic_answers a USING(tenant_id,run_id)
+        WHERE r.tenant_id=$1 AND r.principal_id=$2 AND r.conversation_id=$3 AND r.run_id=$4 AND r.state IN ('COMPLETED','PARTIAL')`,[current.tenantId,current.userId,request.params.conversationId,sourceRunId]);
+      if(!source.rowCount)return null;
+      return (await client.query<{display_turn_id:string;created_at:Date}>(`INSERT INTO runs.conversation_display_turns(tenant_id,conversation_id,principal_id,source_run_id,form,size,question)
+        VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING display_turn_id,created_at`,[current.tenantId,request.params.conversationId,current.userId,sourceRunId,form,typeof size==='number'?size:null,question.trim()])).rows[0]!;
+    });
+    if(!created)return reply.code(404).send({error:'answer_not_found'});
+    return reply.code(201).send({kind:'display',displayTurnId:created.display_turn_id,sourceRunId,form,size:typeof size==='number'?size:null,question:question.trim(),createdAt:created.created_at.toISOString()});
   });
   app.post<{Body:{question?:string;sourceIds?:string[];conversationId?:string;requestId?:string}}>('/api/runs',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
@@ -910,7 +935,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
   app.get<{Params:{runId:string}}>('/api/runs/:runId',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const result=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{run_id:string;state:string;state_version:number;plan:Record<string,unknown>|null;plan_hash:string|null;terminal?:{reason?:string;options?:unknown};answer:Record<string,unknown>|null;model_provenance:Array<{purpose:string;model:string;inputTokens:number;outputTokens:number;typedPlan:unknown}>}>(
-      `SELECT r.run_id,r.state,r.state_version,coalesce(p.plan,jsonb_build_object('question',pending.question,'steps','[]'::jsonb)) AS plan,p.plan_hash,a.answer,
+      `SELECT r.run_id,r.state,r.state_version,r.created_at AS started_at,(SELECT max(e.at) FROM runs.events e WHERE e.tenant_id=r.tenant_id AND e.run_id=r.run_id AND e.event_type='run_terminal') AS ended_at,coalesce(p.plan,jsonb_build_object('question',pending.question,'steps','[]'::jsonb)) AS plan,p.plan_hash,a.answer,
         (SELECT e.safe_payload FROM runs.events e WHERE e.tenant_id=r.tenant_id AND e.run_id=r.run_id
           AND e.event_type='run_terminal' ORDER BY e.sequence DESC LIMIT 1) AS terminal,
         coalesce((SELECT jsonb_agg(jsonb_build_object('purpose',m.call_purpose,'model',m.model_name,'inputTokens',m.input_tokens,'outputTokens',m.output_tokens,'typedPlan',m.typed_plan) ORDER BY m.created_at) FROM runs.model_provenance m WHERE m.tenant_id=r.tenant_id AND m.run_id=r.run_id),'[]'::jsonb) AS model_provenance
@@ -923,7 +948,8 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const admin = await withTenant(options.pool,current.tenantId,client=>client.query("SELECT 1 FROM core.entitlements WHERE tenant_id=$1 AND principal_id=$2 AND capability_id='tenant.admin' AND allowed AND resource_id IS NULL LIMIT 1",[current.tenantId,current.userId]));
     const technicalDetailsAllowed=Boolean(admin.rowCount);
     const modelProvenance=row.model_provenance.map(call=>call.purpose==='plan'?{...call,...publicPlannerDetails(call.typedPlan,technicalDetailsAllowed)}:call);
-    return reply.send({runId:row.run_id,state:row.state,stateVersion:row.state_version,plan:row.plan,planHash:row.plan_hash,modelProvenance,technicalDetailsAllowed,terminal:row.terminal,answer:row.answer?applyPersonalContext(row.answer as unknown as StructuredAnswer,memory):null});
+    const times=row as unknown as {started_at:Date;ended_at:Date|null};
+    return reply.send({runId:row.run_id,state:row.state,stateVersion:row.state_version,startedAt:times.started_at.toISOString(),endedAt:times.ended_at?.toISOString()??null,plan:row.plan,planHash:row.plan_hash,modelProvenance,technicalDetailsAllowed,terminal:row.terminal,answer:row.answer?applyPersonalContext(row.answer as unknown as StructuredAnswer,memory):null});
   });
   app.post<{Params:{runId:string};Body:{format?:ExportFormat}}>('/api/runs/:runId/evidence-pack',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});

@@ -340,3 +340,35 @@ h3 { font-size: 14px; line-height: 1.3; }
 .er-matches .ui-button.er-match { display:flex; justify-content:space-between; gap:8px; width:100%; border:0; background:transparent; padding:6px 8px; min-height:0; border-radius:8px; font-weight:400; font-family:var(--mono); font-size:12.5px; color:var(--ink); cursor:pointer; text-align:left; }
 .er-matches .er-match:hover, .er-matches .er-match[aria-selected="true"] { background:var(--primary-tint); }
 .er-matches small { color:var(--faint); font-family:var(--font); }
+/* Home answers (decision 56): live plan, one-line plan summary, collapsed evidence drawer, refusals, display turns. */
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.analytic-workspace .live-plan { padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--surface); }
+.analytic-workspace .live-plan h2 { margin: 0 0 8px; font-size: 14px; }
+.analytic-workspace .live-plan ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.analytic-workspace .live-step { display: grid; grid-template-columns: 20px auto 1fr auto; gap: 8px; align-items: center; font-size: 13px; color: var(--muted); padding: 6px 8px; border-radius: 8px; background: var(--bg); }
+.analytic-workspace .live-step-state { color: var(--faint); font-size: 12px; }
+.analytic-workspace .live-step.is-working .live-step-state { color: var(--analytic); }
+.analytic-workspace .live-step b { color: var(--ink); font-weight: 600; }
+.analytic-workspace .live-step-mark { width: 18px; height: 18px; border-radius: 999px; border: 1.5px solid var(--line); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; }
+.analytic-workspace .live-step.is-done .live-step-mark { background: var(--good); border-color: var(--good); color: #fff; }
+.analytic-workspace .live-step.is-working .live-step-mark { border-color: var(--primary); color: var(--primary); }
+.analytic-workspace .plan-line > summary { cursor: pointer; color: var(--faint); font-size: 12.5px; padding: 2px 0; }
+.analytic-workspace .plan-line[open] > summary { margin-bottom: 8px; }
+.analytic-workspace .plan-line .plan-card { padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--surface); }
+.analytic-workspace .evidence-drawer { border-top: 1px solid var(--line); padding-top: 8px; }
+.analytic-workspace .evidence-drawer > summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+.analytic-workspace .evidence-drawer[open] > summary { margin-bottom: 8px; }
+.analytic-workspace .answer-badges { display: flex; gap: 8px; flex-wrap: wrap; margin: 0; }
+.analytic-workspace .answer-table { display: grid; gap: 8px; justify-items: start; }
+.analytic-workspace .answer-table .ui-table-wrap { width: 100%; }
+.analytic-workspace .answer-table caption { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.analytic-workspace .bar-row.is-withheld .bar-value { color: var(--faint); }
+.analytic-workspace .bar-chart figcaption { color: var(--faint); font-size: 12px; margin-top: 6px; }
+.analytic-workspace .source-result { color: var(--muted); font-size: 13px; }
+.analytic-workspace .refusal-card { border-color: #F59E0B; }
+.analytic-workspace .display-turn-note { color: var(--faint); font-size: 12.5px; }
+.analytic-workspace .refusal-card .ui-button { justify-self: start; width: auto; }
+.analytic-workspace .refusal-card { display: grid; gap: 8px; }
+.analytic-workspace .refusal-card h2, .analytic-workspace .refusal-card p { margin: 0; }
+.analytic-workspace .grouped-result > .ui-button { justify-self: start; width: auto; }
+.analytic-workspace .chat-thread, .analytic-workspace .composer, .analytic-workspace .home-updates, .analytic-workspace .prompts { width: min(860px, 100%); margin-left: auto; margin-right: auto; }

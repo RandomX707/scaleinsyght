@@ -86,6 +86,8 @@ test('s2_empty_tenant_adds_real_sql_server_profiles_and_relationships', async ({
   await page.goto('/'); await page.getByLabel('Ask a question').fill('How many patients are in SQL Server hospital?'); await page.getByRole('button', { name: 'Send question' }).click();
   await expect(page.getByText('Source result: 500', { exact: true })).toBeVisible({ timeout: 60_000 });
   await expect(page.getByText(/Executed on SQL Server hospital; returned 1 aggregate row/)).toBeVisible();
+  // The plan collapses to one line after the answer (decision 56); it opens on click.
+  await page.locator('.plan-line').last().locator(':scope > summary').click();
   await expect(page.getByRole('heading',{name:'How this was answered'})).toBeVisible();
   await page.getByText('Model calls',{exact:true}).click();await expect(page.getByText(/Plan model:/)).toBeVisible();await expect(page.getByText(/Answer model:/)).toBeVisible();
   await expect(page.getByLabel('Ask a question')).toHaveValue('');await expect(page).toHaveURL(/\/conversations\//);
@@ -161,9 +163,10 @@ test('s2_empty_tenant_adds_real_sql_server_profiles_and_relationships', async ({
       expect(evidence.at(-1)!.answer.bySource[0]!.rows?.map(row=>({departmentName:row.group_value,orderCount:Number(row.value)}))).toEqual(top.map(({departmentName,orderCount})=>({departmentName,orderCount})));
       const statement=evidence.at(-1)!.answer.claims[0]!.statement;
       for(const value of [top[0]!.orderCount,top[4]!.orderCount,top[0]!.orderCount-top[4]!.orderCount])expect(statement).toContain(value.toLocaleString('en-US'));
-      await expect(page.locator('.bar-chart').last().locator('.bar-row')).toHaveCount(5);
-      await expect(page.locator('.bar-chart').last().locator('.bar-label')).toHaveText(top.map(row=>row.departmentName));
+      // Five groups are a small table, not a chart (decision 56).
+      await expect(page.locator('.grouped-result').last().locator('.bar-chart')).toHaveCount(0);
       await expect(page.locator('.grouped-result').last().locator('tbody tr')).toHaveCount(5);
+      await expect(page.locator('.grouped-result').last().locator('tbody tr td:first-child')).toHaveText(top.map(row=>row.departmentName));
       await expect(page.locator('.group-summary').last()).toContainText(`Highest: ${top[0]!.departmentName} (${top[0]!.orderCount})`);
       await page.screenshot({path:'docs/acceptance/s2/home-group-by.png',fullPage:true});
     }
@@ -177,12 +180,19 @@ test('s2_empty_tenant_adds_real_sql_server_profiles_and_relationships', async ({
       expect(statement).toMatch(/\btie[sd]?\b/i);for(const value of tied)expect(statement).toContain(String(value));
       const tiedNames=all.filter(row=>tied.includes(row.orderCount)).map(row=>row.departmentName);
       for(const name of tiedNames)await expect(page.locator('.group-summary').last()).toContainText(name);
+      // Twelve groups are a chart and no table; the table is one click away (decision 56).
       await expect(page.locator('.bar-chart').last().locator('.bar-row')).toHaveCount(all.length);
+      await expect(page.locator('.grouped-result').last().locator('table')).toHaveCount(0);
+      await page.locator('.grouped-result').last().getByRole('button',{name:'Show as a table'}).click();
       await expect(page.locator('.grouped-result').last().locator('tbody tr')).toHaveCount(all.length);
     }
     if(question.startsWith('Average number')){
       await expect(page.locator('.grouped-result').last().locator('.bar-chart')).toHaveCount(0);
-      await expect(page.locator('.grouped-result').last().locator('tbody tr')).toHaveCount(truth.answerChecks.averageEncountersPerPatientByProvider.sqlServer.length);
+      // More than 20 groups: a compact table of 10 and Show all (decision 56).
+      const providers=truth.answerChecks.averageEncountersPerPatientByProvider.sqlServer.length;
+      await expect(page.locator('.grouped-result').last().locator('tbody tr')).toHaveCount(10);
+      await page.locator('.grouped-result').last().getByRole('button',{name:`Show all ${providers}`}).click();
+      await expect(page.locator('.grouped-result').last().locator('tbody tr')).toHaveCount(providers);
     }
   }
   expect(evidence[0]!.answer.bySource[0]!.value).toBe(answerTruth.emergencyVisits2025.sqlServer);

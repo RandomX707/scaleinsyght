@@ -160,20 +160,22 @@ test('s3_empty_tenant_uploads_workbook_profiles_and_answers_with_evidence', asyn
   await page.getByRole('button', { name: 'New chat' }).click();
   const top = await askChecked('Total charge amount by department in the workbook, top 5', 1, /sum\("amount"\).*GROUP BY "department".*LIMIT 5/i);
   expect(top.answer.bySource[0]!.rows?.map((row) => ({ department: row.group_value, amount: round(Number(row.value), 2) }))).toEqual(checks.chargeAmountByDepartmentTop5);
-  await expect(page.locator('.bar-chart').last().locator('.bar-label')).toHaveText(checks.chargeAmountByDepartmentTop5.map((row) => row.department));
+  // Five groups are a small table, not a chart (decision 56).
+  await expect(page.locator('.grouped-result').last().locator('.bar-chart')).toHaveCount(0);
+  await expect(page.locator('.grouped-result').last().locator('tbody tr td:first-child')).toHaveText(checks.chargeAmountByDepartmentTop5.map((row) => row.department));
   await expect(page.locator('.group-summary').last()).toContainText(`Highest: ${checks.chargeAmountByDepartmentTop5[0]!.department}`);
   await expect(page.locator('.grouped-result').last().locator('th').first()).toHaveText('Department');
   await page.screenshot({ path: 'docs/acceptance/s3/home-group-by.png', fullPage: true });
 
   await page.getByRole('button', { name: 'New chat' }).click();
-  // Departments with fewer than 11 patients are withheld (decision 42): their cells show <11, no chart or summary is drawn,
-  // and the sentence is written in code, so no answer model call is made.
+  // Departments with fewer than 11 patients are withheld (decision 42): their bars show <11 with no length, no summary is
+  // drawn, and the sentence is written in code, so no answer model call is made. Twelve groups are a chart (decision 56).
   const small = checks.averageVisitsPerPatientByDepartment.filter((row) => row.patients < 11);
   expect(small.length).toBeGreaterThan(0);
   const average = await askChecked('Average number of visits per patient by department in the workbook', 1, /avg/i, ['plan']);
   expect(average.answer.bySource[0]!.rows?.map((row) => ({ department: row.group_value, average: row.value as unknown === '<11' ? '<11' : round(Number(row.value), 6) })).sort((a, b) => a.department.localeCompare(b.department))).toEqual(checks.averageVisitsPerPatientByDepartment.map((row) => ({ department: row.department, average: row.patients < 11 ? '<11' : round(row.average, 6) })));
-  await expect(page.locator('.grouped-result').last().locator('.bar-chart')).toHaveCount(0);
-  for (const row of small) await expect(page.locator('.grouped-result').last().locator('tr').filter({ hasText: row.department })).toContainText('<11');
+  await expect(page.locator('.grouped-result').last().locator('.bar-row')).toHaveCount(checks.averageVisitsPerPatientByDepartment.length);
+  for (const row of small) await expect(page.locator('.grouped-result').last().locator('.bar-row').filter({ hasText: row.department })).toContainText('<11');
   expect(average.answer.claims[0]!.statement).toContain('withheld to protect privacy');
 
   // Add the PostgreSQL testbed through the UI and compare patient counts across the two sources.

@@ -77,3 +77,12 @@ The form is chosen by code from the result's shape. The model's prose is the ans
 **Decision 56 (approved 25 Nov 2026): the display table in section 2, and recognising form-only follow-ups in code, with the two additions above.**
 
 - *Alternative:* let the model choose the form. Rejected: the form would vary between runs of the same question, and it would cost a model call for a display change.
+
+## 9. As built (26 Nov 2026)
+
+- Display code: `apps/web/src/home-answer.tsx` (form choice, form-only follow-up recogniser, plan summary line, refusal copy, chart and tables). Migration 040 adds `runs.conversation_display_turns`; `POST /api/conversations/:id/display-turns` accepts only the asker's own answered run in that conversation.
+- The recogniser removes polite and filler words and accepts only an exact form request (table, chart, all, number, top or bottom N, sorted by name or value). `top N` requires the held rows to be complete and ordered by value. 20 accepted and 16 rejected phrasings are unit-tested.
+- The live plan shows Your agent, the orchestrator, one agent per source and the critic, from the run state. It does not show per-agent timings, which the run does not record.
+- The value column is headed by the counted subject when the question names it, otherwise by the plan's measure (Count, Total amount, Average).
+- Not built: attach and voice (they do not work end to end), and "Alert me if this path changes" on lineage answers (no watch-and-notify backend).
+- Found while testing: "How many encounters does each provider have" is refused by the verifier (known issue K8). S11 asks per `provider_id`, which is answered and shown by name.
