@@ -71,7 +71,16 @@ jobs:
       - run: pnpm test:sqlparse
       - run: pnpm db:migrate
       - run: pnpm test:integration
+      - name: Log PostgreSQL statements over 5 seconds with their plans (diagnoses slow contract runs)
+        run: |
+          # LOAD registers auto_explain's settings in this session so ALTER SYSTEM accepts them.
+          psql "$DATABASE_URL_ADMIN" -v ON_ERROR_STOP=1 -c "LOAD 'auto_explain'" -c "ALTER SYSTEM SET session_preload_libraries = 'auto_explain'" -c "ALTER SYSTEM SET auto_explain.log_min_duration = '5s'" -c "ALTER SYSTEM SET auto_explain.log_nested_statements = on" -c "ALTER SYSTEM SET log_min_duration_statement = '5s'" -c "SELECT pg_reload_conf()"
       - run: pnpm test:contracts
+      - name: Show running and slow PostgreSQL statements
+        if: failure()
+        run: |
+          psql "$DATABASE_URL_ADMIN" -c "SELECT pid, now()-query_start AS running, state, wait_event_type, wait_event, left(query, 4000) AS query FROM pg_stat_activity WHERE datname LIKE 'si_test%' AND state <> 'idle'"
+          docker logs "${{ job.services.postgres.id }}" 2>&1 | grep -E -A120 "duration: [0-9]{4,}" | tail -600
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test:e2e
       - name: Build deployment images and check Compose config
