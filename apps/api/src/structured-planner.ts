@@ -48,19 +48,21 @@ export function plannerSchema(catalog: PlannerCatalog, joins: PlannerJoin[], lin
     const columnPath = literal(fields.map(field => field.path), fields.filter(field => field.label && field.label !== field.name)
       .map(field => field.path + ' is displayed as ' + field.label).join('; '));
     const column = nullable(columnPath);
+    const groupPaths = fields.filter(field => !field.sensitivity_tags?.length).map(field => field.path);
+    const groupColumn = groupPaths.length ? nullable(literal(groupPaths)) : {type:'null'};
     return [object({
       source_index: {type:'integer',enum:[sourceIndex]},
       declared: object({
         subject_table: literal(tables, 'The table whose records are counted, summed or averaged.'),
         measure: literal(MEASURES, 'count records, sum a numeric column, or average the number of records per entity.'),
         measure_column: nullable(columnPath),
-        grouping_column: nullable(columnPath),
+        grouping_column: groupColumn,
         filter_columns: {type:'array',items:columnPath},
       }, 'What this step must compute, declared before the executable fields.'),
       kind: literal(['count','filtered_count','group_by','join_aggregate','grouped_join','average_count_by','compare_aggregates']),
       table: literal(tables),
       join: connections.length ? nullable(literal(connections.map(joinKey))) : {type:'null'},
-      groupBy:column, groupKey:column, entityColumn:column, aggregateColumn:column,
+      groupBy:groupColumn, groupKey:groupColumn, entityColumn:column, aggregateColumn:column,
       operation:literal(['count','sum']),
       order:nullable(literal(['asc','desc'])),
       limit:nullable({type:'integer'}),
@@ -75,7 +77,10 @@ export function plannerSchema(catalog: PlannerCatalog, joins: PlannerJoin[], lin
     return names.length ? [object({source_index:{type:'integer',enum:[sourceIndex]}, asset:literal(names,'The table, or table.column, the question asks about.'),
       direction:literal(['upstream','downstream'],'upstream: where its data comes from. downstream: what reads it or would break if it changed.')})] : [];
   });
+  const sensitivePaths = [...new Set(catalog.flatMap(source => source.assets.flatMap(asset =>
+    asset.columns.filter(column => column.sensitivity_tags?.length).map(column => asset.qualified_name + '.' + column.name))))];
   return object({
+    privacy_refusal: sensitivePaths.length ? nullable(literal(sensitivePaths, 'Sensitive column the question asks to expose or group by. Set answerable false and leave intents empty. Otherwise null.')) : {type:'null'},
     lineage: lineageBranches.length ? nullable({anyOf:lineageBranches}) : {type:'null'},
     declaration: object({
       subject: {type:'string',description:'What the question counts or measures, in a few words.'},
@@ -103,11 +108,19 @@ const sameSet = (left: string[], right: string[]) => new Set(left).size === new 
 /** Decodes the structured response into typed intents and checks the executable plan against the declared intent.
  * No pattern matching over the user's question: the declaration is the contract the plan must meet. */
 export function decodePlannerOutput(text: string, catalog: PlannerCatalog, joins: PlannerJoin[], facts: PlannerFacts = [], lineageExtras: string[][] = []): {declaration: PlanDeclaration; steps: DecodedStep[]; lineage?: LineageRequest} {
-  const parsed = JSON.parse(text) as {declaration?: PlanDeclaration; intents?: Array<Record<string, unknown>>; lineage?: {source_index?: unknown; asset?: unknown; direction?: unknown} | null};
+  const parsed = JSON.parse(text) as {privacy_refusal?: unknown; declaration?: PlanDeclaration; intents?: Array<Record<string, unknown>>; lineage?: {source_index?: unknown; asset?: unknown; direction?: unknown} | null};
   const declaration = parsed.declaration;
   if (!declaration || typeof declaration.answerable !== 'boolean' || typeof declaration.comparison !== 'boolean') throw new Error('missing_declaration');
   if (!Array.isArray(parsed.intents)) throw new Error('invalid_source_list');
   if (parsed.intents.length > catalog.length) throw new Error('invalid_source_list: return at most one step per source; when no single step kind computes the requested measure, declare the question unanswerable');
+  if (parsed.privacy_refusal != null) {
+    if (declaration.answerable || parsed.intents.length || parsed.lineage != null) throw new Error('privacy_refusal_with_plan');
+    const [table, name] = field(parsed.privacy_refusal);
+    const column = catalog.flatMap(source => source.assets).filter(asset => asset.qualified_name === table)
+      .flatMap(asset => asset.columns).find(column => column.name === name && column.sensitivity_tags?.length);
+    if (!column) throw new Error('privacy_refusal_column_not_sensitive');
+    throw new Error(`grouping_by_a_sensitive_column_is_not_allowed: ${table}.${name} is tagged ${column.sensitivity_tags!.join(', ')}`);
+  }
   if (parsed.lineage != null) {
     // Lineage is read from recorded evidence, never computed from source data: no query intents go with it.
     const index = Number(parsed.lineage.source_index); const source = catalog[index]; const asset = String(parsed.lineage.asset); const direction = parsed.lineage.direction;

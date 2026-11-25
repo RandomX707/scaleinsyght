@@ -35,6 +35,8 @@ test('s4_dbt_upload_view_sql_and_lineage_graph_columns_gaps_and_chat_answers_mat
 
   // The dbt project is added through Add connector with its two artifacts.
   await page.goto('/connectors');
+  await expect(page.locator('.connector-card').getByText('PostgreSQL', {exact:true})).toBeVisible();
+  await expect(page.getByRole('heading', {name:'Private network gateways'})).toHaveCount(0);
   await page.locator('.page-heading').getByRole('button', { name: /Add connector/ }).click();
   await page.getByLabel('Source type').selectOption('dbt');
   await expect(page.getByRole('heading', { name: 'Add a dbt project' })).toBeVisible();
@@ -49,6 +51,14 @@ test('s4_dbt_upload_view_sql_and_lineage_graph_columns_gaps_and_chat_answers_mat
   const declared = Object.values(truth.dbt.models).reduce((total, model) => total + model.declaredReads.length, 0) + 1; // plus billing.claims, which is a gap
   await expect(page.getByRole('status')).toContainText(`Imported ${models} models: ${declared - 1} table links declared by dbt`);
   await page.getByRole('button', { name: 'Close dialog' }).click();
+
+  const dbtCard = page.locator('.connector-card').filter({has:page.getByRole('heading',{name:'Hospital dbt project'})});
+  await expect(dbtCard).toContainText('dbt project');
+  await expect(dbtCard).toContainText('Warehouse:');
+  await expect(dbtCard).toContainText('Last import:');
+  await expect(dbtCard).toContainText(`${models} models`);
+  for (const name of ['Upload new manifest','View lineage','Remove']) await expect(dbtCard.getByRole('button',{name})).toBeVisible();
+  for (const name of ['Profile','Dictionary','ER diagram']) await expect(dbtCard.getByRole('button',{name})).toHaveCount(0);
 
   // Lineage graph: every table and view on a path, links with evidence, and the gaps from truth.
   await page.goto('/lineage');

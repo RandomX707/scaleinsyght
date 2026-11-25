@@ -1,3 +1,4 @@
+import { publicPlannerDetails } from './planner-attempt-copy.js';
 import { createHash, createHmac, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { dailyBudgetCaps } from '@scaleinsyght/model-gateway';
@@ -890,7 +891,10 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
        WHERE r.tenant_id=$1 AND r.principal_id=$2 AND r.run_id=$3`,[current.tenantId,current.userId,request.params.runId]));
     if(!result.rowCount)return reply.code(404).send({error:'run_not_found'});
     const row=result.rows[0]!;const memory=await getPersonalMemory(options.pool,{tenantId:current.tenantId,principalId:current.userId});
-    return reply.send({runId:row.run_id,state:row.state,stateVersion:row.state_version,plan:row.plan,planHash:row.plan_hash,modelProvenance:row.model_provenance,terminal:row.terminal,answer:row.answer?applyPersonalContext(row.answer as unknown as StructuredAnswer,memory):null});
+    const admin = await withTenant(options.pool,current.tenantId,client=>client.query("SELECT 1 FROM core.entitlements WHERE tenant_id=$1 AND principal_id=$2 AND capability_id='tenant.admin' AND allowed AND resource_id IS NULL LIMIT 1",[current.tenantId,current.userId]));
+    const technicalDetailsAllowed=Boolean(admin.rowCount);
+    const modelProvenance=row.model_provenance.map(call=>call.purpose==='plan'?{...call,...publicPlannerDetails(call.typedPlan,technicalDetailsAllowed)}:call);
+    return reply.send({runId:row.run_id,state:row.state,stateVersion:row.state_version,plan:row.plan,planHash:row.plan_hash,modelProvenance,technicalDetailsAllowed,terminal:row.terminal,answer:row.answer?applyPersonalContext(row.answer as unknown as StructuredAnswer,memory):null});
   });
   app.post<{Params:{runId:string};Body:{format?:ExportFormat}}>('/api/runs/:runId/evidence-pack',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
@@ -1065,9 +1069,9 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
   app.get('/api/connections',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const result=await withTenant(options.pool,current.tenantId,async(client)=>client.query(
-      `SELECT c.connection_id,c.connector_type,c.status,c.source_ref,c.display_name,c.connector_agent_id,
+      `SELECT c.connection_id,c.connector_type,c.status,c.source_ref,c.display_name,c.connector_agent_id,c.dbt_import,w.display_name AS warehouse_name,
         (SELECT state FROM profiler.jobs j WHERE j.tenant_id=c.tenant_id AND j.connection_id=c.connection_id ORDER BY created_at DESC LIMIT 1) AS last_job_state
-       FROM registry.connections c WHERE c.tenant_id=$1 ORDER BY c.created_at DESC`,[current.tenantId]));
+       FROM registry.connections c LEFT JOIN registry.connections w ON w.tenant_id=c.tenant_id AND c.source_ref='warehouse:'||w.connection_id::text WHERE c.tenant_id=$1 ORDER BY c.created_at DESC`,[current.tenantId]));
     return reply.send({connections:result.rows.map((row)=>({
       connectionId:row.connection_id,
       connectorType:row.connector_type,
@@ -1075,6 +1079,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
       status:row.status,
       agentId:row.connector_agent_id,
       lastJobState:row.last_job_state,
+      dbtImport:row.dbt_import,warehouseName:row.warehouse_name,
     }))});
   });
   app.get('/api/analytic/sources',async(request,reply)=>{

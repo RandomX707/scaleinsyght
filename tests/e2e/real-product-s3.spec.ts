@@ -67,6 +67,17 @@ test('s3_empty_tenant_uploads_workbook_profiles_and_answers_with_evidence', asyn
   const artifact = await withTenant(adminPool, tenantId, (client) => client.query<{ encrypted_size: number }>('SELECT encrypted_size FROM artifacts.workbooks WHERE tenant_id=$1 AND connection_id=$2', [tenantId, connectionId]));
   expect(artifact.rowCount).toBe(1); expect(Number(artifact.rows[0]!.encrypted_size)).toBeGreaterThan(readFileSync(workbookPath).length);
 
+  const refresh = await page.request.post(`/api/connections/${connectionId}/discover`, { data: {jobType:'nightly'} });
+  expect(refresh.ok(), await refresh.text()).toBeTruthy();
+  const { jobId, listed: refreshedSheets, findings } = await refresh.json() as {jobId:string;listed:number;findings:number};
+  expect(refreshedSheets).toBe(truth.sheets.length);
+  const { findings: recorded } = await (await page.request.get('/api/findings')).json() as {
+    findings: Array<{jobId:string;connectionId:string;kind:string}>;
+  };
+  const workbookFindings = recorded.filter(finding => finding.jobId === jobId && finding.connectionId === connectionId);
+  expect(workbookFindings).toHaveLength(findings);
+  expect(workbookFindings.filter(finding => ['schema_change','new_tables','data_anomaly'].includes(finding.kind))).toEqual([]);
+
   // Profile: every sheet profiled; sensitive columns classified from the header notes.
   await page.goto(`/profile/${connectionId}`);
   await expect(page.locator('.profile-stats div').filter({ hasText: 'Objects profiled' }).locator('strong')).toHaveText(String(truth.sheets.length));

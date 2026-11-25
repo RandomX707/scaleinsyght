@@ -38,7 +38,7 @@ test('s6_refresh_from_the_approval_matrix_finds_source_changes_and_a_dismissal_i
   await run(`ALTER TABLE shop_orders ADD COLUMN channel text; DROP TABLE legacy_codes; INSERT INTO customers SELECT n, 'person' || lpad(n::text,3,'0') || '@example.test' FROM generate_series(31,60) n;
     CREATE TABLE returns(return_id integer PRIMARY KEY); INSERT INTO returns SELECT generate_series(1,5); GRANT SELECT ON ALL TABLES IN SCHEMA public TO ${reader};`);
   await page.goto('/approval-matrix');
-  await expect(page.getByRole('heading', { name: "Last night's run" })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Latest refresh' })).toBeVisible();
   await page.getByRole('button', { name: 'Run a refresh now' }).click();
   await expect(page.locator('.nightly-summary')).toContainText('1 source refreshed');
   const rows = page.locator('.findings table tbody tr');
@@ -49,6 +49,7 @@ test('s6_refresh_from_the_approval_matrix_finds_source_changes_and_a_dismissal_i
   await page.screenshot({ path: 'docs/acceptance/s6/approval-matrix.png', fullPage: true });
 
   await page.getByRole('tab', { name: 'All' }).click();
+  await page.getByRole('tab', { name: 'Suggestions' }).click();
   const sensitive = rows.filter({ hasText: 'public.customers.contact_email looks personal' });
   await sensitive.getByRole('button', { name: 'Dismiss' }).click();
   await expect(sensitive).toContainText('Dismissed');

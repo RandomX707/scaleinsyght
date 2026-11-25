@@ -156,3 +156,27 @@ describe('lineage requests', () => {
     expect(() => decodePlannerOutput(lineage({source_index:0,asset:'Charges',direction:'sideways'}), catalog, [])).toThrow('lineage_request_invalid');
   });
 });
+
+it('excludes sensitive columns from group options without excluding internal entity keys', () => {
+  const schema = plannerSchema([{name:'Visits',assets:[{qualified_name:'visits',columns:[
+    {name:'patient_id',sensitivity_tags:['identifier']},{name:'department'},
+  ]}]}], []);
+  const stepProperties = (schema as {properties:{intents:{items:{anyOf:Array<{properties:Record<string,unknown>}>}}}}).properties.intents.items.anyOf[0]!.properties;
+  const declaredProperties = (stepProperties.declared as {properties:Record<string,unknown>}).properties;
+  for (const option of [stepProperties.groupBy, stepProperties.groupKey, declaredProperties.grouping_column]) {
+    expect(JSON.stringify(option)).toContain('visits.department');
+    expect(JSON.stringify(option)).not.toContain('visits.patient_id');
+  }
+  expect(JSON.stringify(stepProperties.entityColumn)).toContain('visits.patient_id');
+});
+
+it('validates the named column for a privacy refusal', () => {
+  const visits = [{name:'Visits',assets:[{qualified_name:'visits',columns:[
+    {name:'patient_id',sensitivity_tags:['identifier']},{name:'department'},
+  ]}]}];
+  const response = (column: string) => JSON.stringify({
+    declaration:{...declaration,answerable:false}, intents:[], privacy_refusal:column,
+  });
+  expect(() => decodePlannerOutput(response('visits.patient_id'),visits,[])).toThrow('grouping_by_a_sensitive_column_is_not_allowed: visits.patient_id is tagged identifier');
+  expect(() => decodePlannerOutput(response('visits.department'),visits,[])).toThrow('privacy_refusal_column_not_sensitive');
+});

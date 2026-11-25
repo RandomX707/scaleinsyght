@@ -1,3 +1,4 @@
+import { nameSingleGroup } from './group-answer.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { config } from 'dotenv';
 import { createServer } from 'node:http';
@@ -32,7 +33,7 @@ for(const signal of ['SIGINT','SIGTERM'] as const)process.on(signal,()=>{stoppin
 async function dispatchDueNightly():Promise<boolean>{
  const due=await claimDueNightly(pool);if(!due)return false;
  let connector:ReadOnlyConnector|undefined;
- try{connector=await connectorForConnection(pool,due.tenantId,due.connectionId,artifactStore??undefined);await runProfile(pool,{tenantId:due.tenantId,connectionId:due.connectionId,connector,jobType:'nightly'});}
+ try{connector=await connectorForConnection(pool,due.tenantId,due.connectionId,artifactStore??undefined);await runProfile(pool,{tenantId:due.tenantId,connectionId:due.connectionId,connector,jobType:'nightly',scheduled:true});}
  catch(error){console.error('Nightly refresh failed:',error instanceof Error&&/^[a-z_]+$/.test(error.message)?error.message:'nightly_refresh_failed');}
  finally{await connector?.close?.();}
  return true;
@@ -234,10 +235,14 @@ while(!stopping){
      const counts=results.map(result=>result.rows?.length??1);
      const allowed=new Set([...values,...counts,...summaryNumbers,...numbers(plan.question)]);
      if(!numbers(statement).some(number=>values.includes(number))||numbers(statement).some(number=>!allowed.has(number)))throw new Error('model_answer_validation_failed');
+     const singleGroup = results.length === 1 && results[0]?.rows?.length === 1 ? results[0].rows[0] : undefined;
+     const groupIntent=plan.steps.find(step=>step.source_id===results[0]?.sourceId)?.inputs.query_intent as
+       {order?:unknown;limit?:unknown;orderBy?:unknown}|undefined;
+     const namedStatement=nameSingleGroup(statement,singleGroup,plan.question,groupIntent);
      const sourceNames=sources.map(source=>String(source.source??''));
      const attributed=results.length>1&&sourceNames.some(name=>name&&!statement.includes(name))&&results.every(result=>!result.rows)
       ?`${statement.replace(/[.\s]+$/,'')} (${results.map((result,index)=>`${sourceNames[index]}: ${result.value.toLocaleString('en-US')}`).join('; ')}).`
-      :statement;
+      :namedStatement;
      return {statement:attributed,model:answer.model,inputTokens:answer.inputTokens,outputTokens:answer.outputTokens};
    });
    await persistReportSnapshot(pool,claim.runId);

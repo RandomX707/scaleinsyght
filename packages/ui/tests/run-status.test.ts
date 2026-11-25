@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { answerTitle, plural, runStatusLabel } from '../src/run-status.js';
+import { answerTitle, plural, runProgressLabel, runStatusLabel } from '../src/run-status.js';
 
 describe('Home run status', () => {
   it('run_status_label_follows_the_runner_states', () => {
@@ -18,4 +18,12 @@ describe('Home run status', () => {
     expect(answerTitle('what are Orders per department?')).toBe('What are Orders per department');
     expect(answerTitle('x'.repeat(120))).toHaveLength(88);
   });
+});
+
+it('only active runs show progress copy', () => {
+  expect(runProgressLabel('PLANNING', [])).toBe('Planning your question…');
+  expect(runProgressLabel('RUNNING', ['PostgreSQL'])).toBe('Querying PostgreSQL…');
+  expect(runProgressLabel('FINALISING', [])).toBe('Writing answer…');
+  expect(runProgressLabel('COMPLETED', [])).toBeUndefined();
+  expect(runProgressLabel('FAILED', [])).toBeUndefined();
 });

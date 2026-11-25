@@ -84,7 +84,7 @@ function canonicalJson(value: unknown): string {
 
 export async function runProfile(
   pool: Pool,
-  input: { tenantId: string; connectionId: string; connector: ReadOnlyConnector; jobType: 'discovery' | 'profile' | 'nightly' },
+  input: { tenantId: string; connectionId: string; connector: ReadOnlyConnector; jobType: 'discovery' | 'profile' | 'nightly'; scheduled?: boolean },
 ): Promise<ProfileSummary> {
   const started = performance.now();
   const rules = await readConnectionScope(pool, input.tenantId, input.connectionId);
@@ -101,9 +101,9 @@ export async function runProfile(
 
   await withTenant(pool, input.tenantId, async (client) => {
     await client.query(
-      `INSERT INTO profiler.jobs(tenant_id,job_id,connection_id,job_type,state)
-       VALUES($1,$2,$3,$4,'RUNNING')`,
-      [input.tenantId, jobId, input.connectionId, input.jobType],
+      `INSERT INTO profiler.jobs(tenant_id,job_id,connection_id,job_type,state,scheduled)
+       VALUES($1,$2,$3,$4,'RUNNING',$5)`,
+      [input.tenantId, jobId, input.connectionId, input.jobType, input.scheduled ?? false],
     );
     await client.query(
       `INSERT INTO profiler.events(tenant_id,job_id,sequence,event_type,safe_payload)
@@ -381,12 +381,13 @@ async function ensureAssetVersion(
 export async function getNotifications(pool: Pool, tenantId: string, userId: string): Promise<Array<{ notificationId: string; type: string; summary: Record<string, unknown>; readAt: string | null }>> {
   return withTenant(pool, tenantId, async (client) => {
     await client.query("SELECT set_config('app.principal_id',$1,true)", [userId]);
-    const result = await client.query<{ notification_id: string; notification_type: string; safe_summary: Record<string, unknown>; read_at: Date | null }>(
-      `SELECT notification_id,notification_type,safe_summary,read_at FROM core.notifications
-       WHERE tenant_id=$1 AND user_id=$2 ORDER BY created_at DESC`,
+    const result = await client.query<{ notification_id: string; notification_type: string; safe_summary: Record<string, unknown>; source_name: string | null; read_at: Date | null }>(
+      `SELECT n.notification_id,n.notification_type,n.safe_summary,n.read_at,c.display_name AS source_name
+       FROM core.notifications n LEFT JOIN registry.connections c ON c.tenant_id=n.tenant_id AND c.connection_id=n.connection_id
+       WHERE n.tenant_id=$1 AND n.user_id=$2 ORDER BY n.created_at DESC`,
       [tenantId, userId],
     );
-    return result.rows.map((row) => ({ notificationId: row.notification_id, type: row.notification_type, summary: row.safe_summary, readAt: row.read_at?.toISOString() ?? null }));
+    return result.rows.map((row) => ({ notificationId: row.notification_id, type: row.notification_type, summary: {...row.safe_summary,sourceName:row.source_name}, readAt: row.read_at?.toISOString() ?? null }));
   });
 }
 

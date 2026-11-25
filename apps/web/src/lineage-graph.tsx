@@ -20,7 +20,20 @@ const LANE_X = 24; const LANE_W = 300; const NODE_W = 270; const HEAD = 30; cons
 const connectorLabel: Record<string, string> = { postgres: 'PostgreSQL', sql_server: 'SQL Server', excel: 'Excel', dbt: 'dbt', snowflake: 'Snowflake', tableau: 'Tableau', power_bi: 'Power BI' };
 
 const shortType = (type: string | null) => !type ? '' : type.length > 14 ? `${type.slice(0, 13)}…` : type;
-function curve(x1: number, y1: number, x2: number, y2: number) { const mid = (x2 - x1) / 2; return `M${x1} ${y1} C${x1 + mid} ${y1},${x2 - mid} ${y2},${x2} ${y2}`; }
+function curve(x1: number, y1: number, x2: number, y2: number) {
+  const mid = (x2 - x1) / 2;
+  return `M${x1} ${y1} C${x1 + mid} ${y1},${x2 - mid} ${y2},${x2} ${y2}`;
+}
+
+export function lineageEdgePath(fromX: number, fromY: number, toX: number, toY: number) {
+  const start = fromX + NODE_W;
+  const end = toX - 2;
+  const exit = start + 10;
+  // Each lane has a clear gutter on either side of its cards. Use the header
+  // gutter to cross intervening lanes, including cycles that return to a lane.
+  if (toX - fromX === LANE_W) return `M${start} ${fromY} H${exit} V${toY} H${end}`;
+  return `M${start} ${fromY} H${exit} V40 H${toX - 10} V${toY} H${end}`;
+}
 function closure(start: string, edges: Edge[]) {
   const up = new Set<string>(); const down = new Set<string>(); const used = new Set<Edge>();
   const walk = (id: string, direction: 'up' | 'down', seen: Set<string>) => {
@@ -111,7 +124,7 @@ export function LineageGraph(props: { data: LineageGraphData; onAsk: (question: 
     {layout.groups.map((group) => <text key={`${group.x}-${group.y}`} className="gh" x={group.x} y={group.y + 14}>{group.title}</text>)}
     {tableEdges.map((item) => {
       const a = layout.nodes.get(item.from); const b = layout.nodes.get(item.to); if (!a || !b) return null;
-      const on = !tableClosure || tableClosure.edges.has(item); const path = curve(a.x + NODE_W, a.y + 15, b.x - 2, b.y + 15); const style = EVIDENCE[item.method];
+      const on = !tableClosure || tableClosure.edges.has(item); const path = lineageEdgePath(a.x, a.y + 15, b.x, b.y + 15); const style = EVIDENCE[item.method];
       return <g key={item.relationshipId} className="ledge" role="button" tabIndex={0} aria-label={`${label(item.from)} to ${label(item.to)}, ${style.label}`} onClick={() => { setEdgeId(item.relationshipId); setColumn(null); }} onKeyDown={(event) => { if (event.key === 'Enter') setEdgeId(item.relationshipId); }}>
         <path d={path} stroke="transparent" strokeWidth={12} fill="none" />
         <path d={path} fill="none" stroke={style.color} strokeDasharray={style.dash} strokeWidth={edgeId === item.relationshipId ? 3.5 : 1.6} opacity={columnClosure ? 0.08 : on ? 1 : 0.12} markerEnd={`url(#lineage-arrow-${item.method})`} />
@@ -120,21 +133,22 @@ export function LineageGraph(props: { data: LineageGraphData; onAsk: (question: 
     {columnEdges.map((item) => {
       const a = fieldById.get(item.from); const b = fieldById.get(item.to); if (!a || !b || !open[a.datasetId] || !open[b.datasetId]) return null;
       const from = layout.nodes.get(a.datasetId)!; const to = layout.nodes.get(b.datasetId)!; const on = !columnClosure || columnClosure.edges.has(item); const style = EVIDENCE[item.method];
-      return <path key={item.relationshipId} d={curve(from.x + NODE_W - 6, rowY(item.from), to.x + 6, rowY(item.to))} fill="none" stroke={style.color} strokeDasharray={style.dash} strokeWidth={columnClosure && on ? 2.4 : 1.1} opacity={columnClosure ? (on ? 1 : 0.08) : 0.55} markerEnd={`url(#lineage-arrow-${item.method})`}><title>{`${label(item.from)} → ${label(item.to)}: ${style.label}`}</title></path>;
+      return <path key={item.relationshipId} d={lineageEdgePath(from.x, rowY(item.from), to.x, rowY(item.to))} fill="none" stroke={style.color} strokeDasharray={style.dash} strokeWidth={columnClosure && on ? 2.4 : 1.1} opacity={columnClosure ? (on ? 1 : 0.08) : 0.55} markerEnd={`url(#lineage-arrow-${item.method})`}><title>{`${label(item.from)} → ${label(item.to)}: ${style.label}`}</title></path>;
     })}
     {data.datasets.map((dataset) => {
       const node = layout.nodes.get(dataset.assetId)!; const on = !highlighted || highlighted.has(dataset.assetId); const match = Boolean(find) && dataset.name.toLowerCase().includes(find.toLowerCase());
       const gaps = off.gap ? [] : gapsFor(dataset.assetId); const columns = layout.fieldsOf.get(dataset.assetId) ?? [];
       const isUnused = (layout.lane.get(dataset.assetId) ?? 0) < layout.lanes - 1 && !data.tableEdges.some((item) => item.from === dataset.assetId);
+      const meta = isUnused ? 'unused' : dataset.objectType === 'view' ? 'view' : dataset.connectorType === 'dbt' ? 'dbt model' : '';
       return <g key={dataset.assetId} className="lnode2" opacity={on || match ? 1 : 0.25}>
         {gaps.length > 0 && <path d={`M${node.x - 34} ${node.y + 15} H${node.x - 2}`} stroke={EVIDENCE.gap.color} strokeDasharray={EVIDENCE.gap.dash} strokeWidth={2} markerEnd="url(#lineage-arrow-gap)"><title>{gaps.map((gap) => gap.reason).join('; ')}</title></path>}
         <g role="button" tabIndex={0} aria-expanded={Boolean(open[dataset.assetId])} aria-label={`${dataset.name}, ${open[dataset.assetId] ? 'hide' : 'show'} columns`} onClick={() => chooseTable(dataset.assetId)} onKeyDown={(event) => { if (event.key === 'Enter') chooseTable(dataset.assetId); }}>
           <rect x={node.x} y={node.y} width={NODE_W} height={node.h} rx={7} fill={dataset.objectType === 'view' ? '#EEF0FC' : dataset.connectorType === 'dbt' ? '#FEFCE8' : '#FFFFFF'} stroke={selected === dataset.assetId ? '#5A67D8' : match ? '#EA580C' : '#CBD5E1'} strokeWidth={selected === dataset.assetId || match ? 2.5 : 1} />
           {columns.length > 0 && <path d={open[dataset.assetId] ? `M${node.x + 9} ${node.y + 12} l4 5 l4 -5` : `M${node.x + 10} ${node.y + 10} l5 4 l-5 4`} fill="none" stroke="#64748B" strokeWidth={1.6} strokeLinecap="round" />}
-          <text className="nl" x={node.x + 24} y={node.y + 19}>{dataset.name.length > 34 ? `${dataset.name.slice(0, 33)}…` : dataset.name}<title>{dataset.name}{isUnused ? ' · unused: nothing downstream reads it' : ''}</title></text>
-          {(() => { const meta = isUnused ? 'unused' : dataset.objectType === 'view' ? 'view' : dataset.connectorType === 'dbt' ? 'dbt model' : '';
-            // Like the prototype: the label shows only when it fits beside the name.
-            return meta && 34 + dataset.name.length * 6.9 + meta.length * 5.8 < NODE_W ? <text className="nm" x={node.x + NODE_W - 8} y={node.y + 19} textAnchor="end" style={isUnused ? { fill: '#B91C1C' } : undefined}>{meta}</text> : null; })()}
+          <svg x={node.x + 24} y={node.y} width={NODE_W - (meta ? 96 : 32)} height={HEAD} overflow="hidden">
+            <text className="nl" x={0} y={19}>{dataset.name}<title>{dataset.name}</title></text>
+          </svg>
+          {meta && <text className="nm" x={node.x + NODE_W - 8} y={node.y + 19} textAnchor="end" style={isUnused ? { fill: '#B91C1C' } : undefined}>{meta}</text>}
         </g>
         {open[dataset.assetId] && columns.map((field, index) => {
           const y = node.y + HEAD + index * ROW + 2; const inPath = columnClosure?.nodes.has(field.assetId); const isSelected = column === field.assetId; const gap = !off.gap && gapsFor(field.assetId).length > 0;

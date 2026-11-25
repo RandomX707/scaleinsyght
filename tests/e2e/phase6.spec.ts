@@ -20,10 +20,10 @@ async function createTenant(){
 }
 async function signIn(page:Page,email:string){await signInToTestWorkspace(page,email,'phase6-ui-password');}
 
-test('phase6_gateway_and_sso_settings_ui_shows_secret_once_and_never_again',async({page})=>{
+test('phase6_gateway_is_hidden_and_sso_settings_keep_the_secret_private',async({page})=>{
   const tenant=await createTenant();await signIn(page,tenant.email);await page.getByRole('link',{name:/Connectors/}).click();
-  await page.getByLabel('Gateway source').selectOption(tenant.sourceId);await page.getByRole('button',{name:'Create enrollment code'}).click();const token=page.getByLabel('One-time enrollment code');await expect(token).toBeVisible();const enrollmentToken=await token.textContent();expect(typeof enrollmentToken==='string'&&/^[a-f0-9]{64}$/.test(enrollmentToken)).toBe(true);
-  await page.reload();await page.getByRole('link',{name:/Connectors/}).click();await expect(page.getByLabel('One-time enrollment code')).toHaveCount(0);
+  await expect(page.getByRole('heading',{name:'Private network gateways'})).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'Create enrollment code'})).toHaveCount(0);
   await page.goto(`/controls?connection=${tenant.sourceId}`);await page.getByLabel('OIDC issuer').fill('https://issuer.synthetic.invalid/');await page.getByLabel('Client ID').fill('phase6-synthetic-client');await page.getByLabel('Client secret reference').fill('OIDC_TEST_CLIENT_SECRET');await page.getByLabel('Allowed email domains').fill('synthetic.invalid');await page.getByLabel('Enable organization sign-in').check();await page.getByRole('button',{name:'Save sign-in settings'}).click();await expect(page.getByRole('status')).toContainText('SSO settings saved');
   await expect(page.getByLabel('OIDC client secret reference')).toHaveValue('OIDC_TEST_CLIENT_SECRET');expect(await page.locator('body').innerText()).not.toContain('synthetic-oidc-client-secret');
   await page.reload();await expect(page.getByLabel('OIDC client secret reference')).toHaveValue('OIDC_TEST_CLIENT_SECRET');expect(await page.locator('body').innerText()).not.toContain('synthetic-oidc-client-secret');

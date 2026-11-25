@@ -27,3 +27,12 @@ export function answerTitle(question: string): string {
   const short = text.length > 90 ? `${text.slice(0, 87).trimEnd()}…` : text;
   return short.charAt(0).toUpperCase() + short.slice(1);
 }
+
+export function runProgressLabel(state: string, sourceNames: string[]): string | undefined {
+  switch (state) {
+    case 'CREATED': case 'PLANNING': case 'PLAN_VALIDATED': return 'Planning your question…';
+    case 'RUNNING': return runStatusLabel(state, sourceNames) + '…';
+    case 'FINALISING': return 'Writing answer…';
+    default: return undefined;
+  }
+}

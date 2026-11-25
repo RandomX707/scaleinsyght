@@ -93,20 +93,31 @@ export async function recordFindings(pool: Pool, input: { tenantId: string; conn
 export type FindingRow = { findingId: string; connectionId: string; sourceName: string; jobId: string; jobType: string; kind: string; subject: string; detail: Record<string, unknown>; foundAt: string; status: string; decidedAt: string | null };
 
 /** Findings for the Approval matrix with the latest nightly run's summary. */
-export async function listFindings(pool: Pool, tenantId: string): Promise<{ findings: FindingRow[]; lastNight: { jobIds: string[]; startedAt: string | null; connections: number; profiled: number; listed: number } }> {
+export async function listFindings(pool: Pool, tenantId: string): Promise<{ findings: FindingRow[]; lastNight: { jobIds: string[]; scheduled: boolean; startedAt: string | null; connections: number; profiled: number; listed: number } }> {
   return withTenant(pool, tenantId, async (client) => {
     const rows = await client.query<{ finding_id: string; connection_id: string; source_name: string; job_id: string; job_type: string | null; kind: string; subject: string; detail: Record<string, unknown>; found_at: Date; status: string; decided_at: Date | null }>(
-      `SELECT f.finding_id,f.connection_id,coalesce(nullif(c.display_name,''),c.connector_type) AS source_name,f.job_id,j.job_type,f.kind,f.subject,f.detail,f.found_at,f.status,f.decided_at
+      `SELECT f.finding_id,f.connection_id,coalesce(nullif(c.display_name,''),c.connector_type) AS source_name,f.job_id,j.job_type,f.kind,f.subject,f.detail ||
+         CASE WHEN f.kind='id_match' AND fc.connection_id IS NOT NULL AND tc.connection_id IS NOT NULL
+         THEN jsonb_build_object('fromSource',coalesce(nullif(fc.display_name,''),fc.connector_type),'fromField',fa.qualified_name,
+                                 'toSource',coalesce(nullif(tc.display_name,''),tc.connector_type),'toField',ta.qualified_name)
+         ELSE '{}'::jsonb END AS detail,f.found_at,f.status,f.decided_at
        FROM profiler.findings f JOIN registry.connections c ON c.tenant_id=f.tenant_id AND c.connection_id=f.connection_id
+       LEFT JOIN graph.assertions a ON a.tenant_id=f.tenant_id AND a.assertion_id=f.assertion_id
+       LEFT JOIN graph.relationships r ON r.tenant_id=a.tenant_id AND r.relationship_id=a.relationship_id
+       LEFT JOIN graph.assets fa ON fa.tenant_id=r.tenant_id AND fa.asset_id=r.from_asset_id
+       LEFT JOIN graph.assets ta ON ta.tenant_id=r.tenant_id AND ta.asset_id=r.to_asset_id
+       LEFT JOIN registry.connections fc ON fc.tenant_id=fa.tenant_id AND fc.connection_id=fa.source_id
+       LEFT JOIN registry.connections tc ON tc.tenant_id=ta.tenant_id AND tc.connection_id=ta.source_id
        LEFT JOIN profiler.jobs j ON j.tenant_id=f.tenant_id AND j.job_id=f.job_id WHERE f.tenant_id=$1 ORDER BY f.found_at DESC,f.subject LIMIT 500`, [tenantId]);
     // "Last night" is the most recent nightly run of each connection within a day of the newest one.
-    const nightly = await client.query<{ job_id: string; created_at: Date; listed_count: number | null; profiled_count: number | null }>(
-      `WITH latest AS(SELECT DISTINCT ON (connection_id) job_id,created_at,listed_count,profiled_count FROM profiler.jobs WHERE tenant_id=$1 AND job_type='nightly' AND state='COMPLETED' ORDER BY connection_id,created_at DESC)
+    const nightly = await client.query<{ job_id: string; scheduled: boolean; created_at: Date; listed_count: number | null; profiled_count: number | null }>(
+      `WITH newest AS (SELECT scheduled FROM profiler.jobs WHERE tenant_id=$1 AND job_type='nightly' AND state='COMPLETED' ORDER BY created_at DESC LIMIT 1),
+       latest AS(SELECT DISTINCT ON (connection_id) job_id,scheduled,created_at,listed_count,profiled_count FROM profiler.jobs WHERE tenant_id=$1 AND job_type='nightly' AND state='COMPLETED' AND scheduled=(SELECT scheduled FROM newest) ORDER BY connection_id,created_at DESC)
        SELECT * FROM latest WHERE created_at>=(SELECT max(created_at) FROM latest)-interval '1 day' ORDER BY created_at`, [tenantId]);
     return {
       findings: rows.rows.map((row) => ({ findingId: row.finding_id, connectionId: row.connection_id, sourceName: row.source_name, jobId: row.job_id, jobType: row.job_type ?? 'profile', kind: row.kind, subject: row.subject, detail: row.detail,
         foundAt: row.found_at.toISOString(), status: row.status, decidedAt: row.decided_at?.toISOString() ?? null })),
-      lastNight: { jobIds: nightly.rows.map((row) => row.job_id), startedAt: nightly.rows[0]?.created_at.toISOString() ?? null, connections: nightly.rows.length,
+      lastNight: { scheduled: nightly.rows.at(-1)?.scheduled ?? false, jobIds: nightly.rows.map((row) => row.job_id), startedAt: nightly.rows.at(-1)?.created_at.toISOString() ?? null, connections: nightly.rows.length,
         profiled: nightly.rows.reduce((total, row) => total + Number(row.profiled_count ?? 0), 0), listed: nightly.rows.reduce((total, row) => total + Number(row.listed_count ?? 0), 0) },
     };
   });

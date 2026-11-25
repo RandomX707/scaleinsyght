@@ -4,7 +4,7 @@ import { parseStatementLineage, statementHash, writeStatementLineage, SqlParserU
 
 type Node = { resource_type?: unknown; name?: unknown; alias?: unknown; schema?: unknown; identifier?: unknown; compiled_code?: unknown; depends_on?: { nodes?: unknown } };
 type CatalogEntry = { metadata?: { schema?: unknown; name?: unknown }; columns?: Record<string, { type?: unknown; name?: unknown }> };
-export type DbtImportSummary = { models: number; sources: number; tableEdges: number; columnEdges: number; gaps: number; modelsNotInWarehouse: string[] };
+export type DbtImportSummary = { models: number; tests: number; sources: number; tableEdges: number; columnEdges: number; gaps: number; modelsNotInWarehouse: string[] };
 
 const NAME = /^[A-Za-z0-9_$]+$/;
 const relation = (schema: unknown, name: unknown) => typeof schema === 'string' && typeof name === 'string' && NAME.test(schema) && NAME.test(name) ? `${schema}.${name}` : null;
@@ -33,7 +33,7 @@ export function readDbtArtifacts(manifest: unknown, catalog: unknown) {
     columns[name] = Object.fromEntries(Object.values(entry.columns).filter((column) => typeof column.name === 'string' && NAME.test(column.name)).map((column) => [String(column.name), String(column.type ?? 'unknown')]));
   }
   return {
-    dbtVersion: String(m.metadata.dbt_version ?? 'unknown'), sources: Object.keys(m.sources).length, columns,
+    dbtVersion: String(m.metadata.dbt_version ?? 'unknown'), tests: Object.values(m.nodes).filter(node => node?.resource_type === 'test').length, sources: Object.keys(m.sources).length, columns,
     models: models.map((model) => ({ ...model, declaredReads: model.dependsOn.map((id) => relations.get(id)).filter((name): name is string => Boolean(name)) })),
   };
 }
@@ -91,6 +91,11 @@ export async function importDbtArtifacts(pool: Pool, input: { tenantId: string; 
         totals.gaps++;
       }
     }
-    return { models: artifacts.models.length, sources: artifacts.sources, ...totals, modelsNotInWarehouse: notInWarehouse.sort() };
+    await client.query(
+      `UPDATE registry.connections SET dbt_import=jsonb_build_object(
+        'importedAt',clock_timestamp(),'models',$3::integer,'tests',$4::integer)
+        WHERE tenant_id=$1 AND connection_id=$2 AND connector_type='dbt'`,
+      [input.tenantId,input.dbtConnectionId,artifacts.models.length,artifacts.tests]);
+    return { models: artifacts.models.length, tests: artifacts.tests, sources: artifacts.sources, ...totals, modelsNotInWarehouse: notInWarehouse.sort() };
   });
 }
