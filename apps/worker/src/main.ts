@@ -1,3 +1,4 @@
+import { nameSingleGroup } from './group-answer.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { config } from 'dotenv';
 import { createServer } from 'node:http';
@@ -235,11 +236,9 @@ while(!stopping){
      const allowed=new Set([...values,...counts,...summaryNumbers,...numbers(plan.question)]);
      if(!numbers(statement).some(number=>values.includes(number))||numbers(statement).some(number=>!allowed.has(number)))throw new Error('model_answer_validation_failed');
      const singleGroup = results.length === 1 && results[0]?.rows?.length === 1 ? results[0].rows[0] : undefined;
-     const groupLabel = typeof singleGroup?.group_value === 'string' ? singleGroup.group_value : '';
-     const ranking = plan.question.match(/\b(fewest|most|least) ([a-z][a-z -]{0,40}?)(?:[?.!]|$)/i);
-     const namedStatement = groupLabel && singleGroup && ranking
-       ? `${groupLabel} had the ${ranking[1]!.toLowerCase()} ${ranking[2]!.trim()}: ${Number(singleGroup.value).toLocaleString('en-US')}.`
-       : groupLabel ? `${groupLabel}: ${statement}` : statement;
+     const groupIntent=plan.steps.find(step=>step.source_id===results[0]?.sourceId)?.inputs.query_intent as
+       {order?:unknown;limit?:unknown;orderBy?:unknown}|undefined;
+     const namedStatement=nameSingleGroup(statement,singleGroup,plan.question,groupIntent);
      const sourceNames=sources.map(source=>String(source.source??''));
      const attributed=results.length>1&&sourceNames.some(name=>name&&!statement.includes(name))&&results.every(result=>!result.rows)
       ?`${statement.replace(/[.\s]+$/,'')} (${results.map((result,index)=>`${sourceNames[index]}: ${result.value.toLocaleString('en-US')}`).join('; ')}).`
