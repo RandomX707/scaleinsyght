@@ -118,14 +118,16 @@ export async function completeStep(pool:Pool,claim:StepClaim,input:{resultRef:st
   });
 }
 
-export async function failStep(pool:Pool,claim:StepClaim,input:{reasonCode:string}):Promise<boolean>{
+export async function failStep(pool:Pool,claim:StepClaim,input:{reasonCode:string;objects?:string[]}):Promise<boolean>{
   if(!/^[a-z][a-z0-9_]{0,63}$/.test(input.reasonCode))throw new Error('invalid_reason_code');
+  // Object names (metadata, never values) a step was refused for, for example tables excluded in Controls.
+  const objects=(input.objects??[]).filter(name=>/^[A-Za-z0-9_$. ()-]{1,300}$/.test(name)).slice(0,20);
   return withRunTenant(pool,claim.runId,async(client,stored)=>{
     const changed=await client.query(`UPDATE runs.steps SET state='FAILED',lease_owner=NULL,lease_expires_at=NULL
       WHERE tenant_id=$1 AND run_id=$2 AND step_id=$3 AND state IN ('CLAIMED','RUNNING') AND lease_owner=$4 AND fencing_token=$5 AND lease_expires_at>clock_timestamp()`,
       [stored.tenant_id,claim.runId,claim.stepId,claim.workerId,claim.fencingToken]);
     if(!changed.rowCount)return false;
-    await appendEvent(client,claim.runId,'step_failed',{step_id:claim.stepId,attempt:claim.attempt,fencing_token:claim.fencingToken,reason_codes:[input.reasonCode]},claim.stepId,claim.fencingToken);
+    await appendEvent(client,claim.runId,'step_failed',{step_id:claim.stepId,attempt:claim.attempt,fencing_token:claim.fencingToken,reason_codes:[input.reasonCode],...(objects.length?{objects}:{})},claim.stepId,claim.fencingToken);
     const analytic=await client.query('SELECT 1 FROM runs.analytic_plans WHERE tenant_id=$1 AND run_id=$2',[stored.tenant_id,claim.runId]);
     if(analytic.rowCount){
       const remaining=await client.query<{count:string}>("SELECT count(*)::text AS count FROM runs.steps WHERE tenant_id=$1 AND run_id=$2 AND state IN ('PENDING','CLAIMED','RUNNING')",[stored.tenant_id,claim.runId]);

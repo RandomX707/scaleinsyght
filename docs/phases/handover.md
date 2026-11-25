@@ -55,15 +55,14 @@ Updated by Claude Code after #35. S7 (Codex) and S8 (Claude Code) are merged. Th
 - The testbed walkthroughs all honour `SI_TEST_DATABASE` now; S7 used to write to `si_test` regardless (two S7 tenants were added to `si_test` on 25 Nov before this was fixed; nothing was reset).
 - Worktrees: `../scaleinsyght-review` serves 4284; `../scaleinsyght-cc` and `../scaleinsyght-cc-s8` are Claude Code's; `../scaleinsyght-chat` (S7, merged) and `../scaleinsyght-eval` are Codex's. Orphaned SQL parsers from before #30 may still hold ports 8032 and 8033 (in the chat and eval worktrees); `startSqlParser` treats any server on its port as its own, so stop them before relying on those ports.
 
-## Claude Code queue (in the user's order)
+## Claude Code queue (in the user's order; Codex is out of limits, so Claude Code holds all work)
 
-1. Done: K4 follow-ups, K2 and the scale test, CI triggers, agents at execution, heldout3.
-2. Done: **Dictionary rebuild** and the ER explorer at scale (above; Dictionary 633 ms and 14.5 KB, ER 739 ms and 40 KB on 5,000 tables).
-3. **K6**: counts with two or more conditions on one table; development set only.
-4. **Migration safety**: data backfills per tenant with the tenant setting, or through a reviewed function, and a check that fails loudly when a backfill that should change rows changes none.
-5. **Model-spend ledger** kept where test resets don't wipe it, so the daily total is measured.
-6. **Home chat spec and build** (moved from Codex): conversational layout; code picks sentence, small table (2 to 5 values), chart (6 to 20 groups), compact table with Show all (over 20 rows), flow diagram for lineage, or explanation plus a safe alternative for a refusal; never a chart and a full table by default; one collapsed "SQL, sources and lineage" drawer; plan collapsed after completion; follow-ups change the form without rerunning; screenshots and a walkthrough per rule.
-7. From the scale test, still open: per-table profiling time and planner pre-model catalog reads.
+1. **K6** and the restored test questions: draft PR #41. Development set 55/55. Blocked only by K7 (S2b's correct answer is taller than the viewport), which the Home chat rework fixes; the test is not changed.
+2. **Controls**: built on `controls-finish` (this PR).
+3. **Home chat rework**: spec, then build (conversational layout; code picks sentence, small table, chart, compact table or flow diagram; refusals with a safe alternative; one collapsed "SQL, sources and lineage" drawer; plan collapsed after completion; follow-ups change the form without rerunning; screenshots and a walkthrough per rule).
+4. **Agents, My agent, Usage and BI reports** matched to the prototype, one PR each.
+5. **Remaining Dictionary items**: keys and indexes, Back buttons, encrypted procedure dependencies, agent schedules ("Run by"), ER grid.
+6. Then, from the earlier queue: migration backfill safety, a model-spend ledger that test resets don't wipe, per-table profiling time, planner pre-model catalog reads.
 
 ## Codex continuation
 
@@ -91,9 +90,7 @@ Updated by Claude Code after #35. S7 (Codex) and S8 (Claude Code) are merged. Th
 - ID trace shows each field's measured overlap and distinct count. Relationship sentences name the other endpoint without borrowing its counts. The walkthrough checks every card against the independently generated ID truth.
 - Focused S5 and S6 browser checks and both UI render tests passed. Full gates and the three testbed passes are running on si_test via ports 3340/3341/4290. Deployment awaits those gates and green CI.
 
-## Controls prototype
+## Controls
 
-- Branch `controls-prototype` in `/tmp/scaleinsyght-controls`, based on `1a2c405`. Controls is first in the five screen PRs. Design and acceptance cases are in `docs/phases/controls-prototype.md`.
-- Yashaswi confirmed that objects leaving scope keep their history and are marked out of scope.
-- PostgreSQL now applies table scope before column metadata or count queries. The worker checks the current scope before opening a data connector for queued queries and passes scope into discovery. The real PostgreSQL query-spy regression, typecheck and lint passed.
-- Pending: persistent Controls rules and approval flow, prototype UI, scheduled refresh behavior, complete browser walkthrough and screenshot comparison, full gates, merge and redeploy. Agents, My agent, Usage and BI reports follow in that order.
+- Built on `controls-finish` from Codex's uncommitted work (saved as `9301081` on `controls-prototype`). See `docs/phases/controls-prototype.md` and decision 55. Leaving scope keeps history, marked out of scope (decided).
+- The S10 PARTIAL outcome was a bug (an all-failed run was recorded as PARTIAL); fixed, and the answer now names the excluded table.

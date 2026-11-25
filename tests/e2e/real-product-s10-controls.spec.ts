@@ -9,7 +9,7 @@ import { withTenant } from '@scaleinsyght/db';
 import { createTenant } from '../../scripts/tenant-create.js';
 
 const platformUrl=new URL(process.env.DATABASE_URL_MIGRATE??'');
-platformUrl.pathname='/si_test';
+platformUrl.pathname=`/${process.env.SI_TEST_DATABASE??'si_test'}`;
 const pool=new Pool({connectionString:platformUrl.toString()});
 const source=new URL(process.env.DATABASE_URL_TESTBED??'');
 
@@ -38,15 +38,18 @@ test('controls_exclusion_blocks_profile_and_query_after_approval',async({page,br
   await page.getByRole('button',{name:'Save this question'}).click();
   await expect(page.getByRole('status').filter({hasText:'Saved.'})).toBeVisible();
 
+  mkdirSync('docs/acceptance/s10',{recursive:true});
   await page.goto(`/controls?connection=${connectionId}`);
   await expect(page.getByText('Changes need approval',{exact:true})).toBeVisible();
-  await page.locator('summary').filter({hasText:/^Tables ·/}).click();
-  await page.getByLabel('Scope for public.patients').selectOption('exclude');
+  await page.locator('.control-toggle').filter({hasText:'Tables'}).click();
+  await page.getByLabel('Override for public.patients').selectOption('exclude');
   await page.getByLabel('Pattern',{exact:true}).fill('public.*_backup');
-  await page.getByRole('button',{name:'Add name rule'}).click();
+  await page.getByRole('button',{name:'Add rule',exact:true}).click();
   await page.getByLabel('Column',{exact:true}).fill('public.encounters.patient_id');
   await page.getByRole('button',{name:'Add column rule'}).click();
   await expect(page.getByText('3 unsaved changes',{exact:true})).toBeVisible();
+  await expect(page.getByRole('region',{name:'Unsaved changes'})).toContainText('1 single-object override (public.patients: exclude) · name rules changed (1 now) · column rules changed (1 now)');
+  await page.screenshot({path:'docs/acceptance/s10/controls-changes.png'});
   await page.getByRole('button',{name:'Send for approval'}).click();
   await expect(page.getByRole('status').filter({hasText:'Sent to the Approval matrix'})).toBeVisible();
   await page.goto('/approval-matrix');
@@ -58,13 +61,17 @@ test('controls_exclusion_blocks_profile_and_query_after_approval',async({page,br
   await page.getByRole('button',{name:'Start from this question'}).click();
   const started=await submitted;
   expect(started.status()).toBe(201);
-  const runs=await withTenant(pool,tenantId,db=>db.query<{run_id:string}>(
-    'SELECT run_id FROM runs.runs WHERE tenant_id=$1 ORDER BY created_at DESC',[tenantId]));
+  const runs=await withTenant(pool,tenantId,db=>db.query<{run_id:string;conversation_id:string}>(
+    'SELECT run_id,conversation_id FROM runs.runs WHERE tenant_id=$1 ORDER BY created_at DESC',[tenantId]));
   expect(runs.rows).toHaveLength(2);
-  const runId=runs.rows[0]!.run_id;
+  const runId=runs.rows[0]!.run_id;const conversationId=runs.rows[0]!.conversation_id;
   await expect.poll(async()=>((await (await page.request.get(`/api/runs/${runId}`)).json()) as {state:string}).state).toBe('FAILED');
   const results=await withTenant(pool,tenantId,db=>db.query('SELECT 1 FROM runs.analytic_results WHERE tenant_id=$1 AND run_id=$2',[tenantId,runId]));
   expect(results.rowCount).toBe(0);
+  // The answer says plainly that the table is excluded in Controls, not a generic failure.
+  await page.goto(`/conversations/${conversationId}`);
+  await expect(page.getByText('public.patients is excluded in Controls, so it was not queried. An admin can change this in Controls.',{exact:true})).toBeVisible();
+  await expect(page.getByText('I couldn’t answer this question from the selected sources.')).toHaveCount(0);
 
   await page.goto('/approval-matrix');
   await page.getByRole('button',{name:'Run a refresh now'}).click();
@@ -78,15 +85,17 @@ test('controls_exclusion_blocks_profile_and_query_after_approval',async({page,br
     "SELECT active FROM graph.assets WHERE tenant_id=$1 AND source_id=$2 AND qualified_name='public.patients'",[tenantId,connectionId]));
   expect(assets.rows).toEqual([{active:false}]);
 
-  mkdirSync('docs/ui/screens',{recursive:true});
   await page.goto(`/controls?connection=${connectionId}`);
   await expect(page.getByRole('heading',{name:'What to include'})).toBeVisible();
-  await page.screenshot({path:'docs/ui/screens/controls-app.png'});
+  await page.screenshot({path:'docs/acceptance/s10/controls.png'});
   const prototype=await browser.newPage({viewport:{width:1440,height:900}});
   try {
-    await prototype.goto(pathToFileURL(resolve('docs/prototype/index.html')).href+'#controls');
+    await prototype.goto(pathToFileURL(resolve('docs/prototype/index.html')).href);
+    await prototype.getByRole('button',{name:'Sign in',exact:true}).click();
+    await prototype.evaluate('go("controls")');
     await expect(prototype.getByRole('heading',{name:'What to include'})).toBeVisible();
-    await prototype.screenshot({path:'docs/ui/screens/controls-prototype.png'});
+    mkdirSync('docs/acceptance/s10/prototype',{recursive:true});
+    await prototype.screenshot({path:'docs/acceptance/s10/prototype/controls.png'});
   }finally{await prototype.close();}
 });
 

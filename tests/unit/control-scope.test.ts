@@ -21,5 +21,6 @@ it('keeps new objects out of profiling until approved when the policy requires i
   expect(objectScope({policy,knownObjects:new Set()},'public.orders','table')).toBe('list_only');
   expect(objectScope({policy,knownObjects:new Set()},'public.audit_daily','table')).toBe('exclude');
   expect(objectScope({policy:{...policy,newObjects:'rules'},knownObjects:new Set()},'public.orders','table')).toBe('profile');
-  expect(objectScope({policy:{...policy,newObjects:'ignore'},knownObjects:new Set()},'public.orders','table')).toBe('exclude');
+  expect(objectScope({policy:{...policy,newObjects:'ignore'},knownObjects:new Set()},'public.orders','table')).toBe('list_only');
+  expect(objectScope({policy:{...policy,newObjects:'ignore'},knownObjects:new Set()},'public.audit_daily','table')).toBe('exclude');
 });

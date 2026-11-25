@@ -87,7 +87,12 @@ export async function readEffectiveScope(pool:Pool, tenantId:string, connectionI
   return saved ? {...scope,policy:saved.policy,knownObjects:new Set(saved.known_objects)} : scope;
 }
 
-export async function checkQueryScope(pool:Pool, tenantId:string, sourceId:string, targets:string[], columns:ReadonlySet<string>):Promise<ConnectorScope|undefined> {
+/** A query reads a table or column that Controls excludes (or lists only); `objects` names them. */
+export class OutOfScopeError extends Error { constructor(readonly objects: string[]) { super('object_out_of_scope'); } }
+
+/** `columns` are read for their values (filters, groups, sums); `joinColumns` only match rows. A masked column may be a join
+ * key (its values are compared in the source, never returned); an excluded one may not be used at all. */
+export async function checkQueryScope(pool:Pool, tenantId:string, sourceId:string, targets:string[], columns:ReadonlySet<string>, joinColumns:ReadonlySet<string>=new Set()):Promise<ConnectorScope|undefined> {
   const scope=await readEffectiveScope(pool,tenantId,sourceId);
   const catalog=scope?.policy ? await withTenant(pool,tenantId,db=>db.query<{object_name:string;object_type:string}>(
     `SELECT DISTINCT ON (o.object_name) o.object_name,o.object_type
@@ -95,10 +100,12 @@ export async function checkQueryScope(pool:Pool, tenantId:string, sourceId:strin
       WHERE j.tenant_id=$1 AND j.connection_id=$2 AND o.object_name=ANY($3::text[])
       ORDER BY o.object_name,j.updated_at DESC`,[tenantId,sourceId,targets])) : undefined;
   const types=new Map(catalog?.rows.map(row=>[row.object_name,row.object_type]));
-  if(targets.some(name=>(scope?.policy&&!types.has(name))||objectScope(scope,name,types.get(name)??'table')!=='profile'))throw new Error('policy_revoked');
+  const outside=targets.filter(name=>(scope?.policy&&!types.has(name))||objectScope(scope,name,types.get(name)??'table')!=='profile');
+  if(outside.length)throw new OutOfScopeError(outside);
   for(const rule of scope?.policy?.columnRules??[]){
     const split=rule.qualifiedName.lastIndexOf('.');
-    if(targets.includes(rule.qualifiedName.slice(0,split))&&columns.has(rule.qualifiedName.slice(split+1)))throw new Error('policy_revoked');
+    const name=rule.qualifiedName.slice(split+1);
+    if(targets.includes(rule.qualifiedName.slice(0,split))&&(columns.has(name)||(rule.mode==='exclude'&&joinColumns.has(name))))throw new OutOfScopeError([rule.qualifiedName]);
   }
   return scope;
 }

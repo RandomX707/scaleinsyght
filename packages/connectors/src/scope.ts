@@ -25,7 +25,8 @@ export function objectScope(scope: ConnectorScope | undefined, name: string, typ
   const {policy,knownObjects}=scope;
   const rule=policy.nameRules.find(entry=>matches(entry.pattern,name));
   if (knownObjects && !knownObjects.has(name)) {
-    if (policy.newObjects==='ignore') return 'exclude';
+    // "Ignore until added by hand": recorded as found (list only), nothing else, unless a name rule excludes it.
+    if (policy.newObjects==='ignore') return rule?.mode==='exclude'?'exclude':'list_only';
     if (policy.newObjects==='approve') return rule?.mode==='exclude'?'exclude':'list_only';
     return rule?.mode??'list_only';
   }

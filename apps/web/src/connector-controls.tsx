@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Badge, Button, EmptyState, Input, Select, Table } from '@scaleinsyght/ui';
+import { Badge, Button, ChoiceSegments, EmptyState, Input, Select, Table } from '@scaleinsyght/ui';
 import './connector-controls.css';
 
 type Request = <T>(url:string,init?:RequestInit)=>Promise<T>;
@@ -19,9 +19,41 @@ const modeOptions=Object.entries(labels).map(([key,label])=><option key={key} va
 const json={ 'content-type':'application/json' };
 const groupLabel=(type:string)=>({table:'Tables',view:'Views',procedure:'Stored procedures',function:'Functions'}[type]??type);
 
+const MODES: Array<{ id: Mode; label: string; tone: 'good' | 'primary' | 'bad'; title: string }> = [
+  { id: 'profile', label: 'Profile and query', tone: 'good', title: 'Profiled every night and usable in answers' },
+  { id: 'list_only', label: 'List only', tone: 'primary', title: 'Names and types shown in the catalog; never sampled or queried' },
+  { id: 'exclude', label: 'Exclude', tone: 'bad', title: 'Hidden from the catalog and answers; the name is kept only for the record' },
+];
+const lower = (mode: Mode) => labels[mode].toLowerCase();
+function estimate(ms: number | null): string {
+  if (ms === null) return 'Not measured yet';
+  const seconds = Math.max(1, Math.round(ms / 1000));
+  if (seconds < 90) return `~${seconds} s`;
+  const minutes = Math.round(seconds / 60);
+  return minutes < 90 ? `~${minutes} min` : `~${Math.round(minutes / 6) / 10} h`;
+}
+
+/** The unsaved changes, in words, as the sticky bar lists them (prototype scChanges). */
+export function describeChanges(baseline: Controls, draft: Controls): string[] {
+  const out: string[] = [];
+  for (const [type, mode] of Object.entries(draft.policy.groups)) {
+    const before = baseline.policy.groups[type] ?? 'profile';
+    if (before !== mode) out.push(`${groupLabel(type)}: ${lower(before)} → ${lower(mode)}`);
+  }
+  const was = new Map(baseline.overrides.map((rule) => [rule.qualifiedName, rule.scopeMode]));
+  const now = new Map(draft.overrides.map((rule) => [rule.qualifiedName, rule.scopeMode]));
+  const changed = [...new Set([...was.keys(), ...now.keys()])].filter((name) => was.get(name) !== now.get(name)).sort();
+  if (changed.length) out.push(`${changed.length} single-object ${changed.length === 1 ? 'override' : 'overrides'} (${changed.map((name) => `${name}: ${now.has(name) ? lower(now.get(name)!) : 'back to group'}`).join(', ')})`);
+  if (JSON.stringify(baseline.policy.nameRules) !== JSON.stringify(draft.policy.nameRules)) out.push(`name rules changed (${draft.policy.nameRules.length} now)`);
+  if (JSON.stringify(baseline.policy.columnRules) !== JSON.stringify(draft.policy.columnRules)) out.push(`column rules changed (${draft.policy.columnRules.length} now)`);
+  if (baseline.policy.newObjects !== draft.policy.newObjects || baseline.policy.approval !== draft.policy.approval) out.push('change handling updated');
+  return out;
+}
+
 export function ConnectorControls({connectionId,request}:{connectionId:string;request:Request}) {
   const [baseline,setBaseline]=useState<Controls|null>(null);
   const [draft,setDraft]=useState<Controls|null>(null);
+  const [open,setOpen]=useState<Record<string,boolean>>({});
   const [status,setStatus]=useState('');
   const [error,setError]=useState('');
   const [saving,setSaving]=useState(false);
@@ -38,15 +70,12 @@ export function ConnectorControls({connectionId,request}:{connectionId:string;re
   const policy=draft.policy;
   const groupTypes=[...new Set(draft.objects.map(object=>object.type))];
   const groups=groupTypes.map(type=>({type,objects:draft.objects.filter(object=>object.type===type)}));
-  const differences=[
-    ...Object.keys(policy).filter(key=>JSON.stringify(policy[key as keyof Policy])!==JSON.stringify(baseline.policy[key as keyof Policy]))
-      .map(key=>({groups:'Group access',nameRules:'Name rules',columnRules:'Column rules',newObjects:'New objects',approval:'Approval',leavingScope:'History'}[key]??key)),
-    ...(JSON.stringify(draft.overrides)!==JSON.stringify(baseline.overrides)?['Object overrides']:[]),
-  ];
+  const changes=describeChanges(baseline,draft);
   const needsApproval=baseline.policy.approval||policy.approval;
+  const count=(mode:Mode)=>baseline.objects.filter(item=>item.mode===mode).length;
   function setObject(object:Controls['objects'][number],mode:string){
     const rest=draft!.overrides.filter(rule=>rule.qualifiedName!==object.name);
-    setDraft({...draft!,overrides:mode==='inherit'?rest:[...rest,{qualifiedName:object.name,objectType:object.type,scopeMode:mode as Mode}]});
+    setDraft({...draft!,overrides:mode===''?rest:[...rest,{qualifiedName:object.name,objectType:object.type,scopeMode:mode as Mode}]});
   }
   async function save(){
     setSaving(true);setError('');setStatus('');
@@ -54,66 +83,95 @@ export function ConnectorControls({connectionId,request}:{connectionId:string;re
       const result=await request<{status:string}>(route,{method:'PUT',headers:json,body:JSON.stringify({revision:draft!.revision,policy,overrides:draft!.overrides})});
       if(result.status==='pending'){
         setDraft(baseline);
-        setStatus('Sent to the Approval matrix. Current controls stay in effect until approved.');
+        setStatus('Sent to the Approval matrix. It applies from the next refresh once approved.');
       }else{
         const updated=await request<Controls>(route);
-        setBaseline(updated);setDraft(updated);setStatus('Controls saved.');
+        setBaseline(updated);setDraft(updated);setStatus('Controls saved. They apply from the next refresh.');
       }
     }catch(reason){setError(reason instanceof Error?reason.message:'Could not save controls.');}
     finally{setSaving(false);}
   }
+  const radio=(name:string,checked:boolean,onChange:()=>void,title:string,detail:string)=><label className="control-radio">
+    <Input type="radio" name={name} checked={checked} onChange={onChange}/><span><b>{title}</b><span>{detail}</span></span></label>;
   return <div className="connector-controls">
     <div className="control-totals" aria-label="Current approved scope">
-      {(['profile','list_only','exclude'] as const).map(mode=><article key={mode}><strong>{baseline.objects.filter(item=>item.mode===mode).length.toLocaleString()}</strong><span>{mode==='profile'?'Profiled and queryable':mode==='exclude'?'Excluded':'Listed only'}</span></article>)}
-      <article><strong>{baseline.nightlyEstimateMs===null?'Unavailable':`${Math.max(1,Math.round(baseline.nightlyEstimateMs/1000))} s`}</strong><span>Estimated nightly time</span></article>
+      <article><strong>{count('profile').toLocaleString('en-US')}</strong><span>objects profiled and queryable</span></article>
+      <article><strong>{count('list_only').toLocaleString('en-US')}</strong><span>listed only</span></article>
+      <article><strong>{count('exclude').toLocaleString('en-US')}</strong><span>excluded</span></article>
+      <article><strong>{estimate(baseline.nightlyEstimateMs)}</strong><span>nightly profile time, changed tables only</span></article>
     </div>
-    <p className="control-boundary">The connector’s read-only login is the access boundary. These controls can only narrow that access.</p>
-    {differences.length>0&&<div className="control-diff"><div><strong>{differences.length} unsaved {differences.length===1?'change':'changes'}</strong><p>{differences.join(' · ')}</p></div><div className="actions">
-      <Button disabled={saving} onClick={()=>{setDraft(baseline);setError('');}}>Discard</Button>
-      <Button disabled={saving} variant="primary" onClick={()=>void save()}>{needsApproval?'Send for approval':'Save controls'}</Button>
+    <p className="control-boundary"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/></svg>
+      <span>The connector’s read-only login is the real access boundary. These controls can only narrow it, never widen it: anything the login cannot see stays out whatever you choose here.</span></p>
+    {changes.length>0&&<div className="control-diff" role="region" aria-label="Unsaved changes"><div><strong>{changes.length} unsaved {changes.length===1?'change':'changes'}</strong><p>{changes.join(' · ')}</p></div><div className="control-actions">
+      <Button size="small" disabled={saving} onClick={()=>{setDraft(baseline);setError('');setStatus('Changes discarded.');}}>Discard</Button>
+      <Button size="small" disabled={saving} variant="primary" onClick={()=>void save()}>{needsApproval?'Send for approval':'Save controls'}</Button>
     </div></div>}
     {status&&<p role="status">{status}</p>}{error&&<p role="alert">{error}</p>}
-    <article><h2>What to include</h2><p>Open a group to override access for individual objects.</p>
+    <article className="control-card"><div className="control-card-head"><h2>What to include</h2><span>Open a group to set single objects</span></div>
+      <div className="control-legend">{MODES.map(mode=><span key={mode.id}><b>{mode.label}:</b> {mode.title.charAt(0).toLowerCase()+mode.title.slice(1)}</span>)}</div>
       {groups.length===0&&<EmptyState title="No objects listed yet" description="Refresh this connector to list its objects."/>}
-      {groups.map(({type,objects})=><div className="control-group" key={type}>
-        <label>{groupLabel(type)} access<Select value={policy.groups[type]??'profile'} onChange={event=>update({groups:{...policy.groups,[type]:event.target.value as Mode}})}>{modeOptions}</Select></label>
-        <details><summary>{groupLabel(type)} · {objects.length.toLocaleString()} objects</summary>
-          <Table caption={groupLabel(type)} headers={['Object','Approved access','Override']} rows={objects.map(item=>[
-            <code key="name">{item.name}</code>,item.inaccessible?'Unavailable to the login':labels[item.mode],
-            <Select key="override" aria-label={`Scope for ${item.name}`} disabled={item.inaccessible} value={draft.overrides.find(rule=>rule.qualifiedName===item.name)?.scopeMode??'inherit'} onChange={event=>setObject(item,event.target.value)}><option value="inherit">Use rules and group</option>{modeOptions}</Select>,
-          ])}/>
-        </details>
-      </div>)}
+      {groups.map(({type,objects})=>{
+        const mode=policy.groups[type]??'profile';const changed=mode!==(baseline.policy.groups[type]??'profile');const isOpen=Boolean(open[type]);
+        return <div className={`control-group${changed?' is-changed':''}`} key={type}>
+          <div className="control-row">
+            <Button variant="ghost" className="control-toggle" aria-expanded={isOpen} onClick={()=>setOpen({...open,[type]:!isOpen})}>
+              <span aria-hidden="true" className="control-chevron">{isOpen?'▾':'▸'}</span><span><b>{groupLabel(type)}</b> <span className="control-count">{objects.length.toLocaleString('en-US')}</span></span>
+            </Button>
+            <ChoiceSegments label={`Scope for ${groupLabel(type)}`} value={mode} options={MODES} onChange={value=>update({groups:{...policy.groups,[type]:value}})}/>
+          </div>
+          {isOpen&&<div className="control-items">{objects.map(item=>{
+            const override=draft.overrides.find(rule=>rule.qualifiedName===item.name)?.scopeMode;
+            return <div className="control-item" key={item.name}><code>{item.name}</code>
+              {item.inaccessible?<span className="control-muted">Not visible to the login</span>:<Select aria-label={`Override for ${item.name}`} value={override??''} onChange={event=>setObject(item,event.target.value)}>
+                <option value="">Same as group</option>{modeOptions}</Select>}
+              {override&&<Badge tone="warn">override</Badge>}<span className="control-muted">now {lower(item.mode)}</span></div>;
+          })}</div>}
+        </div>;
+      })}
     </article>
-    <article><h2>Name rules</h2><p>Checked in order. The first matching rule wins. Use * as a wildcard.</p>
-      {policy.nameRules.length>0&&<Table caption="Ordered name rules" headers={['Pattern','Then','Why','Actions']} rows={policy.nameRules.map((rule,index)=>[
-        rule.pattern,labels[rule.mode],rule.reason,
-        <div className="actions" key="actions"><Button size="small" disabled={index===0} onClick={()=>{
+    <article className="control-card"><div className="control-card-head"><h2>Name rules</h2><span>Checked in order; first match wins</span></div>
+      <p>Rules decide what happens to objects by name, including ones that appear in future runs. Use * as a wildcard.</p>
+      {policy.nameRules.length?<Table caption="Name rules, in order" headers={['Pattern','Then','Why','']} rows={policy.nameRules.map((rule,index)=>[
+        <code key="pattern">{rule.pattern}</code>,<Badge key="mode" tone={rule.mode==='exclude'?'bad':rule.mode==='list_only'?'muted':'good'}>{labels[rule.mode]}</Badge>,rule.reason||'—',
+        <div className="control-actions" key="actions">{index>0&&<Button size="small" onClick={()=>{
           const reordered=[...policy.nameRules];[reordered[index-1],reordered[index]]=[reordered[index]!,reordered[index-1]!];update({nameRules:reordered});
-        }}>Move up</Button><Button size="small" onClick={()=>update({nameRules:policy.nameRules.filter((_,position)=>position!==index)})}>Remove</Button></div>,
-      ])}/>}
+        }}>Move up</Button>}<Button size="small" aria-label={`Remove rule ${rule.pattern}`} onClick={()=>update({nameRules:policy.nameRules.filter((_,position)=>position!==index)})}>Remove</Button></div>,
+      ])}/>:<p className="control-muted">No rules yet.</p>}
       <form className="control-rule-form" onSubmit={event=>{
         event.preventDefault();const form=event.currentTarget;const value=new FormData(form);const pattern=String(value.get('pattern')).trim();
-        if(pattern)update({nameRules:[...policy.nameRules,{pattern,mode:value.get('mode') as Mode,reason:String(value.get('reason')).trim()}]});
+        if(!pattern){setError('Type a name pattern, for example *_backup.');return;}
+        update({nameRules:[...policy.nameRules,{pattern,mode:value.get('mode') as Mode,reason:String(value.get('reason')).trim()}]});
         form.reset();
-      }}><label>Pattern<Input name="pattern" required placeholder="public.*_backup"/></label><label>Then<Select name="mode" defaultValue="exclude">{modeOptions}</Select></label><label>Why<Input name="reason"/></label><Button type="submit">Add name rule</Button></form>
+      }}><Input name="pattern" aria-label="Pattern" placeholder="Pattern, e.g. *_backup"/><Select name="mode" aria-label="Then" defaultValue="exclude">{modeOptions}</Select><Input name="reason" aria-label="Reason" placeholder="Why (optional)"/><Button size="small" type="submit">Add rule</Button></form>
     </article>
-    <article><h2>Column rules</h2><p>Mask values or exclude a column entirely.</p>
-      {policy.columnRules.length>0&&<Table caption="Column rules" headers={['Column','Treatment','']} rows={policy.columnRules.map(rule=>[
-        rule.qualifiedName,rule.mode==='mask'?'Mask values':'Exclude',
-        <Button key="remove" size="small" onClick={()=>update({columnRules:policy.columnRules.filter(item=>item.qualifiedName!==rule.qualifiedName)})}>Remove</Button>,
+    <article className="control-card"><div className="control-card-head"><h2>Columns</h2><span>{policy.columnRules.length} {policy.columnRules.length===1?'rule':'rules'}</span></div>
+      <p>Hide or mask single columns without dropping the whole table. Masked columns keep their name and type for joins, but their values are never sampled or sent to the AI model.</p>
+      {policy.columnRules.length>0&&<Table caption="Column rules" headers={['Column','Treatment','']} rows={policy.columnRules.map((rule,index)=>[
+        <code key="name">{rule.qualifiedName}</code>,
+        <Select key="mode" aria-label={`Treatment for ${rule.qualifiedName}`} value={rule.mode} onChange={event=>update({columnRules:policy.columnRules.map((item,position)=>position===index?{...item,mode:event.target.value as 'mask'|'exclude'}:item)})}>
+          <option value="mask">Mask values</option><option value="exclude">Exclude the column</option></Select>,
+        <span key="effect" className="control-muted">{rule.mode==='exclude'?'Not recorded or queryable':'Types only; usable as a join key'} <Button size="small" aria-label={`Remove column rule ${rule.qualifiedName}`} onClick={()=>update({columnRules:policy.columnRules.filter((_,position)=>position!==index)})}>Remove</Button></span>,
       ])}/>}
       <form className="control-rule-form" onSubmit={event=>{
         event.preventDefault();const form=event.currentTarget;const value=new FormData(form);const qualifiedName=String(value.get('column')).trim();
-        if(qualifiedName)update({columnRules:[...policy.columnRules.filter(rule=>rule.qualifiedName!==qualifiedName),{qualifiedName,mode:value.get('treatment') as 'mask'|'exclude'}]});
+        if(!/^[\w$]+(\.[\w$]+){1,3}$/.test(qualifiedName)){setError('Use table.column, for example public.patients.phone.');return;}
+        update({columnRules:[...policy.columnRules.filter(rule=>rule.qualifiedName!==qualifiedName),{qualifiedName,mode:value.get('treatment') as 'mask'|'exclude'}]});
         form.reset();
-      }}><label>Column<Input name="column" required placeholder="public.patients.phone"/></label><label>Treatment<Select name="treatment"><option value="mask">Mask values</option><option value="exclude">Exclude</option></Select></label><Button type="submit">Add column rule</Button></form>
+      }}><Input name="column" aria-label="Column" placeholder="table.column, e.g. public.patients.phone"/><Select name="treatment" aria-label="Treatment"><option value="mask">Mask values</option><option value="exclude">Exclude</option></Select><Button size="small" type="submit">Add column rule</Button></form>
     </article>
-    <article><h2>When things change</h2>
-      <label>New objects<Select value={policy.newObjects} onChange={event=>update({newObjects:event.target.value as Policy['newObjects']})}><option value="approve">Send to the Approval matrix</option><option value="rules">Apply name rules automatically</option><option value="ignore">Ignore until added by hand</option></Select></label>
-      <p><b>When something leaves scope</b><br/>Keep its history, marked out of scope.</p>
-      <label className="checkbox-label"><Input type="checkbox" checked={policy.approval} onChange={event=>update({approval:event.target.checked})}/>Changes need approval</label>
-      <p>With approval on, saving creates an Approval matrix item.</p>
+    <article className="control-card"><h2>When things change</h2>
+      <div className="control-columns">
+        <div><h3>New objects found in a nightly run</h3>
+          {radio('new-objects',policy.newObjects==='approve',()=>update({newObjects:'approve'}),'Send to the Approval matrix','Recommended. Name rules suggest the setting; a person confirms')}
+          {radio('new-objects',policy.newObjects==='rules',()=>update({newObjects:'rules'}),'Apply name rules automatically','No match: listed only until someone decides')}
+          {radio('new-objects',policy.newObjects==='ignore',()=>update({newObjects:'ignore'}),'Ignore until added by hand','Recorded as found, nothing else')}
+        </div>
+        <div><h3>When something leaves scope</h3>
+          {radio('leaving-scope',true,()=>undefined,'Keep its history, marked out of scope','Old profiles and lineage stay readable for audits')}
+          <p className="control-muted">Deleting history is not offered: assets and assertions are never deleted, only marked out of scope.</p>
+        </div>
+      </div>
+      <label className="control-radio"><Input type="checkbox" checked={policy.approval} onChange={event=>update({approval:event.target.checked})}/><span><b>Changes need approval</b><span>Saving creates an item in the Approval matrix instead of applying straight away</span></span></label>
     </article>
   </div>;
 }
