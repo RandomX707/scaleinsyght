@@ -24,7 +24,7 @@ jobs:
       DATABASE_URL_MIGRATE: postgresql://si_migrate:ci-migrate@127.0.0.1:5432/scale_insyght
       DATABASE_URL_ADMIN: postgresql://postgres:postgres@127.0.0.1:5432/postgres
       ARTIFACT_MASTER_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-      ARTIFACT_VOLUME_PATH: .local/artifacts
+      ARTIFACT_VOLUME_PATH: ${{ github.workspace }}/.local/artifacts
       POSTGRES_PASSWORD: ci-compose-superuser
       SI_APP_PASSWORD: ci-compose-app
       SI_WORKER_PASSWORD: ci-compose-worker

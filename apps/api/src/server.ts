@@ -51,6 +51,9 @@ function oidcEndpoint(value:unknown):string{
   const url=new URL(value);if(url.protocol!=='https:')throw new Error('oidc_https_required');return url.toString();
 }
 
+/** A workbook's metadata exists but its encrypted file is not on the artifact volume (for example a volume that moved). */
+const WORKBOOK_FILE_MISSING={error:'workbook_file_missing',message:'Workbook file not found, upload it again'} as const;
+
 export async function buildServer(options:ServerOptions):Promise<FastifyInstance>{
   if(options.sessionSecret.length<32)throw new Error('SESSION_SECRET must contain at least 32 characters');
   const app=Fastify({logger:false,bodyLimit:25*1024*1024});
@@ -1166,13 +1169,13 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const draft=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{status:string}>('SELECT status FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2',[current.tenantId,request.params.connectionId]));
     if(draft.rows[0]?.status!=='draft')return reply.code(404).send({error:'connection_draft_not_found'});
-    try{return reply.send(await (await connectorForConnection(current.tenantId,request.params.connectionId)).test());}catch(error){const code=error instanceof Error?error.message:'connection_test_failed';if(['postgres_connector_role_not_read_only','sqlserver_connector_role_not_read_only','source_connection_requires_credentials','postgres_connection_string_required','excel_workbook_not_uploaded','excel_workbook_not_xlsx','excel_workbook_size_invalid','excel_workbook_has_no_header_rows'].includes(code))return reply.code(400).send({error:code});throw error;}
+    try{return reply.send(await (await connectorForConnection(current.tenantId,request.params.connectionId)).test());}catch(error){const code=error instanceof Error?error.message:'connection_test_failed';if(code==='artifact_file_missing')return reply.code(409).send(WORKBOOK_FILE_MISSING);if(['postgres_connector_role_not_read_only','sqlserver_connector_role_not_read_only','source_connection_requires_credentials','postgres_connection_string_required','excel_workbook_not_uploaded','excel_workbook_not_xlsx','excel_workbook_size_invalid','excel_workbook_has_no_header_rows'].includes(code))return reply.code(400).send({error:code});throw error;}
   });
   app.post<{Params:{connectionId:string};Body:{scope?:Array<{qualifiedName:string;objectType:string;scopeMode:'profile'|'list_only'|'exclude'}>}}>('/api/connections/:connectionId/activate',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const draft=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{source_ref:string|null;connector_type:string;display_name:string;status:string}>('SELECT source_ref,connector_type,display_name,status FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2',[current.tenantId,request.params.connectionId]));
     const row=draft.rows[0];if(!row||row.status!=='draft'||!['postgres','sql_server','excel'].includes(row.connector_type))return reply.code(404).send({error:'connection_draft_not_found'});
-    let connector:ReadOnlyConnector;try{connector=await connectorForConnection(current.tenantId,request.params.connectionId);const checked=await connector.test();if(!checked.ok)return reply.code(400).send({error:'connection_test_failed'});}catch(error){const code=error instanceof Error?error.message:'connection_test_failed';if(['postgres_connector_role_not_read_only','sqlserver_connector_role_not_read_only','source_connection_requires_credentials','excel_workbook_not_uploaded','excel_workbook_not_xlsx','excel_workbook_size_invalid','excel_workbook_has_no_header_rows'].includes(code))return reply.code(400).send({error:code});throw error;}
+    let connector:ReadOnlyConnector;try{connector=await connectorForConnection(current.tenantId,request.params.connectionId);const checked=await connector.test();if(!checked.ok)return reply.code(400).send({error:'connection_test_failed'});}catch(error){const code=error instanceof Error?error.message:'connection_test_failed';if(code==='artifact_file_missing')return reply.code(409).send(WORKBOOK_FILE_MISSING);if(['postgres_connector_role_not_read_only','sqlserver_connector_role_not_read_only','source_connection_requires_credentials','excel_workbook_not_uploaded','excel_workbook_not_xlsx','excel_workbook_size_invalid','excel_workbook_has_no_header_rows'].includes(code))return reply.code(400).send({error:code});throw error;}
     const scope=request.body?.scope??[];
     const activated=await activateConnection(options.pool,{tenantId:current.tenantId,principalId:current.userId,connectorType:row.connector_type as 'postgres'|'sql_server'|'excel',connectionId:request.params.connectionId,...(row.source_ref?{sourceRef:row.source_ref}:{}),scope});
     await withTenant(options.pool,current.tenantId,async(client)=>{
@@ -1190,7 +1193,10 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
       'SELECT source_ref,status FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2',[current.tenantId,request.params.connectionId]));
     const row=connection.rows[0];if(!row||row.status!=='active')return reply.code(404).send({error:'active_connection_not_found'});
     if(request.body?.jobType&&!['profile','nightly'].includes(request.body.jobType))return reply.code(400).send({error:'invalid_job_type'});
-    const result=await runProfile(options.pool,{tenantId:current.tenantId,connectionId:request.params.connectionId,connector:await connectorForConnection(current.tenantId,request.params.connectionId),jobType:request.body?.jobType??'profile'});
+    let connector:ReadOnlyConnector;
+    try{connector=await connectorForConnection(current.tenantId,request.params.connectionId);}
+    catch(error){if(error instanceof Error&&error.message==='artifact_file_missing')return reply.code(409).send(WORKBOOK_FILE_MISSING);throw error;}
+    const result=await runProfile(options.pool,{tenantId:current.tenantId,connectionId:request.params.connectionId,connector,jobType:request.body?.jobType??'profile'});
     return reply.send(result);
   });
   app.get<{Params:{connectionId:string}}>('/api/connections/:connectionId/profile',async(request,reply)=>{
@@ -1309,7 +1315,9 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
   app.get<{Params:{connectionId:string;artifactId:string}}>('/api/connections/:connectionId/workbooks/:artifactId',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     if(!options.artifactStore)return reply.code(503).send({error:'artifact_store_unavailable'});
-    const bytes=await readWorkbook(options.pool,options.artifactStore,{tenantId:current.tenantId,connectionId:request.params.connectionId,artifactId:request.params.artifactId});
+    let bytes:Buffer;
+    try{bytes=await readWorkbook(options.pool,options.artifactStore,{tenantId:current.tenantId,connectionId:request.params.connectionId,artifactId:request.params.artifactId});}
+    catch(error){const code=error instanceof Error?error.message:'';if(code==='artifact_file_missing')return reply.code(409).send(WORKBOOK_FILE_MISSING);if(code==='workbook_not_found')return reply.code(404).send({error:code});throw error;}
     return reply.type('application/octet-stream').send(bytes);
   });
   app.delete<{Params:{connectionId:string}}>('/api/connections/:connectionId',async(request,reply)=>{

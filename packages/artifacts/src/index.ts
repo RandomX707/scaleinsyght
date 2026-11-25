@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, hkdfSync, randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 
 const keyVersion = 1;
 const nonceLength = 12;
@@ -13,6 +13,18 @@ export interface StoredArtifact {
   contentSha256: Buffer;
   encryptedSize: number;
   keyVersion: number;
+}
+
+/**
+ * The encrypted artifact volume's location, from ARTIFACT_VOLUME_PATH. It must be absolute: a relative path resolves
+ * against each process's working directory, so worktrees sharing one database would each read a different volume and
+ * miss each other's workbooks.
+ */
+export function artifactVolumePath(value: string | undefined): string {
+  if (!value?.trim() || !isAbsolute(value.trim())) {
+    throw new Error(`ARTIFACT_VOLUME_PATH must be an absolute path that every worktree and process shares (for example ~/.scaleinsyght/artifacts written out in full); got ${value?.trim() ? `"${value.trim()}"` : 'nothing'}. Set it in .env.`);
+  }
+  return resolve(value.trim());
 }
 
 export class EncryptedArtifactStore {
@@ -59,7 +71,9 @@ export class EncryptedArtifactStore {
 
   async read(tenantId: string, artifactId: string, keySalt: Buffer): Promise<Buffer> {
     const filePath = this.filePath(tenantId, artifactId);
-    const encoded = await readFile(filePath);
+    let encoded: Buffer;
+    try { encoded = await readFile(filePath); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new Error('artifact_file_missing'); throw error; }
     if (encoded.length < nonceLength + tagLength) throw new Error('artifact_integrity_failed');
     const nonce = encoded.subarray(0, nonceLength);
     const tag = encoded.subarray(nonceLength, nonceLength + tagLength);

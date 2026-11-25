@@ -2,7 +2,7 @@ import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { EncryptedArtifactStore } from '@scaleinsyght/artifacts';
+import { EncryptedArtifactStore, artifactVolumePath } from '@scaleinsyght/artifacts';
 
 const roots: string[] = [];
 async function makeStore(): Promise<EncryptedArtifactStore> {
@@ -49,5 +49,22 @@ describe('tenant encrypted workbook artifacts', () => {
     ciphertext[ciphertext.length - 1] ^= 0xff;
     await (await import('node:fs/promises')).writeFile(join(tenantPath, fileName), ciphertext);
     await expect(store.read('golden-tenant-north', artifact.artifactId, artifact.keySalt)).rejects.toThrow();
+  });
+
+  it('c7_missing_artifact_file_is_reported_by_name_not_as_a_file_system_error', async () => {
+    const store = await makeStore();
+    const artifact = await store.put('golden-tenant-north', Buffer.from('synthetic'));
+    await rm(join(store.root, store.tenantDirectory('golden-tenant-north')), { recursive: true });
+    await expect(store.read('golden-tenant-north', artifact.artifactId, artifact.keySalt)).rejects.toThrow('artifact_file_missing');
+  });
+});
+
+describe('artifact volume location', () => {
+  it('requires an absolute ARTIFACT_VOLUME_PATH so every worktree reads the same volume', () => {
+    expect(artifactVolumePath('/var/lib/scaleinsyght/artifacts')).toBe('/var/lib/scaleinsyght/artifacts');
+    expect(() => artifactVolumePath('.local/artifacts')).toThrow('ARTIFACT_VOLUME_PATH must be an absolute path that every worktree and process shares');
+    expect(() => artifactVolumePath('.local/artifacts')).toThrow('".local/artifacts"');
+    expect(() => artifactVolumePath(undefined)).toThrow('got nothing');
+    expect(() => artifactVolumePath('  ')).toThrow('ARTIFACT_VOLUME_PATH must be an absolute path');
   });
 });
