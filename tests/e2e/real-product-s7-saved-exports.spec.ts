@@ -27,7 +27,7 @@ function expectFigures(text: string) { for (const row of expected) expect(text, 
 test('s7_saved_question_reuse_exports_governed_report_schedule_and_dictionary_match_truth', async ({ page, browser }) => {
   test.setTimeout(300_000);
   const tenantId = `exports-${randomUUID()}`; const email = `analyst@${tenantId}.test.invalid`; const password = 'exports-walkthrough-password-2026';
-  await createTenant(adminPool, { tenantId, name: 'Exports workspace', displayName: 'Test Analyst', email, password });
+  const {userId}=await createTenant(adminPool, { tenantId, name: 'Exports workspace', displayName: 'Test Analyst', email, password });
   const approverEmail = `approver@${tenantId}.test.invalid`;
   await withTenant(adminPool, tenantId, async (db) => {
     const user = await db.query<{ user_id: string }>('INSERT INTO core.users(tenant_id,email,display_name,password_hash) VALUES($1,$2,$3,$4) RETURNING user_id', [tenantId, approverEmail, 'Second Approver', hashPassword(password)]);
@@ -98,9 +98,18 @@ test('s7_saved_question_reuse_exports_governed_report_schedule_and_dictionary_ma
   await page.getByLabel('Daily schedule for Orders by department').fill('06:00');
   await page.getByRole('button',{name:'Schedule daily'}).click();
   await expect(page.getByRole('status')).toContainText('Daily schedule saved');
-  const before = await withTenant(adminPool, tenantId, (db) => db.query<{ n: string }>('SELECT count(*)::text AS n FROM reports.snapshots WHERE tenant_id=$1', [tenantId]));
-  await withTenant(adminPool, tenantId, (db) => db.query("UPDATE reports.schedules SET next_run_at=clock_timestamp()-interval '1 minute' WHERE tenant_id=$1", [tenantId]));
-  await expect.poll(async () => Number((await withTenant(adminPool, tenantId, (db) => db.query<{ n: string }>('SELECT count(*)::text AS n FROM reports.snapshots WHERE tenant_id=$1', [tenantId]))).rows[0]!.n), { timeout: 90_000 }).toBeGreaterThan(Number(before.rows[0]!.n));
+  const snapshotCount = () => withTenant(adminPool, tenantId, async db => {
+    await db.query("SELECT set_config('app.principal_id',$1,true)",[userId]);
+    return Number((await db.query<{n:string}>('SELECT count(*)::text AS n FROM reports.snapshots WHERE tenant_id=$1',[tenantId])).rows[0]!.n);
+  });
+  const before=await snapshotCount();
+  expect(before).toBeGreaterThan(0);
+  await withTenant(adminPool, tenantId, async db => {
+    await db.query("SELECT set_config('app.principal_id',$1,true)",[userId]);
+    const due=await db.query("UPDATE reports.schedules SET next_run_at=clock_timestamp()-interval '1 minute' WHERE tenant_id=$1",[tenantId]);
+    expect(due.rowCount).toBe(1);
+  });
+  await expect.poll(snapshotCount, {timeout:90_000}).toBeGreaterThan(before);
 
   // The source's dictionary in Markdown and Word: every table and column, statistics withheld on tagged columns.
   await page.goto(`/dictionary?connection=${connectionId}`);

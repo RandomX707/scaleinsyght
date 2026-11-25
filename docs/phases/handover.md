@@ -29,7 +29,7 @@ So **#17 and #18 are both merged.**
 - Reports now submits a saved question for review. The S7 walkthrough uses Reports and Approval matrix to submit, approve, save, run, export and schedule.
 - Failed count queries produce an unavailable count and cannot trigger a row-count change. Added a PostgreSQL slow-view regression.
 - The slow-view regression passed on si_test. The browser walkthrough initially lacked a declared JSZip dependency. Added the already locked version and restarted the walkthrough.
-- Verification, merge and 4284 redeployment are pending.
+- PR #31 is open. Typecheck, lint, unit and parser checks passed. The browser exercised creation, second-person approval, running, PDF download and saving a daily schedule. The schedule dispatch assertion initially set no report owner in the test RLS context. The test now sets the owner and checks the update matched one schedule. Full gates, live evaluation, merge and 4284 redeployment are pending.
 - After S7 merges, add tests and fixes for Approval matrix tab counts and default selection, snapshot-based change totals, separate warning and neutral counts, field-specific ID evidence checked against S5 truth, and deduplicated evidence sentences.
 
 ## Open problems and known issues
