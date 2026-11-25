@@ -1,7 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
-import { withTenant } from '@scaleinsyght/db';
+import { withRunTenant, withTenant, type PoolClient } from '@scaleinsyght/db';
 import { hashPlan, type EffectClass, type EffectSafety } from '@scaleinsyght/contracts';
+
+/** What each kind of agent may do (decision 52). A step runs only if its agent's active version lists its capability. */
+export const CONNECTOR_AGENT_CAPABILITIES = ['analytic.read', 'profile.read'] as const;
+export const ID_AGENT_CAPABILITIES = ['id.detect', 'id.fingerprint', 'id.match'] as const;
+export const ID_TRACE_AGENT_CAPABILITIES = ['id.trace', 'id.lookup'] as const;
 
 export type ConnectorType = 'sql_server' | 'postgres' | 'snowflake' | 'excel' | 'dbt' | 'tableau' | 'power_bi' | 'lake' | 'crm';
 
@@ -64,8 +69,8 @@ export async function activateConnection(
     );
     await client.query(
       `INSERT INTO registry.agent_versions (tenant_id, agent_id, version, capabilities, bindings)
-       VALUES ($1, $2, 1, '[]'::jsonb, $3::jsonb)`,
-      [input.tenantId, agentId, JSON.stringify({ connection_id: connectionId, source_group_id: sourceGroupId, source_group_version: 1 })],
+       VALUES ($1, $2, 1, $4::jsonb, $3::jsonb)`,
+      [input.tenantId, agentId, JSON.stringify({ connection_id: connectionId, source_group_id: sourceGroupId, source_group_version: 1 }), JSON.stringify(CONNECTOR_AGENT_CAPABILITIES)],
     );
     if (input.connectionId) {
       const activated = await client.query(
@@ -237,4 +242,49 @@ export async function createDraftAgentVersion(
    VALUES($1,$2,$3,$4::jsonb,$5::jsonb,'draft')`,[input.tenantId,input.agentId,version,JSON.stringify(input.capabilities),JSON.stringify(input.bindings)]);
   return{version};
  });
+}
+
+/** The tenant's ID agent or ID trace agent, created with its capabilities on first use (one of each per tenant). */
+export async function tenantAgent(client: PoolClient, tenantId: string, type: 'id' | 'id_trace'): Promise<string> {
+  const existing = await client.query<{ agent_id: string }>('SELECT agent_id FROM registry.agents WHERE tenant_id=$1 AND agent_type=$2', [tenantId, type]);
+  if (existing.rows[0]) return existing.rows[0].agent_id;
+  const created = await client.query<{ agent_id: string }>(
+    `INSERT INTO registry.agents(tenant_id,agent_type,active_version,status) VALUES($1,$2,1,'active') ON CONFLICT DO NOTHING RETURNING agent_id`, [tenantId, type]);
+  if (!created.rows[0]) return (await client.query<{ agent_id: string }>('SELECT agent_id FROM registry.agents WHERE tenant_id=$1 AND agent_type=$2', [tenantId, type])).rows[0]!.agent_id;
+  const agentId = created.rows[0].agent_id;
+  await client.query(`INSERT INTO registry.agent_versions(tenant_id,agent_id,version,capabilities,bindings,status) VALUES($1,$2,1,$3::jsonb,'{}'::jsonb,'approved')`,
+    [tenantId, agentId, JSON.stringify(type === 'id' ? ID_AGENT_CAPABILITIES : ID_TRACE_AGENT_CAPABILITIES)]);
+  await client.query(`INSERT INTO registry.events(tenant_id,event_type,agent_id,safe_payload) VALUES($1,'agent_created',$2,$3::jsonb)`, [tenantId, agentId, JSON.stringify({ agent_type: type })]);
+  return agentId;
+}
+
+/** Logs one run of an agent that works outside the step runner (ID agent, ID trace agent). Counts only, never values. */
+export async function recordAgentRun(client: PoolClient, input: { tenantId: string; agentId: string; connectionId?: string | null; payload: Record<string, number | string | boolean> }): Promise<void> {
+  await client.query(`INSERT INTO registry.events(tenant_id,event_type,agent_id,connection_id,safe_payload) VALUES($1,'agent_run',$2,$3,$4::jsonb)`,
+    [input.tenantId, input.agentId, input.connectionId ?? null, JSON.stringify(input.payload)]);
+}
+
+export type StepAgentCheck = { ok: true; agentId: string; agentVersion: number } | { ok: false; agentId: string | null; reason: 'agent_not_found' | 'agent_not_active' | 'agent_capability_missing' | 'connection_not_active' };
+
+/**
+ * Checked by the worker immediately before a step runs (decision 52): the step's agent exists and is active, its active
+ * version lists the step's capability, and, for a connector agent, its connection is still active and is the source
+ * the plan reads. A plan made before an agent was retired or its connection removed therefore cannot still run.
+ */
+export async function checkStepAgent(pool: Pool, input: { runId: string; stepId: string; sourceId?: string | null }): Promise<StepAgentCheck> {
+  return withRunTenant(pool, input.runId, async (client, run) => {
+    const row = (await client.query<{ agent_id: string; capability_id: string; status: string | null; agent_type: string | null; active_version: number | null; capabilities: string[] | null; agent_connection: string | null; connection_status: string | null }>(
+      `SELECT s.agent_id,s.capability_id,a.status,a.agent_type,a.active_version,v.capabilities,a.connection_id AS agent_connection,c.status AS connection_status
+       FROM runs.steps s LEFT JOIN registry.agents a ON a.tenant_id=s.tenant_id AND a.agent_id=s.agent_id
+       LEFT JOIN registry.agent_versions v ON v.tenant_id=a.tenant_id AND v.agent_id=a.agent_id AND v.version=a.active_version
+       LEFT JOIN registry.connections c ON c.tenant_id=a.tenant_id AND c.connection_id=a.connection_id
+       WHERE s.tenant_id=$1 AND s.run_id=$2 AND s.step_id=$3`, [run.tenant_id, input.runId, input.stepId])).rows[0];
+    if (!row || !row.status) return { ok: false, agentId: row?.agent_id ?? null, reason: 'agent_not_found' };
+    // Removing a connection also retires its agent; the connection is checked first so the reason names the cause.
+    if (row.agent_type === 'connector' && (row.connection_status !== 'active' || (input.sourceId && row.agent_connection !== input.sourceId)))
+      return { ok: false, agentId: row.agent_id, reason: 'connection_not_active' };
+    if (row.status !== 'active') return { ok: false, agentId: row.agent_id, reason: 'agent_not_active' };
+    if (!(row.capabilities ?? []).includes(row.capability_id)) return { ok: false, agentId: row.agent_id, reason: 'agent_capability_missing' };
+    return { ok: true, agentId: row.agent_id, agentVersion: row.active_version! };
+  });
 }

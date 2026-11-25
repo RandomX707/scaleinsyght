@@ -13,6 +13,7 @@ import { createExcelConnector, createPostgresConnector, createSqlServerConnector
 import { EncryptedArtifactStore, artifactVolumePath } from '@scaleinsyght/artifacts';
 import { OpenAIModelGateway } from '@scaleinsyght/model-gateway';
 import { authorise } from '@scaleinsyght/policy';
+import { checkStepAgent } from '@scaleinsyght/registry';
 import { answerLineageRequest } from '@scaleinsyght/graph';
 import { claimDueNightly, connectorForConnection, runProfile } from '@scaleinsyght/profiler';
 import { claimDueSchedule, markScheduleSlotSkipped, markScheduleSlotStarted, persistReportSnapshot, startScheduledReportRun } from '@scaleinsyght/reports';
@@ -128,7 +129,10 @@ while(!stopping){
    try{
     const plan=task.plan;const step=plan.steps[task.order-1];
     if(!step||step.step_id!==claim.stepId)throw new Error('worker_plan_step_mismatch');
-    const decision=await authorise(pool,{principal:{tenant_id:claim.tenantId,principal_id:task.principalId,kind:'user',roles:[],groups:[],attributes:{}},capability_id:step.capability_id,resources:[step.source_id],purpose:'analytic_query',environment:'production'},claim.runId);
+    // The step's agent must still be active, allowed this capability, and bound to an active connection (decision 52).
+    const agent=await checkStepAgent(pool,{runId:claim.runId,stepId:claim.stepId,sourceId:step.source_id});
+    if(!agent.ok)throw new Error(agent.reason);
+    const decision=await authorise(pool,{principal:{tenant_id:claim.tenantId,principal_id:task.principalId,kind:'user',roles:[],groups:[],attributes:{}},capability_id:step.capability_id,resources:[step.source_id],purpose:'analytic_query',environment:'production'},claim.runId,agent.agentId);
     if(decision.outcome!=='allow')throw new Error('policy_revoked');
     if('lineage_request' in step.inputs){
      const request=step.inputs.lineage_request as {asset:string;direction:'upstream'|'downstream'};
@@ -199,7 +203,8 @@ while(!stopping){
     }finally{await connector.close?.();}
     }
    }catch(error){
-    const reason=error instanceof Error&&error.message==='source_timeout'?'source_timeout':error instanceof Error&&error.message==='policy_revoked'?'authorization_revoked':'source_query_executor_unavailable';
+    const reason=error instanceof Error&&error.message==='source_timeout'?'source_timeout':error instanceof Error&&error.message==='policy_revoked'?'authorization_revoked'
+      :error instanceof Error&&['agent_not_found','agent_not_active','agent_capability_missing','connection_not_active'].includes(error.message)?error.message:'source_query_executor_unavailable';
     await failStep(pool,claim,{reasonCode:reason});
    }
    await finalizeAnalyticRun(pool,claim.runId,async ({plan,results})=>{

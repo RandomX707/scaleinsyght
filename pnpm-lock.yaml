@@ -399,6 +399,9 @@ importers:
       '@scaleinsyght/profiler':
         specifier: workspace:*
         version: link:../../packages/profiler
+      '@scaleinsyght/registry':
+        specifier: workspace:*
+        version: link:../../packages/registry
       '@scaleinsyght/reports':
         specifier: workspace:*
         version: link:../../packages/reports
@@ -518,6 +521,9 @@ importers:
       '@scaleinsyght/graph':
         specifier: workspace:*
         version: link:../graph
+      '@scaleinsyght/registry':
+        specifier: workspace:*
+        version: link:../registry
       pg:
         specifier: ^8.16.3
         version: 8.23.1

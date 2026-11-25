@@ -1,6 +1,7 @@
 import type { Pool } from 'pg';
 import type { ReadOnlyConnector } from '@scaleinsyght/connectors';
 import { withTenant } from '@scaleinsyght/db';
+import { recordAgentRun, tenantAgent } from '@scaleinsyght/registry';
 import { fingerprintIdentifier } from '@scaleinsyght/graph';
 
 /** Fields with more distinct values than this are listed as identifier fields but not fingerprinted. */
@@ -130,6 +131,8 @@ export async function runIdAgent(pool: Pool, input: { tenantId: string; connecti
       `UPDATE graph.assertions a SET valid_to=clock_timestamp() FROM graph.relationships r JOIN graph.assets f ON f.tenant_id=r.tenant_id AND f.asset_id=r.from_asset_id JOIN graph.assets t ON t.tenant_id=r.tenant_id AND t.asset_id=r.to_asset_id
        WHERE a.tenant_id=$1 AND r.tenant_id=a.tenant_id AND r.relationship_id=a.relationship_id AND r.relationship_type='SAME_AS' AND a.collector_version=$3 AND a.valid_to IS NULL
          AND (f.source_id=$2 OR t.source_id=$2) AND NOT (r.relationship_id=ANY($4::uuid[]))`, [input.tenantId, input.connectionId, COLLECTOR, [...kept]]);
+    // Logged against the tenant's ID agent (decision 52): counts only, never identifier values.
+    await recordAgentRun(client, { tenantId: input.tenantId, agentId: await tenantAgent(client, input.tenantId, 'id'), connectionId: input.connectionId, payload: { action: 'detect_and_match', fields: candidates.length, fingerprinted, matches: best.size } });
     return { fields: candidates.length, fingerprinted, matches: best.size };
   });
 }
