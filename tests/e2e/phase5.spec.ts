@@ -31,13 +31,14 @@ test('empty_new_tenant_has_no_canned_answer_or_saved_questions',async({page})=>{
  const tenant=await createTenant('phase5-e2e-empty-tenant',false,false);await signIn(page,tenant.ownerEmail);
  await expect(page.getByRole('heading',{name:'Connect a source to get started'})).toBeVisible();
  await expect(page.getByRole('button',{name:'Send question'})).toBeDisabled();
- await page.getByRole('link',{name:/Agents/}).click();await expect(page.getByRole('heading',{name:'Saved questions'})).toBeVisible();
+ // Saved questions live on My agent, as in the prototype.
+ await page.goto('/my-agent');await expect(page.getByRole('heading',{name:'Saved questions'})).toBeVisible();
  await expect(page.getByText('No saved questions yet.')).toBeVisible();
 });
 
 test('c5_governed_report_exports_evidence_and_has_an_owner_scoped_daily_schedule',async({page})=>{
  const tenant=await createTenant('phase5-e2e-reports',true);await signIn(page,tenant.ownerEmail);
- await page.getByRole('link',{name:/Agents/}).click();await page.getByLabel('Name').fill('Daily catalog summary');await page.getByLabel('Question').fill('How many catalog objects are listed?');await page.getByRole('button',{name:'Save draft version'}).click();await expect(page.getByRole('status')).toContainText('Draft version 1 saved');
+ await page.getByRole('link',{name:/Agents/}).click();await page.getByText('New governed agent',{exact:true}).click();await page.getByLabel('Name').fill('Daily catalog summary');await page.getByLabel('Question').fill('How many catalog objects are listed?');await page.getByRole('button',{name:'Save draft version'}).click();await expect(page.getByRole('status')).toContainText('Draft version 1 saved');
  await signOut(page);await signIn(page,tenant.reviewerEmail!);await page.getByRole('link',{name:/Approval matrix/}).click();await expect(page.getByText('Daily catalog summary · version 1 · Awaiting approval')).toBeVisible();await page.getByRole('button',{name:'Approve version 1'}).click();await expect(page.getByRole('status')).toContainText('Version 1 approved');
  await signOut(page);await signIn(page,tenant.ownerEmail);await openWorkspace(page);await page.getByRole('button',{name:'Account'}).click();await page.getByRole('menuitem',{name:'Reports',exact:true}).click();await page.getByLabel('Report name').fill('Daily catalog report');await page.getByLabel('Approved definition').selectOption({label:'Daily catalog summary · version 1'});await page.getByRole('button',{name:'Save report'}).click();await expect(page.getByRole('status')).toContainText('Governed report saved');
  await page.getByRole('button',{name:'Run report'}).click();await expect(page.getByRole('status')).toContainText('Report run');
