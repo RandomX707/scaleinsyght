@@ -60,3 +60,5 @@ Not started:
 - Riverside dbt import and nightly refresh need an authenticated product session. Password unchanged.
 - Today's model cap is USD 30, with USD 12.91 already spent at handover. No model calls were made during the restart.
 - Resume with the Riverside import and nightly refresh, then K2, K4, S7, S8 and the fidelity pass.
+- Riverside login verified through port 4284. Imported the testbed dbt project through the product API and ran nightly refresh on both databases. SQL Server produced four findings and PostgreSQL eleven, including seven ID matches. Workbook refresh returned HTTP 500 after relocating the app. Check the encrypted artifact volume path before retrying.
+- Seven review fixes requested before S7. The first is on branch `review-feedback` at `/tmp/scaleinsyght-review-feedback`, commit `4f9f8bf`. Active runs show progress instead of cards. Three status tests and typecheck passed. Remaining review fixes cover privacy refusals, groupable schema options and one-call refusal, attempt summaries, grouped prose, result headers and hidden keys, and notification names and menu duplication.
