@@ -12,9 +12,12 @@ config();
 if (process.env.CI || process.env.GITHUB_ACTIONS) throw new Error('Planner evaluation is local only');
 const evalRoot = new URL('../testbed/eval/', import.meta.url);
 const load = async (file: string) => JSON.parse(await readFile(new URL(file, evalRoot), 'utf8'));
-const base = 'http://127.0.0.1:3340';
+// The testbed API this run talks to (the testbed Playwright stack's port; 3340 unless TESTBED_API_PORT says otherwise).
+const base = `http://127.0.0.1:${process.env.TESTBED_API_PORT ?? '3340'}`;
+// --warehouse connects PostgreSQL with the login that also reads the dbt analytics schema (pnpm testbed:warehouse-login).
+const warehouse = process.argv.includes('--warehouse');
 const started = new Date();
-const output = new URL('results/' + started.toISOString().replaceAll(':', '-') + '.json', evalRoot);
+const output = new URL('results/' + started.toISOString().replaceAll(':', '-') + (process.argv.includes('--warehouse') ? '-warehouse' : '') + '.json', evalRoot);
 const tenantId = 'planner-eval-' + randomUUID();
 const email = tenantId + '@example.test';
 const password = randomBytes(24).toString('base64url');
@@ -59,7 +62,8 @@ async function cost() {
     'SELECT coalesce(sum(cost_usd),0) AS total FROM core.model_usage WHERE tenant_id=$1', [tenantId])).rows[0].total));
 }
 async function connect() {
-  const pg = new URL(process.env.DATABASE_URL_TESTBED ?? '');
+  const pg = new URL((warehouse ? process.env.DATABASE_URL_TESTBED_WAREHOUSE : process.env.DATABASE_URL_TESTBED) ?? '');
+  if (warehouse && !pg.hostname) throw new Error('DATABASE_URL_TESTBED_WAREHOUSE is required for --warehouse; run pnpm testbed:warehouse-login');
   if (!['localhost', '127.0.0.1'].includes(pg.hostname) || pg.pathname !== '/si_testbed_pg') throw new Error('Expected local PostgreSQL testbed');
   const sql = process.env;
   if (!['localhost', '127.0.0.1'].includes(sql.SQLSERVER_TESTBED_HOST ?? '') ||
@@ -175,7 +179,7 @@ function summary(items: Item[]) {
     score: counts.correct! + counts['refused correctly']! - counts.failed! - 2 * counts.wrong!};
 }
 async function save() {
-  await writeFile(output, JSON.stringify({started: started.toISOString(), tenantId, costUsd: spend, sets: sets.map(set => ({
+  await writeFile(output, JSON.stringify({started: started.toISOString(), tenantId, warehouse, costUsd: spend, sets: sets.map(set => ({
     name: set.name, summary: summary(set.items), results: set.items,
   }))}, null, 2) + '\n', {mode: 0o600});
 }

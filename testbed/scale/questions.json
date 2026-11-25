@@ -1,0 +1,62 @@
+[
+  {
+    "id": "S01",
+    "question": "How many billing invoices are there in the Scale warehouse?",
+    "table": "billing.invoice",
+    "sql": "SELECT count(*) AS value FROM billing.invoice"
+  },
+  {
+    "id": "S02",
+    "question": "How many logistics shipments have status open in the Scale warehouse?",
+    "table": "logistics.shipment",
+    "sql": "SELECT count(*) AS value FROM logistics.shipment WHERE status='open'"
+  },
+  {
+    "id": "S03",
+    "question": "Break down support tickets by status in the Scale warehouse.",
+    "table": "support.ticket",
+    "sql": "SELECT status AS label,count(*) AS value FROM support.ticket GROUP BY status ORDER BY value DESC, status"
+  },
+  {
+    "id": "S04",
+    "question": "How many procurement vendors were created during 2025 in the Scale warehouse?",
+    "table": "procurement.vendor",
+    "sql": "SELECT count(*) AS value FROM procurement.vendor WHERE created_on >= '2025-01-01' AND created_on < '2026-01-01'"
+  },
+  {
+    "id": "S05",
+    "question": "How many sales customer orders does each sales region have in the Scale warehouse? Use the region names.",
+    "table": "sales.customer_order",
+    "sql": "SELECT r.region_name AS label,count(*) AS value FROM sales.customer_order o JOIN sales.region r ON o.region_id=r.region_id GROUP BY r.region_name ORDER BY value DESC, r.region_name"
+  },
+  {
+    "id": "S06",
+    "question": "How many payroll employees are there in the Scale warehouse?",
+    "table": "payroll.employee",
+    "sql": "SELECT count(*) AS value FROM payroll.employee"
+  },
+  {
+    "id": "S07",
+    "question": "How many marketing campaigns are closed in the Scale warehouse?",
+    "table": "marketing.campaign",
+    "sql": "SELECT count(*) AS value FROM marketing.campaign WHERE status='closed'"
+  },
+  {
+    "id": "S08",
+    "question": "Break down inventory items by status in the Scale warehouse.",
+    "table": "inventory.item",
+    "sql": "SELECT status AS label,count(*) AS value FROM inventory.item GROUP BY status ORDER BY value DESC, status"
+  },
+  {
+    "id": "S09",
+    "question": "How many quality inspection audit records are there in the Scale warehouse?",
+    "table": "quality.inspection_audit",
+    "sql": "SELECT count(*) AS value FROM quality.inspection_audit"
+  },
+  {
+    "id": "S10",
+    "question": "How many maintenance work orders are pending in the Scale warehouse?",
+    "table": "maintenance.work_order",
+    "sql": "SELECT count(*) AS value FROM maintenance.work_order WHERE status='pending'"
+  }
+]

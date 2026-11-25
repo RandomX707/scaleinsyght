@@ -383,5 +383,358 @@
       }
     ]
   },
-  "Q40": null
+  "Q40": null,
+  "Q46": {
+    "p": [
+      {
+        "label": "Emergency",
+        "value": 388
+      },
+      {
+        "label": "Laboratory",
+        "value": 301
+      },
+      {
+        "label": "Imaging",
+        "value": 197
+      },
+      {
+        "label": "Cardiology",
+        "value": 152
+      },
+      {
+        "label": "Surgery",
+        "value": 121
+      },
+      {
+        "label": "Oncology",
+        "value": 88
+      },
+      {
+        "label": "Pediatrics",
+        "value": 64
+      },
+      {
+        "label": "Neurology",
+        "value": 52
+      },
+      {
+        "label": "Orthopedics",
+        "value": 41
+      },
+      {
+        "label": "Psychiatry",
+        "value": 41
+      },
+      {
+        "label": "Dermatology",
+        "value": 30
+      },
+      {
+        "label": "Rehabilitation",
+        "value": 25
+      }
+    ]
+  },
+  "Q47": {
+    "p": [
+      {
+        "label": "Emergency",
+        "value": 60
+      },
+      {
+        "label": "Laboratory",
+        "value": 33
+      },
+      {
+        "label": "Imaging",
+        "value": 31
+      },
+      {
+        "label": "Cardiology",
+        "value": 29
+      },
+      {
+        "label": "Surgery",
+        "value": 17
+      },
+      {
+        "label": "Oncology",
+        "value": 15
+      },
+      {
+        "label": "Orthopedics",
+        "value": 13
+      },
+      {
+        "label": "Pediatrics",
+        "value": 11
+      },
+      {
+        "label": "Psychiatry",
+        "value": 11
+      },
+      {
+        "label": "Dermatology",
+        "value": 6
+      },
+      {
+        "label": "Neurology",
+        "value": 4
+      },
+      {
+        "label": "Rehabilitation",
+        "value": 3
+      }
+    ]
+  },
+  "Q48": {
+    "p": [
+      {
+        "label": "Emergency",
+        "value": 95
+      },
+      {
+        "label": "Laboratory",
+        "value": 73
+      },
+      {
+        "label": "Imaging",
+        "value": 46
+      },
+      {
+        "label": "Cardiology",
+        "value": 43
+      },
+      {
+        "label": "Surgery",
+        "value": 31
+      },
+      {
+        "label": "Oncology",
+        "value": 18
+      },
+      {
+        "label": "Pediatrics",
+        "value": 15
+      },
+      {
+        "label": "Neurology",
+        "value": 11
+      },
+      {
+        "label": "Orthopedics",
+        "value": 11
+      },
+      {
+        "label": "Dermatology",
+        "value": 6
+      },
+      {
+        "label": "Psychiatry",
+        "value": 5
+      },
+      {
+        "label": "Rehabilitation",
+        "value": 5
+      }
+    ]
+  },
+  "Q49": {
+    "p": [
+      {
+        "label": "Provider 003",
+        "value": 296
+      },
+      {
+        "label": "Provider 014",
+        "value": 157
+      },
+      {
+        "label": "Provider 006",
+        "value": 114
+      },
+      {
+        "label": "Provider 011",
+        "value": 69
+      },
+      {
+        "label": "Provider 005",
+        "value": 65
+      },
+      {
+        "label": "Provider 012",
+        "value": 61
+      },
+      {
+        "label": "Provider 016",
+        "value": 51
+      },
+      {
+        "label": "Provider 024",
+        "value": 44
+      },
+      {
+        "label": "Provider 022",
+        "value": 43
+      },
+      {
+        "label": "Provider 002",
+        "value": 40
+      },
+      {
+        "label": "Provider 008",
+        "value": 38
+      },
+      {
+        "label": "Provider 007",
+        "value": 35
+      },
+      {
+        "label": "Provider 017",
+        "value": 35
+      },
+      {
+        "label": "Provider 020",
+        "value": 34
+      },
+      {
+        "label": "Provider 001",
+        "value": 31
+      },
+      {
+        "label": "Provider 009",
+        "value": 29
+      },
+      {
+        "label": "Provider 015",
+        "value": 25
+      },
+      {
+        "label": "Provider 023",
+        "value": 25
+      },
+      {
+        "label": "Provider 004",
+        "value": 23
+      },
+      {
+        "label": "Provider 010",
+        "value": 20
+      },
+      {
+        "label": "Provider 013",
+        "value": 16
+      },
+      {
+        "label": "Provider 018",
+        "value": 15
+      },
+      {
+        "label": "Provider 019",
+        "value": 14
+      },
+      {
+        "label": "Provider 021",
+        "value": 11
+      }
+    ]
+  },
+  "Q50": {
+    "p": [
+      {
+        "label": "Radiology",
+        "value": 464
+      },
+      {
+        "label": "Cardiology",
+        "value": 389
+      },
+      {
+        "label": "Surgery",
+        "value": 251
+      },
+      {
+        "label": "General",
+        "value": 187
+      }
+    ]
+  },
+  "Q51": {
+    "p": [
+      {
+        "label": "Emergency",
+        "value": 62
+      },
+      {
+        "label": "Laboratory",
+        "value": 54
+      },
+      {
+        "label": "Imaging",
+        "value": 37
+      },
+      {
+        "label": "Cardiology",
+        "value": 30
+      },
+      {
+        "label": "Surgery",
+        "value": 17
+      },
+      {
+        "label": "Oncology",
+        "value": 14
+      },
+      {
+        "label": "Neurology",
+        "value": 13
+      },
+      {
+        "label": "Pediatrics",
+        "value": 9
+      },
+      {
+        "label": "Psychiatry",
+        "value": 8
+      },
+      {
+        "label": "Rehabilitation",
+        "value": 6
+      },
+      {
+        "label": "Dermatology",
+        "value": 4
+      },
+      {
+        "label": "Orthopedics",
+        "value": 3
+      }
+    ]
+  },
+  "Q52": {
+    "p": 332
+  },
+  "Q53": {
+    "p": 233
+  },
+  "Q54": {
+    "p": [
+      {
+        "label": "Emergency",
+        "value": 401
+      },
+      {
+        "label": "Pediatrics",
+        "value": 201
+      },
+      {
+        "label": "Imaging",
+        "value": 192
+      }
+    ]
+  },
+  "Q55": {
+    "p": 92
+  }
 }

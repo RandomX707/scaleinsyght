@@ -420,5 +420,95 @@
     "sources": [
       "p"
     ]
+  },
+  {
+    "id": "Q46",
+    "turns": [
+      "How many orders does each department have in the PostgreSQL testbed? Use the department names."
+    ],
+    "sources": [
+      "p"
+    ]
+  },
+  {
+    "id": "Q47",
+    "turns": [
+      "How many cancelled orders does each department have in the PostgreSQL testbed, by department name?"
+    ],
+    "sources": [
+      "p"
+    ]
+  },
+  {
+    "id": "Q48",
+    "turns": [
+      "How many placed orders does each department have in the PostgreSQL testbed, by department name?"
+    ],
+    "sources": [
+      "p"
+    ]
+  },
+  {
+    "id": "Q49",
+    "turns": [
+      "How many encounters does each provider have in the PostgreSQL testbed? Use provider names."
+    ],
+    "sources": [
+      "p"
+    ]
+  },
+  {
+    "id": "Q50",
+    "turns": [
+      "How many encounters were there for each provider specialty in the PostgreSQL testbed?"
+    ],
+    "sources": [
+      "p"
+    ]
+  },
+  {
+    "id": "Q51",
+    "turns": [
+      "How many imaging orders does each department have in the PostgreSQL testbed, by department name?"
+    ],
+    "sources": [
+      "p"
+    ]
+  },
+  {
+    "id": "Q52",
+    "turns": [
+      "How many lab orders were ordered during 2025 in the PostgreSQL testbed?"
+    ],
+    "sources": [
+      "p"
+    ]
+  },
+  {
+    "id": "Q53",
+    "turns": [
+      "How many completed orders does the Emergency department have in the PostgreSQL testbed?"
+    ],
+    "sources": [
+      "p"
+    ]
+  },
+  {
+    "id": "Q54",
+    "turns": [
+      "Which three departments have the most encounters in the PostgreSQL testbed? Give the department names and counts."
+    ],
+    "sources": [
+      "p"
+    ]
+  },
+  {
+    "id": "Q55",
+    "turns": [
+      "How many encounters does the Cardiology department have in the PostgreSQL testbed?"
+    ],
+    "sources": [
+      "p"
+    ]
   }
 ]
