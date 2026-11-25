@@ -10,6 +10,6 @@ Morning plan from Yashaswi, worked in order. Edited in place after every step.
 | 2. Display labels | Done (#19) | Branch `display-labels` (decision 45). Q31, Q13, Q14, Q39 each 5 of 5 correct. All gates pass. Testbed 3 of 3. Full eval: 34 correct and 6 refused of 40, 9 correct and 1 refused of 10, 0 wrong |
 | 4. tenant:reset-password | Done | Merged in #19. Yashaswi's password on riverside-health reset with it; Operations workbook added through Add connector; PostgreSQL and SQL Server re-profiled |
 | 5. Restart 4284 | Done | From 5f1930b (after #20, ER possible relationships and statistics versioning). `.env` caps set to the decided USD 5 and 1 |
-| 6. Part 2 to 4 | S4 merged (#21); S5 in progress | Branch `s4-lineage`: parsed view lineage, dbt artifact upload, Lineage graph, lineage questions (Q41-Q45, 5 of 5 correct once), walkthrough passes. Remaining: S4 lineage, S5 ID trace, S6 nightly refresh and approvals, S7 saved questions and exports, S8 Tableau, then fidelity and the final check |
+| 6. Part 2 to 4 | S4 merged (#21); S5 ready (ID trace: gates, testbed 3 of 3, full eval 39+6 and 9+1, 0 wrong); S6 in progress | Branch `s4-lineage`: parsed view lineage, dbt artifact upload, Lineage graph, lineage questions (Q41-Q45, 5 of 5 correct once), walkthrough passes. Remaining: S4 lineage, S5 ID trace, S6 nightly refresh and approvals, S7 saved questions and exports, S8 Tableau, then fidelity and the final check |
 
 Model spend today (cap USD 20): tracked in the scratchpad ledger, reported in docs/overnight-report.md.
