@@ -1,6 +1,6 @@
 # Dictionary rebuild: spec
 
-Status: **draft for approval**. Requirements are from CLAUDE.md section 10.2 and Yashaswi's brief of 25 Nov 2026. The reference is `docs/prototype/index.html` (route `#dictionary`). Contracts touched: 4 (evidence), 6 (graph), 7 (classification and disclosure), 1 (tenancy and audit).
+Status: **approved 25 Nov 2026 with Option A** (section 4; decision 53). Requirements are from CLAUDE.md section 10.2 and Yashaswi's brief of 25 Nov 2026. The reference is `docs/prototype/index.html` (route `#dictionary`). Contracts touched: 4 (evidence), 6 (graph), 7 (classification and disclosure), 1 (tenancy and audit).
 
 ## 1. What exists today
 
@@ -102,17 +102,23 @@ Status: **draft for approval**. Requirements are from CLAUDE.md section 10.2 and
 - **Walkthrough** `real-product-s9-dictionary.spec.ts`: for PostgreSQL, SQL Server, Excel, dbt and Tableau testbed sources, compares the Dictionary with testbed truth (object counts, columns, keys, joins, procedure reads and writes, dbt descriptions and tests, Tableau formulas), plus the offline export check. Three consecutive passes.
 - **Screens:** 1440×900 app and prototype pairs for every state. Landing summary, Standard, Custom, table object, view, procedure (Overview and SQL), package, search with SQL hits, export notice, and the Excel, dbt and Tableau sources. Each remaining difference is listed with its reason in `docs/ui/ui-report.md`. The testbed has no SSIS package or encrypted procedure, so those states are shown from the synthetic golden dataset; if it lacks them, they're recorded as differences.
 
+### 2.8 Scale targets (added at approval)
+
+- **Dictionary loads lazily.** The object list is paged and searched on the server; an object's details load only when it is opened.
+- **ER explorer at scale.** It opens on one table and its neighbours, with search and "Expand neighbours", and never draws the whole catalog at once. It defaults to the most-connected table, or the table it was opened from. The ER endpoint takes `focus` and `depth` and returns that neighbourhood only, plus a search endpoint for tables.
+- **Targets on the 5,000-table scale catalog**, for both the Dictionary and the ER explorer: first view **under 1.5 s and under 300 KB** (data transferred for the first view, excluding the app's static assets). Measured by `pnpm test:scale`, which reports both numbers per page.
+
 ## 3. Out of scope
 
 - Snowflake content: no Snowflake source exists yet.
 - Editing source objects.
 - Imported vendor dictionary formats beyond CSV and Excel (`.chm` is later).
 
-## 4. Decision needed before building
+## 4. Decision (approved: Option A)
 
 **Procedure, view and Tableau formula text in storage.** Non-negotiable 6 forbids raw identifier values in storage, and contract 7 requires descriptive metadata to be scrubbed before any model input. Definitions and formulas can hard-code identifier values (for example `WHERE patient_id = 104233`).
 
 - **Option A (recommended).** Store the definition with literals replaced by typed placeholders, using the same scrubber as the model boundary. The SQL card and HTML export show the scrubbed text, with a note "Literal values hidden"; "Show original" fetches the live definition from the source on demand and never stores it. Formulas follow the same rule, but an uploaded workbook isn't kept, so Tableau formulas would be scrubbed only.
 - **Option B.** Store raw text, classify it as RESTRICTED when it contains literals, and scrub only before model input. This breaks non-negotiable 6 when a literal is an identifier, so it would need an approved exception.
 
-Decision 53 records the outcome. Until it's approved, nothing is built.
+**Approved: Option A** (decision 53). Stored text is scrubbed; "Show original" fetches the live definition and stores nothing. Tableau formulas are shown scrubbed only.
