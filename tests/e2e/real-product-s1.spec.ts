@@ -36,7 +36,9 @@ test('s1_empty_tenant_adds_real_postgres_profiles_metadata_and_answers_with_evid
   const observed:string[]=[];page.on('response',response=>{if(/^\/api\/runs\/[0-9a-f-]+$/.test(new URL(response.url()).pathname)&&response.request().method()==='GET')void response.json().then((body:{state?:string})=>{if(body.state&&observed.at(-1)!==body.state)observed.push(body.state);}).catch(()=>undefined);});
   await expect(page.getByRole('status').filter({hasText:'Planning your question…'})).toBeVisible({timeout:5_000});
   await expect(page.locator('.chat-thread .plan-card')).toHaveCount(0);
-  await expect(page.getByText('Source result: 500',{exact:true})).toBeVisible({timeout:120_000});expect(observed[0]).toBe('PLANNING');expect(observed.at(-1)).toBe('COMPLETED');await expect(page.getByText(/Executed on Testbed hospital; returned 1 aggregate row/)).toBeVisible();await expect(page.getByText(/SELECT count\(\*\)::text AS value,count\(\*\) AS cell_size FROM "public"\."patients"/)).toBeVisible();await page.screenshot({path:'docs/acceptance/s1/home-answer.png',fullPage:true});
+  await expect(page.getByText('Source result: 500',{exact:true})).toBeVisible({timeout:120_000});expect(observed[0]).toBe('PLANNING');expect(observed.at(-1)).toBe('COMPLETED');
+  // Evidence sits in one collapsed drawer (decision 56).
+  await page.locator('.evidence-drawer').last().locator(':scope > summary').click();await expect(page.getByText(/Executed on Testbed hospital; returned 1 aggregate row/)).toBeVisible();await expect(page.getByText(/SELECT count\(\*\)::text AS value,count\(\*\) AS cell_size FROM "public"\."patients"/)).toBeVisible();await page.screenshot({path:'docs/acceptance/s1/home-answer.png',fullPage:true});
 });
 
 test.afterAll(async()=>{await adminPool.end();});

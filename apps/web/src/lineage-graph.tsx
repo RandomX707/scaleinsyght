@@ -244,7 +244,7 @@ export function LineageAnswer(props: { lineage: LineageAnswerData; onOpen: () =>
       {[...position.entries()].map(([name, point]) => <g key={name}><rect x={point.x} y={point.y} width={220} height={28} rx={6} fill={name === lineage.asset ? '#E0E7FF' : '#FFFFFF'} stroke={name === lineage.asset ? '#5A67D8' : '#CBD5E1'} /><text className="fc" x={point.x + 8} y={point.y + 18} style={{ fontSize: 11 }}>{name.length > 32 ? `${name.slice(0, 31)}…` : name}</text></g>)}
     </svg></div>}
     <p className="lineage-legend">{(Object.keys(EVIDENCE) as Filter[]).filter((key) => lineage.methods[key]).map((key) => <span key={key}><span className="lineage-method" style={{ color: EVIDENCE[key].color, background: `${EVIDENCE[key].color}1a` }}>{EVIDENCE[key].label}</span> {lineage.methods[key]}</span>)}</p>
-    {lineage.steps.length > 0 && <ol className="lineage-steps">{lineage.steps.map((step, index) => <li key={index}><code>{step.to}</code> <span className="muted">← {step.how}</span></li>)}</ol>}
+    {lineage.steps.length > 0 && <details className="lineage-steps-wrap"><summary>Every step, in order ({lineage.steps.length} {lineage.steps.length === 1 ? 'link' : 'links'})</summary><ol className="lineage-steps">{lineage.steps.map((step, index) => <li key={index}><code>{step.to}</code> <span className="muted">← {step.how}</span></li>)}</ol></details>}
     {lineage.gaps.map((gap, index) => <p key={index} className="graph-gap"><span className="lineage-method" style={{ color: EVIDENCE.gap.color, background: `${EVIDENCE.gap.color}1a` }}>Missing</span> <code>{gap.asset}</code>: {gap.reason}</p>)}
     <div className="lineage-actions"><Button size="small" onClick={props.onOpen}>Open in Lineage</Button></div>
   </div>;

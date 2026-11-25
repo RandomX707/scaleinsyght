@@ -1,7 +1,7 @@
 [
   {
     "question": "How many encounters were emergency visits in 2025?",
-    "answer": "In 2025, 234 encounters were emergency visits.",
+    "answer": "There were 234 emergency visits in 2025.",
     "sql": [
       "SQL Server hospital · SELECT TOP (1) COUNT_BIG(*) AS value,COUNT_BIG(*) AS cell_size FROM [dbo].[encounters] l JOIN [dbo].[departments] r ON l.[department_id]=r.[department_id] WHERE r.[department_name] = @filter0 AND l.[admitted_at] >= @filter1 AND l.[admitted_at] < @filter2"
     ],
@@ -57,7 +57,7 @@
               "model": "gpt-6.2-sol",
               "purpose": "plan",
               "inputTokens": 4062,
-              "outputTokens": 335
+              "outputTokens": 334
             },
             {
               "model": "gpt-6.2-sol",
@@ -71,14 +71,14 @@
               {
                 "name": "SQL Server hospital",
                 "reason": "the only selected source",
-                "sourceId": "016bb506-e7da-443d-a909-651439089c39"
+                "sourceId": "7de33059-e744-42ec-94ac-57b5ddd3bf61"
               }
             ],
             "unused": []
           }
         },
         "inputTokens": 4062,
-        "outputTokens": 335,
+        "outputTokens": 334,
         "summaries": [
           "Plan accepted."
         ]
@@ -88,13 +88,13 @@
         "purpose": "answer",
         "typedPlan": null,
         "inputTokens": 382,
-        "outputTokens": 15
+        "outputTokens": 14
       }
     ]
   },
   {
     "question": "Orders per department, top 5",
-    "answer": "In SQL Server hospital, order counts across the five departments with the most orders ranged from 121 to 388, a spread of 267 orders.",
+    "answer": "Among the five departments with the most orders, counts ranged from 121 to 388, a spread of 267 orders.",
     "sql": [
       "SQL Server hospital · SELECT TOP (5) CAST(r.[department_name] AS nvarchar(4000)) AS group_value,CAST(r.[department_id] AS nvarchar(4000)) AS group_key,COUNT_BIG(*) AS value,COUNT_BIG(*) AS cell_size FROM [dbo].[orders] l JOIN [dbo].[departments] r ON l.[department_id]=r.[department_id] GROUP BY r.[department_name],r.[department_id] ORDER BY value DESC,r.[department_id] ASC"
     ],
@@ -155,7 +155,12 @@
                 "groupByTable": "right"
               },
               "source_name": "SQL Server hospital",
-              "source_index": 0
+              "source_index": 0,
+              "display_label": {
+                "key": "dbo.orders.department_id",
+                "via": "dbo.orders.department_id = dbo.departments.department_id",
+                "label": "dbo.departments.department_name"
+              }
             }
           ],
           "attempts": [
@@ -163,13 +168,13 @@
               "model": "gpt-6.2-sol",
               "purpose": "plan",
               "inputTokens": 4058,
-              "outputTokens": 244
+              "outputTokens": 367
             },
             {
               "model": "gpt-6.2-sol",
               "purpose": "verify",
-              "inputTokens": 1183,
-              "outputTokens": 75
+              "inputTokens": 1178,
+              "outputTokens": 34
             }
           ],
           "source_selection": {
@@ -177,14 +182,14 @@
               {
                 "name": "SQL Server hospital",
                 "reason": "the only selected source",
-                "sourceId": "016bb506-e7da-443d-a909-651439089c39"
+                "sourceId": "7de33059-e744-42ec-94ac-57b5ddd3bf61"
               }
             ],
             "unused": []
           }
         },
         "inputTokens": 4058,
-        "outputTokens": 244,
+        "outputTokens": 367,
         "summaries": [
           "Plan accepted."
         ]
@@ -194,15 +199,15 @@
         "purpose": "answer",
         "typedPlan": null,
         "inputTokens": 398,
-        "outputTokens": 33
+        "outputTokens": 28
       }
     ]
   },
   {
     "question": "How many orders does each department have?",
-    "answer": "Across the 12 departments with orders in SQL Server hospital, counts ranged from 25 to 388 orders, a spread of 363, with two departments tied at 41 orders.",
+    "answer": "In SQL Server hospital, order counts across the 12 departments with orders ranged from 25 to 388, a spread of 363 orders, and two departments tied at 41 orders each.",
     "sql": [
-      "SQL Server hospital · SELECT TOP (100) CAST(r.[department_name] AS nvarchar(4000)) AS group_value,CAST(r.[department_id] AS nvarchar(4000)) AS group_key,COUNT_BIG(*) AS value,COUNT_BIG(*) AS cell_size FROM [dbo].[orders] l JOIN [dbo].[departments] r ON l.[department_id]=r.[department_id] GROUP BY r.[department_name],r.[department_id] ORDER BY value DESC,r.[department_id] ASC"
+      "SQL Server hospital · SELECT TOP (100) CAST(r.[department_name] AS nvarchar(4000)) AS group_value,COUNT_BIG(*) AS value,COUNT_BIG(*) AS cell_size FROM [dbo].[orders] l JOIN [dbo].[departments] r ON l.[department_id]=r.[department_id] GROUP BY r.[department_name] ORDER BY value DESC,group_value ASC"
     ],
     "results": [
       {
@@ -211,62 +216,50 @@
         "rows": [
           {
             "value": "388",
-            "group_key": "3",
             "group_value": "Emergency"
           },
           {
             "value": "301",
-            "group_key": "5",
             "group_value": "Laboratory"
           },
           {
             "value": "197",
-            "group_key": "4",
             "group_value": "Imaging"
           },
           {
             "value": "152",
-            "group_key": "1",
             "group_value": "Cardiology"
           },
           {
             "value": "121",
-            "group_key": "6",
             "group_value": "Surgery"
           },
           {
             "value": "88",
-            "group_key": "7",
             "group_value": "Oncology"
           },
           {
             "value": "64",
-            "group_key": "8",
             "group_value": "Pediatrics"
           },
           {
             "value": "52",
-            "group_key": "2",
             "group_value": "Neurology"
           },
           {
             "value": "41",
-            "group_key": "9",
             "group_value": "Orthopedics"
           },
           {
             "value": "41",
-            "group_key": "10",
             "group_value": "Psychiatry"
           },
           {
             "value": "30",
-            "group_key": "11",
             "group_value": "Dermatology"
           },
           {
             "value": "25",
-            "group_key": "12",
             "group_value": "Rehabilitation"
           }
         ]
@@ -285,7 +278,6 @@
                 "order": "desc",
                 "filters": [],
                 "groupBy": "department_name",
-                "groupKey": "department_id",
                 "aggregate": {
                   "operation": "count"
                 },
@@ -304,13 +296,13 @@
               "model": "gpt-6.2-sol",
               "purpose": "plan",
               "inputTokens": 4059,
-              "outputTokens": 233
+              "outputTokens": 336
             },
             {
               "model": "gpt-6.2-sol",
               "purpose": "verify",
               "inputTokens": 1178,
-              "outputTokens": 109
+              "outputTokens": 82
             }
           ],
           "source_selection": {
@@ -318,14 +310,14 @@
               {
                 "name": "SQL Server hospital",
                 "reason": "the only selected source",
-                "sourceId": "016bb506-e7da-443d-a909-651439089c39"
+                "sourceId": "7de33059-e744-42ec-94ac-57b5ddd3bf61"
               }
             ],
             "unused": []
           }
         },
         "inputTokens": 4059,
-        "outputTokens": 233,
+        "outputTokens": 336,
         "summaries": [
           "Plan accepted."
         ]
@@ -334,14 +326,14 @@
         "model": "gpt-6.2-sol",
         "purpose": "answer",
         "typedPlan": null,
-        "inputTokens": 492,
-        "outputTokens": 40
+        "inputTokens": 468,
+        "outputTokens": 42
       }
     ]
   },
   {
     "question": "Average number of encounters per patient by provider",
-    "answer": "Across the 24 providers in SQL Server hospital, average encounters per patient ranged from 1.00 to 2.53, a spread of 1.53 encounters per patient, with two providers tied at the low of 1.00.",
+    "answer": "In SQL Server hospital, with no filters applied, average encounters per patient across 24 providers ranged from 1.00 to 2.53, a spread of 1.53, with two providers tied at 1.00.",
     "sql": [
       "SQL Server hospital · SELECT TOP (100) group_value,AVG(CAST(entity_count AS float)) AS value,COUNT_BIG(*) AS cell_size FROM (SELECT [provider_id] AS group_sort,CAST([provider_id] AS nvarchar(4000)) AS group_value,[patient_id] AS entity_key,COUNT_BIG(*) AS entity_count FROM [dbo].[encounters] GROUP BY [provider_id],[patient_id]) AS entity_counts GROUP BY group_sort,group_value ORDER BY group_sort"
     ],
@@ -472,13 +464,13 @@
               "model": "gpt-6.2-sol",
               "purpose": "plan",
               "inputTokens": 4059,
-              "outputTokens": 295
+              "outputTokens": 315
             },
             {
               "model": "gpt-6.2-sol",
               "purpose": "verify",
               "inputTokens": 1170,
-              "outputTokens": 35
+              "outputTokens": 34
             }
           ],
           "source_selection": {
@@ -486,14 +478,14 @@
               {
                 "name": "SQL Server hospital",
                 "reason": "the only selected source",
-                "sourceId": "016bb506-e7da-443d-a909-651439089c39"
+                "sourceId": "7de33059-e744-42ec-94ac-57b5ddd3bf61"
               }
             ],
             "unused": []
           }
         },
         "inputTokens": 4059,
-        "outputTokens": 295,
+        "outputTokens": 315,
         "summaries": [
           "Plan accepted."
         ]
@@ -503,7 +495,7 @@
         "purpose": "answer",
         "typedPlan": null,
         "inputTokens": 656,
-        "outputTokens": 53
+        "outputTokens": 51
       }
     ]
   },
@@ -565,13 +557,13 @@
               "model": "gpt-6.2-sol",
               "purpose": "plan",
               "inputTokens": 4062,
-              "outputTokens": 331
+              "outputTokens": 333
             },
             {
               "model": "gpt-6.2-sol",
               "purpose": "verify",
               "inputTokens": 1203,
-              "outputTokens": 36
+              "outputTokens": 34
             }
           ],
           "source_selection": {
@@ -579,14 +571,14 @@
               {
                 "name": "SQL Server hospital",
                 "reason": "the only selected source",
-                "sourceId": "016bb506-e7da-443d-a909-651439089c39"
+                "sourceId": "7de33059-e744-42ec-94ac-57b5ddd3bf61"
               }
             ],
             "unused": []
           }
         },
         "inputTokens": 4062,
-        "outputTokens": 331,
+        "outputTokens": 333,
         "summaries": [
           "Plan accepted."
         ]
@@ -657,7 +649,7 @@
               "model": "gpt-6.2-sol",
               "purpose": "verify",
               "inputTokens": 2123,
-              "outputTokens": 39
+              "outputTokens": 40
             }
           ],
           "source_selection": {
@@ -665,12 +657,12 @@
               {
                 "name": "PostgreSQL testbed",
                 "reason": "named in your question",
-                "sourceId": "8e33e7ae-1414-4e81-959e-97776e764349"
+                "sourceId": "0235ff93-9127-486a-a69f-b48ed2b11aed"
               },
               {
                 "name": "SQL Server hospital",
                 "reason": "named in your question",
-                "sourceId": "016bb506-e7da-443d-a909-651439089c39"
+                "sourceId": "7de33059-e744-42ec-94ac-57b5ddd3bf61"
               }
             ],
             "unused": []
@@ -693,7 +685,7 @@
   },
   {
     "question": "and how many of them have a phone number?",
-    "answer": "445 patients in the first source and 429 in the second have a non-null phone number, a difference of 16 (SQL Server hospital: 445; PostgreSQL testbed: 429).",
+    "answer": "The two sources count 445 and 429 patients with a non-null phone number, respectively—a difference of 16 (SQL Server hospital: 445; PostgreSQL testbed: 429).",
     "sql": [
       "SQL Server hospital · SELECT TOP (1) COUNT_BIG(*) AS value,COUNT_BIG(*) AS cell_size FROM [dbo].[patients] WHERE [phone] IS NOT NULL",
       "PostgreSQL testbed · SELECT count(*)::text AS value,count(*) AS cell_size FROM \"public\".\"patients\" WHERE \"phone\" IS NOT NULL"
@@ -740,7 +732,7 @@
               "model": "gpt-6.2-sol",
               "purpose": "plan",
               "inputTokens": 7416,
-              "outputTokens": 441
+              "outputTokens": 440
             },
             {
               "model": "gpt-6.2-sol",
@@ -754,19 +746,19 @@
               {
                 "name": "SQL Server hospital",
                 "reason": "used earlier in this conversation",
-                "sourceId": "016bb506-e7da-443d-a909-651439089c39"
+                "sourceId": "7de33059-e744-42ec-94ac-57b5ddd3bf61"
               },
               {
                 "name": "PostgreSQL testbed",
                 "reason": "used earlier in this conversation",
-                "sourceId": "8e33e7ae-1414-4e81-959e-97776e764349"
+                "sourceId": "0235ff93-9127-486a-a69f-b48ed2b11aed"
               }
             ],
             "unused": []
           }
         },
         "inputTokens": 7416,
-        "outputTokens": 441,
+        "outputTokens": 440,
         "summaries": [
           "Plan accepted."
         ]
@@ -776,7 +768,7 @@
         "purpose": "answer",
         "typedPlan": null,
         "inputTokens": 369,
-        "outputTokens": 28
+        "outputTokens": 27
       }
     ]
   }

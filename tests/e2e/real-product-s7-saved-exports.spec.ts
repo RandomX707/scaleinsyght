@@ -44,7 +44,8 @@ test('s7_saved_question_reuse_exports_governed_report_schedule_and_dictionary_ma
   // A live answer, rated useful and saved.
   await page.goto('/'); await page.getByLabel('Ask a question').fill(question); await page.getByRole('button', { name: 'Send question' }).click();
   await expect(page.locator('.answer-claim').first()).toBeVisible({ timeout: 90_000 });
-  for (const row of expected) await expect(page.locator('.grouped-result table').last()).toContainText(row.departmentName);
+  // Twelve departments are shown as a chart (decision 56); each department and its count is drawn.
+  for (const row of expected) await expect(page.locator('.grouped-result .bar-chart').last().locator('.bar-row').filter({ hasText: row.departmentName })).toContainText(String(row.orderCount));
   await page.getByRole('button', { name: 'Useful', exact:true }).click();
   await page.getByRole('button', { name: 'Save this question' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved.' })).toBeVisible();
@@ -61,7 +62,7 @@ test('s7_saved_question_reuse_exports_governed_report_schedule_and_dictionary_ma
   await expect(page.locator('.saved-question')).toContainText(question);
   await page.getByRole('button', { name: 'Start from this question' }).click();
   await expect(page).toHaveURL(/\/conversations\/[0-9a-f-]{36}$/);
-  for (const row of expected) await expect(page.locator('.grouped-result table').last()).toContainText(String(row.orderCount), { timeout: 60_000 });
+  for (const row of expected) await expect(page.locator('.grouped-result .bar-chart').last().locator('.bar-row').filter({ hasText: row.departmentName })).toContainText(String(row.orderCount), { timeout: 60_000 });
   await page.screenshot({ path: 'docs/acceptance/s7/saved-question-rerun.png', fullPage: true });
   const reruns = await withTenant(adminPool, tenantId, (db) => db.query<{ n: string }>("SELECT count(*)::text AS n FROM runs.model_provenance p JOIN runs.runs r USING(tenant_id,run_id) WHERE p.tenant_id=$1 AND r.conversation_id=$2", [tenantId, new URL(page.url()).pathname.split('/').at(-1)]));
   expect(reruns.rows[0]!.n).toBe('0');

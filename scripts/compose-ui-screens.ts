@@ -18,6 +18,13 @@ const pairs: Pair[] = [
   { out: 'dictionary-dbt', app: 'docs/acceptance/s9/dbt.png', prototype: 'docs/acceptance/s9/prototype/table.png' },
   { out: 'dictionary-tableau', app: 'docs/acceptance/s9/tableau.png', prototype: 'docs/acceptance/s9/prototype/proc-sql.png' },
   { out: 'controls', app: 'docs/acceptance/s10/controls.png', prototype: 'docs/acceptance/s10/prototype/controls.png' },
+  { out: 'home-plan-live', app: 'docs/acceptance/s11/plan-live.png', prototype: 'docs/acceptance/s11/prototype/plan-live.png' },
+  { out: 'home-sentence', app: 'docs/acceptance/s11/sentence.png', prototype: 'docs/acceptance/s11/prototype/answer.png' },
+  { out: 'home-small-table', app: 'docs/acceptance/s11/small-table.png', prototype: 'docs/acceptance/s11/prototype/answer.png' },
+  { out: 'home-chart', app: 'docs/acceptance/s11/chart.png', prototype: 'docs/acceptance/s11/prototype/answer.png' },
+  { out: 'home-compact-table', app: 'docs/acceptance/s11/compact-table.png', prototype: 'docs/acceptance/s11/prototype/answer.png' },
+  { out: 'home-follow-ups', app: 'docs/acceptance/s11/follow-ups.png', prototype: 'docs/acceptance/s11/prototype/answer.png' },
+  { out: 'home-refusal', app: 'docs/acceptance/s11/refusal.png', prototype: 'docs/acceptance/s11/prototype/answer.png' },
   { out: 'dictionary-er-neighbourhood', app: 'docs/acceptance/s9/er.png', prototype: 'docs/ui/screens/er-explorer.png' },
 ];
 const only = process.argv.slice(2);
