@@ -36,10 +36,12 @@ export async function readProfileState(pool: Pool, tenantId: string, connectionI
 /** Compares the state after a run with the state before it and records one finding per change (decision 48): new and
  * dropped tables, added, removed or retyped columns, large row-count changes, newly inferred sensitive columns, and
  * probable relationships and ID matches not yet reviewed. Only names and counts are stored, never values. */
-export async function recordFindings(pool: Pool, input: { tenantId: string; connectionId: string; jobId: string; before: ProfileState; scannedObjects: Set<string> }): Promise<number> {
+export async function recordFindings(pool: Pool, input: { tenantId: string; connectionId: string; jobId: string; before: ProfileState; scannedObjects: Set<string>; checked: number }): Promise<number> {
   const after = await readProfileState(pool, input.tenantId, input.connectionId);
   return withTenant(pool, input.tenantId, async (client) => {
     let count = 0;
+    const changed = new Set<string>();
+    let checked=input.checked;
     const add = async (kind: string, subject: string, detail: Record<string, unknown>, assetId: string | null, assertionId: string | null = null) => {
       const inserted = await client.query(
         `INSERT INTO profiler.findings(tenant_id,connection_id,job_id,kind,subject,detail,asset_id,assertion_id) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8) ON CONFLICT DO NOTHING`,
@@ -49,13 +51,15 @@ export async function recordFindings(pool: Pool, input: { tenantId: string; conn
     if (input.before.hadProfile) {
       for (const [name, table] of after.datasets) {
         const previous = input.before.datasets.get(name);
-        if (!previous) { await add('new_tables', name, { columns: table.columns.length, rows: table.rowCount }, table.assetId); continue; }
+        if (!previous) { changed.add(name); await add('new_tables', name, { columns: table.columns.length, rows: table.rowCount }, table.assetId); continue; }
         if (!input.scannedObjects.has(name)) continue; // unchanged objects are skipped by a nightly run
         const before = new Map(previous.columns.map((column) => [column.name, column.data_type]));
         const now = new Map(table.columns.map((column) => [column.name, column.data_type]));
         const added = [...now.keys()].filter((column) => !before.has(column));
         const removed = [...before.keys()].filter((column) => !now.has(column));
         const retyped = [...now.keys()].filter((column) => before.has(column) && before.get(column) !== now.get(column)).map((column) => ({ column, from: before.get(column), to: now.get(column) }));
+        if (added.length || removed.length || retyped.length ||
+          (previous.rowCount !== null && table.rowCount !== null && previous.rowCount !== table.rowCount)) changed.add(name);
         if (added.length || removed.length || retyped.length) await add('schema_change', name, { change: 'columns', added, removed, retyped }, table.assetId);
         if (table.rowCount === null) {
           await add('data_anomaly', name, { change: 'count_unavailable' }, table.assetId);
@@ -64,7 +68,11 @@ export async function recordFindings(pool: Pool, input: { tenantId: string; conn
           if (Math.abs(change) >= ROW_CHANGE_MIN && Math.abs(change) >= ROW_CHANGE_SHARE * Math.max(previous.rowCount, 1)) await add('data_anomaly', name, { change: 'row_count', before: previous.rowCount, after: table.rowCount }, table.assetId);
         }
       }
-      for (const [name, table] of input.before.datasets) if (!after.datasets.has(name)) await add('schema_change', name, { change: 'dropped' }, table.assetId);
+      for (const [name, table] of input.before.datasets) if (!after.datasets.has(name)) {
+        checked++;
+        changed.add(name);
+        await add('schema_change', name, { change: 'dropped' }, table.assetId);
+      }
     }
     // Newly inferred sensitive columns, to confirm or dismiss. Declared tags need no review.
     const fieldIds = await client.query<{ asset_id: string; qualified_name: string }>(
@@ -88,6 +96,8 @@ export async function recordFindings(pool: Pool, input: { tenantId: string; conn
       await add(row.relationship_type === 'SAME_AS' ? 'id_match' : 'probable_relationship', `${row.from_name} → ${row.to_name}`,
         { confidence: row.confidence === null ? null : Number(row.confidence), explanation: row.explanation }, null, row.assertion_id);
     }
+    await client.query('UPDATE profiler.jobs SET checked_count=$3,changed_count=$4 WHERE tenant_id=$1 AND job_id=$2',
+      [input.tenantId,input.jobId,checked,input.before.hadProfile ? changed.size : null]);
     return count;
   });
 }
@@ -95,7 +105,7 @@ export async function recordFindings(pool: Pool, input: { tenantId: string; conn
 export type FindingRow = { findingId: string; connectionId: string; sourceName: string; jobId: string; jobType: string; kind: string; subject: string; detail: Record<string, unknown>; foundAt: string; status: string; decidedAt: string | null };
 
 /** Findings for the Approval matrix with the latest nightly run's summary. */
-export async function listFindings(pool: Pool, tenantId: string): Promise<{ findings: FindingRow[]; lastNight: { jobIds: string[]; scheduled: boolean; startedAt: string | null; connections: number; profiled: number; listed: number } }> {
+export async function listFindings(pool: Pool, tenantId: string): Promise<{ findings: FindingRow[]; lastNight: { jobIds: string[]; scheduled: boolean; startedAt: string | null; connections: number; profiled: number; listed: number; checked: number | null; changed: number | null } }> {
   return withTenant(pool, tenantId, async (client) => {
     const rows = await client.query<{ finding_id: string; connection_id: string; source_name: string; job_id: string; job_type: string | null; kind: string; subject: string; detail: Record<string, unknown>; found_at: Date; status: string; decided_at: Date | null }>(
       `SELECT f.finding_id,f.connection_id,coalesce(nullif(c.display_name,''),c.connector_type) AS source_name,f.job_id,j.job_type,f.kind,f.subject,f.detail ||
@@ -112,14 +122,16 @@ export async function listFindings(pool: Pool, tenantId: string): Promise<{ find
        LEFT JOIN registry.connections tc ON tc.tenant_id=ta.tenant_id AND tc.connection_id=ta.source_id
        LEFT JOIN profiler.jobs j ON j.tenant_id=f.tenant_id AND j.job_id=f.job_id WHERE f.tenant_id=$1 ORDER BY f.found_at DESC,f.subject LIMIT 500`, [tenantId]);
     // "Last night" is the most recent nightly run of each connection within a day of the newest one.
-    const nightly = await client.query<{ job_id: string; scheduled: boolean; created_at: Date; listed_count: number | null; profiled_count: number | null }>(
+    const nightly = await client.query<{ job_id: string; scheduled: boolean; created_at: Date; listed_count: number | null; profiled_count: number | null; checked_count: number | null; changed_count: number | null }>(
       `WITH newest AS (SELECT scheduled FROM profiler.jobs WHERE tenant_id=$1 AND job_type='nightly' AND state='COMPLETED' ORDER BY created_at DESC LIMIT 1),
-       latest AS(SELECT DISTINCT ON (connection_id) job_id,scheduled,created_at,listed_count,profiled_count FROM profiler.jobs WHERE tenant_id=$1 AND job_type='nightly' AND state='COMPLETED' AND scheduled=(SELECT scheduled FROM newest) ORDER BY connection_id,created_at DESC)
+       latest AS(SELECT DISTINCT ON (connection_id) job_id,scheduled,created_at,listed_count,profiled_count,checked_count,changed_count FROM profiler.jobs WHERE tenant_id=$1 AND job_type='nightly' AND state='COMPLETED' AND scheduled=(SELECT scheduled FROM newest) ORDER BY connection_id,created_at DESC)
        SELECT * FROM latest WHERE created_at>=(SELECT max(created_at) FROM latest)-interval '1 day' ORDER BY created_at`, [tenantId]);
     return {
       findings: rows.rows.map((row) => ({ findingId: row.finding_id, connectionId: row.connection_id, sourceName: row.source_name, jobId: row.job_id, jobType: row.job_type ?? 'profile', kind: row.kind, subject: row.subject, detail: row.detail,
         foundAt: row.found_at.toISOString(), status: row.status, decidedAt: row.decided_at?.toISOString() ?? null })),
       lastNight: { scheduled: nightly.rows.at(-1)?.scheduled ?? false, jobIds: nightly.rows.map((row) => row.job_id), startedAt: nightly.rows.at(-1)?.created_at.toISOString() ?? null, connections: nightly.rows.length,
+        checked: nightly.rows.length && nightly.rows.every(row=>row.checked_count!==null) ? nightly.rows.reduce((sum,row)=>sum+row.checked_count!,0) : null,
+        changed: nightly.rows.length && nightly.rows.every(row=>row.changed_count!==null) ? nightly.rows.reduce((sum,row)=>sum+row.changed_count!,0) : null,
         profiled: nightly.rows.reduce((total, row) => total + Number(row.profiled_count ?? 0), 0), listed: nightly.rows.reduce((total, row) => total + Number(row.listed_count ?? 0), 0) },
     };
   });

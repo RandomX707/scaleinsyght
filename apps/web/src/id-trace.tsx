@@ -43,7 +43,12 @@ export function IdTrace(props: { entities: IdEntity[]; lookup: (value: string) =
     <article className="lineage-detail"><h2>Where {home.field.slice(home.field.lastIndexOf('.') + 1)} appears</h2>
       <p title="Matching values show that sources share an ID. They do not show where it was first created. The field with the largest measured set is used for comparison.">Origin unclear</p>
       <ol className="id-path">{ordered.map((field) => <li key={field.assetId}><div className="faint">{field.sourceName}</div><FieldName field={field.field} />
-        <p className="muted">{field.role === 'created' ? 'Used for comparing shared values' : [...new Set(field.evidence.map((item) => item.explanation ?? item.method).filter(Boolean))].slice(0, 2).join('; ') || 'Matches the comparison field'}</p>
+        <p className="muted" aria-label="Field coverage">{field.role === 'created'
+          ? `${count(field.distinct)} distinct values in the comparison field.`
+          : field.sharedWithHome === null ? 'Too many values to fingerprint.'
+          : `${count(field.sharedWithHome)} of ${count(field.distinct)} distinct values match the comparison field.`}</p>
+        {[...new Set(field.evidence.map(item => (item.explanation ?? item.method).trim().replace(/[.;]+$/, '')).filter(Boolean))].map(sentence =>
+          <p className="muted" key={sentence}>{sentence}.</p>)}
         <span className="id-badges"><Badge tone={field.role === 'key changed' ? 'warn' : field.role === 'created' ? 'primary' : 'good'}>{roleText[field.role]}</Badge>{field.probable && <Badge tone="warn">Probable, unverified</Badge>}</span></li>)}</ol></article>
     <article className="lineage-detail"><h2>Every place it appears</h2>
       <Table caption={`Every field holding ${entity.label}`} headers={['System', 'Field', 'What happens to the ID', 'Distinct values', 'Matching values']} rows={ordered.map((field) => [field.sourceName, <FieldName key="f" field={field.field} />,

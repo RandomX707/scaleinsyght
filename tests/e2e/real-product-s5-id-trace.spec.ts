@@ -39,6 +39,25 @@ test('s5_id_trace_groups_patient_encounter_and_mrn_ids_across_three_systems_and_
     await page.locator('.id-picker .ui-button').filter({ hasText: new RegExp(`^${expected.fields[0]!.field.split('.').at(-1)!} · `) }).click();
     await expect(page.locator('.id-tiles div').filter({ hasText: 'fields hold this ID' }).locator('b')).toHaveText(String(expected.fields.length));
     const table = page.locator('.lineage-detail table');
+    const cards = page.locator('.id-path li');
+    const comparison = cards.filter({has:page.getByText('Comparison field',{exact:true})});
+    const sourceLabels: Record<string,string> = {postgres:'PostgreSQL testbed',sql_server:'SQL Server hospital',excel:'Operations workbook'};
+    const homeSourceName=await comparison.locator('.faint').textContent();
+    const homeSource=Object.keys(sourceLabels).find(source=>sourceLabels[source]===homeSourceName);
+    const homeKey=`${homeSource}:${await comparison.locator('code').textContent()}`;
+    await expect(cards).toHaveCount(expected.fields.length);
+    for (const field of expected.fields) {
+      const card = cards.filter({has:page.locator('code').and(page.getByText(field.field,{exact:true}))})
+        .filter({has:page.getByText(sourceLabels[field.source]!,{exact:true})});
+      const fieldKey=`${field.source}:${field.field}`;
+      const distinct=field.distinct.toLocaleString('en-US');
+      const pair=expected.pairs.find(item=>(item.left===homeKey&&item.right===fieldKey)||(item.right===homeKey&&item.left===fieldKey));
+      if (fieldKey!==homeKey) expect(pair, `Truth for ${fieldKey} compared with ${homeKey}`).toBeDefined();
+      const coverage=fieldKey===homeKey ? `${distinct} distinct values in the comparison field.`
+        : `${pair!.shared.toLocaleString('en-US')} of ${distinct} distinct values match the comparison field.`;
+      await expect(card.getByLabel('Field coverage')).toHaveText(coverage);
+      await expect(card).not.toContainText('.;');
+    }
     for (const field of expected.fields) await expect(table.locator('tr').filter({ has: page.locator('code', { hasText: new RegExp(`^${field.field.replaceAll('.', '\\.')}$`) }) })).toContainText(field.distinct.toLocaleString('en-US'));
     await page.screenshot({ path: `docs/acceptance/s5/id-trace-${name}.png`, fullPage: true });
   }

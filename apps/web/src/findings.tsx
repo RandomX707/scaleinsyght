@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Badge, Button, EmptyState, Table } from '@scaleinsyght/ui';
 
 export type Finding = { findingId: string; connectionId: string; sourceName: string; jobId: string; jobType: string; kind: string; subject: string; detail: Record<string, unknown>; foundAt: string; status: string; decidedAt: string | null };
-export type Findings = { findings: Finding[]; lastNight: { jobIds: string[]; scheduled: boolean; startedAt: string | null; connections: number; profiled: number; listed: number } };
+export type Findings = { findings: Finding[]; lastNight: { jobIds: string[]; scheduled: boolean; startedAt: string | null; connections: number; profiled: number; listed: number; checked?: number | null; changed?: number | null } };
 
 const KIND: Record<string, { label: string; tone: 'primary' | 'good' | 'warn' | 'bad' | 'muted' }> = {
   schema_change: { label: 'Schema change', tone: 'bad' }, data_anomaly: { label: 'Data anomaly', tone: 'warn' }, new_tables: { label: 'New table', tone: 'primary' },
@@ -53,11 +53,14 @@ export function FindingsPanel(props: { data: Findings; decide: (findingId: strin
   const [busy, setBusy] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState('');
-  const [group, setGroup] = useState<'Changes' | 'Suggestions'>('Changes');
+  const [selectedGroup, setGroup] = useState<'Changes' | 'Suggestions' | null>(null);
   const lastNight = new Set(props.data.lastNight.jobIds);
-  const shown = props.data.findings.filter((finding) => findingGroup(finding.kind) === group).filter((finding) => tab === 'all' || (tab === 'night' ? lastNight.has(finding.jobId) : !lastNight.has(finding.jobId)));
-  const nightFindings = props.data.findings.filter((finding) => lastNight.has(finding.jobId));
-  const alerts = props.data.findings.filter((finding) => finding.status === 'open').length;
+  const eligible = props.data.findings.filter(finding => tab === 'all' || (tab === 'night' ? lastNight.has(finding.jobId) : !lastNight.has(finding.jobId)));
+  const changes = eligible.filter(finding => findingGroup(finding.kind) === 'Changes');
+  const suggestions = eligible.filter(finding => findingGroup(finding.kind) === 'Suggestions');
+  const group = selectedGroup ?? (changes.length || !suggestions.length ? 'Changes' : 'Suggestions');
+  const shown = group === 'Changes' ? changes : suggestions;
+  const open = (items: Finding[]) => items.filter(finding => finding.status === 'open').length;
   const act = async (findingId: string, decision: 'approved' | 'rejected') => { setBusy(findingId); try { await props.decide(findingId, decision); } finally { setBusy(''); } };
   const pending = shown.filter(finding => finding.status === 'open');
   const approveGroup = async () => {
@@ -69,10 +72,12 @@ export function FindingsPanel(props: { data: Findings; decide: (findingId: strin
   return <div className="findings">
     <article className="nightly-summary">
       <div><h2>{props.data.lastNight.scheduled ? "Last night's run" : 'Latest refresh'}</h2>{props.data.lastNight.startedAt
-        ? <p>{count(props.data.lastNight.connections)} {props.data.lastNight.connections === 1 ? 'source' : 'sources'} refreshed at {new Date(props.data.lastNight.startedAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}: {count(props.data.lastNight.profiled)} objects profiled of {count(props.data.lastNight.listed)} listed.</p>
+        ? <p>{count(props.data.lastNight.connections)} {props.data.lastNight.connections === 1 ? 'source' : 'sources'} refreshed at {new Date(props.data.lastNight.startedAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}: {props.data.lastNight.checked == null ? 'Comparison counts unavailable' : `${count(props.data.lastNight.checked)} objects checked, ${props.data.lastNight.changed == null ? 'change count unavailable' : `${count(props.data.lastNight.changed)} changed`}`}.</p>
         : <p>No nightly refresh has run yet. Each source is refreshed once a day after it is added.</p>}</div>
-      <Badge tone={alerts ? 'bad' : 'good'}>{alerts} open {alerts === 1 ? 'alert' : 'alerts'}</Badge>
-      <div className="nightly-stats"><div><strong>{count(nightFindings.length)}</strong><span>findings in this refresh</span></div><div><strong>{count(alerts)}</strong><span>waiting for review</span></div><div><strong>{count(props.data.findings.filter((finding) => finding.status !== 'open').length)}</strong><span>reviewed</span></div></div>
+      <div className="nightly-stats">
+        <Badge tone="warn">{count(open(changes))} Changes to review</Badge>
+        <Badge tone="muted">{count(open(suggestions))} Suggestions</Badge>
+      </div>
       {props.refreshNow && <Button size="small" disabled={refreshing} onClick={() => {
         setRefreshing(true); setRefreshError('');
         props.refreshNow!().catch((error: unknown) => setRefreshError(error instanceof Error ? error.message : 'The refresh could not be completed.')).finally(() => setRefreshing(false));
@@ -81,16 +86,16 @@ export function FindingsPanel(props: { data: Findings; decide: (findingId: strin
     </article>
     <p>Approving a finding records your review and leaves its verification status unchanged.</p>
     <div className="findings-tabs" role="tablist" aria-label="Findings">{([['night', 'Latest refresh'], ['earlier', 'Earlier'], ['all', 'All']] as const).map(([key, label]) =>
-      <Button key={key} role="tab" size="small" aria-selected={tab === key} className={`findings-tab${tab === key ? ' on' : ''}`} onClick={() => setTab(key)}>{label}</Button>)}</div>
+      <Button key={key} role="tab" size="small" aria-selected={tab === key} className={`findings-tab${tab === key ? ' on' : ''}`} onClick={() => {setTab(key);setGroup(null);}}>{label}</Button>)}</div>
     <div role="tablist" aria-label="Finding group">
-      {(['Changes', 'Suggestions'] as const).map(name => <Button key={name} role="tab" aria-selected={name === group} onClick={() => setGroup(name)}>{name}</Button>)}
+      {(['Changes', 'Suggestions'] as const).map(name => <Button key={name} role="tab" aria-selected={name === group} onClick={() => setGroup(name)}>{name} {count(name === 'Changes' ? changes.length : suggestions.length)}</Button>)}
     </div>
-    <Button size="small" disabled={Boolean(busy) || !pending.length} onClick={() => void approveGroup()}>Approve all {group.toLowerCase()}</Button>
+    {pending.length>0&&<Button size="small" disabled={Boolean(busy)} onClick={() => void approveGroup()}>Approve all {group.toLowerCase()}</Button>}
     {shown.length ? <Table caption="Findings" headers={['Finding', 'Kind', 'When found', 'Affects', '']} rows={shown.map((finding) => [
       <span key="t">{findingText(finding)}</span>, <Badge key="k" tone={KIND[finding.kind]?.tone ?? 'muted'}>{KIND[finding.kind]?.label ?? finding.kind}</Badge>,
       new Date(finding.foundAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }), findingSources(finding),
       finding.status === 'open' ? <span key="a" className="findings-actions"><Button size="small" variant="primary" disabled={Boolean(busy)} onClick={() => void act(finding.findingId, 'approved')}>{finding.kind === 'sensitive_column' ? 'Confirm' : 'Approve'}</Button><Button size="small" disabled={Boolean(busy)} onClick={() => void act(finding.findingId, 'rejected')}>{finding.kind === 'sensitive_column' ? 'Dismiss' : 'Reject'}</Button></span>
         : <Badge key="s" tone={finding.status === 'approved' ? 'good' : 'muted'}>{finding.status === 'approved' ? (finding.kind === 'sensitive_column' ? 'Confirmed' : 'Approved') : (finding.kind === 'sensitive_column' ? 'Dismissed' : 'Rejected')}</Badge>])} />
-      : <EmptyState title={tab === 'night' ? 'Nothing found in this refresh' : 'No findings here'} description="Findings appear when a refresh finds a schema change, a large row-count change, a new table, a sensitive column, a probable relationship or an ID match." />}
+      : <EmptyState title={`No ${group.toLowerCase()}${tab === 'night' ? ' in this refresh' : ''}`} description="Findings appear when a refresh finds a schema change, a large row-count change, a new table, a sensitive column, a probable relationship or an ID match." />}
   </div>;
 }

@@ -270,7 +270,7 @@ export async function runProfile(
   const definitions = await captureDefinitions(pool, input);
   const masterKey = process.env.ARTIFACT_MASTER_KEY ? Buffer.from(process.env.ARTIFACT_MASTER_KEY, 'base64') : undefined;
   const ids = await runIdAgent(pool, { ...input, ...(masterKey ? { masterKey } : {}) });
-  const findings = await recordFindings(pool, { tenantId: input.tenantId, connectionId: input.connectionId, jobId, before, scannedObjects: new Set(profiles.map(({ object }) => object.qualifiedName)) });
+  const findings = await recordFindings(pool, { tenantId: input.tenantId, connectionId: input.connectionId, jobId, before, checked: discovery.objects.length + discovery.unchangedObjects.length, scannedObjects: new Set(profiles.map(({ object }) => object.qualifiedName)) });
   // Every profiled database or workbook connection is refreshed nightly; the first refresh is a day after activation.
   await withTenant(pool, input.tenantId, (client) => client.query(
     `INSERT INTO profiler.nightly_schedules(tenant_id,connection_id,next_run_at) SELECT $1,$2,clock_timestamp()+interval '1 day'
