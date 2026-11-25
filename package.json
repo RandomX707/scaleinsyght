@@ -18,6 +18,7 @@
     "testbed:excel": "tsx testbed/excel/generate.ts",
     "testbed:up": "pnpm testbed:generate && tsx testbed/up.ts && pnpm testbed:sqlserver:up && pnpm testbed:truth",
     "testbed:truth": "tsx testbed/truth.ts",
+    "testbed:dbt": "tsx scripts/testbed-dbt.ts",
     "dbt:sample": "tsx scripts/run-sample-dbt.ts",
     "models:list": "tsx scripts/list-models.ts",
     "test:live": "tsx scripts/test-live.ts",

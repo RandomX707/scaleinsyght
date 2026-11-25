@@ -144,6 +144,13 @@ export class SqlServerConnector implements ReadOnlyConnector {
     return references;
   }
 
+  async viewDefinitions(): Promise<Array<{ qualifiedName: string; schema: string; definition: string | null }>> {
+    const rows = await (await this.request()).query<{ qualified_name: string; schema_name: string; definition: string | null }>(`SELECT TOP (${this.maxRows + 1}) s.name+'.'+v.name AS qualified_name,s.name AS schema_name,m.definition
+      FROM sys.views v JOIN sys.schemas s ON s.schema_id=v.schema_id LEFT JOIN sys.sql_modules m ON m.object_id=v.object_id ORDER BY qualified_name`);
+    if (rows.recordset.length > this.maxRows) throw new Error('sqlserver_connector_result_limit_exceeded');
+    return rows.recordset.map((row) => ({ qualifiedName: row.qualified_name, schema: row.schema_name, definition: row.definition }));
+  }
+
   async routines() {
     const rows = await (await this.request()).query<{ qualified_name: string; kind: 'function'|'procedure'; definition: string }>(`SELECT TOP (${this.maxRows + 1}) s.name+'.'+o.name AS qualified_name,CASE WHEN o.type='P' THEN 'procedure' ELSE 'function' END AS kind,COALESCE(OBJECT_DEFINITION(o.object_id),'') AS definition
       FROM sys.objects o JOIN sys.schemas s ON s.schema_id=o.schema_id WHERE o.type IN ('P','FN','IF','TF') ORDER BY s.name,o.name`);

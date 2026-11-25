@@ -156,6 +156,19 @@ export class PostgresConnector implements ReadOnlyConnector {
     return references;
   }
 
+  async viewDefinitions():Promise<Array<{qualifiedName:string;schema:string;definition:string|null}>>{
+    // With an empty search path, pg_get_viewdef qualifies every table with its schema, so lineage never guesses one.
+    const client=await this.pool.connect();let result;
+    try{
+      await client.query('BEGIN READ ONLY');await client.query("SET LOCAL search_path TO ''");
+      result=await client.query<{qualified_name:string;schema_name:string;definition:string|null}>(`SELECT schemaname||'.'||viewname AS qualified_name,schemaname AS schema_name,definition FROM pg_catalog.pg_views WHERE schemaname NOT IN ('pg_catalog','information_schema')
+        UNION ALL SELECT schemaname||'.'||matviewname,schemaname,definition FROM pg_catalog.pg_matviews ORDER BY 1 LIMIT $1`,[this.maxRows+1]);
+      await client.query('COMMIT');
+    }catch(error){await client.query('ROLLBACK').catch(()=>undefined);throw error;}finally{client.release();}
+    if(result.rows.length>this.maxRows)throw new Error('postgres_connector_result_limit_exceeded');
+    return result.rows.map(row=>({qualifiedName:row.qualified_name,schema:row.schema_name,definition:row.definition}));
+  }
+
   async routines():Promise<Array<{qualifiedName:string;kind:'function'|'procedure';definition:string}>>{
     const result=await this.pool.query<{qualified_name:string;kind:'function'|'procedure';definition:string}>(`SELECT n.nspname||'.'||p.proname||'('||pg_get_function_identity_arguments(p.oid)||')' AS qualified_name,
       CASE WHEN p.prokind='p' THEN 'procedure' ELSE 'function' END AS kind,pg_get_functiondef(p.oid) AS definition

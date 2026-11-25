@@ -497,6 +497,9 @@ importers:
       '@scaleinsyght/db':
         specifier: workspace:*
         version: link:../db
+      '@scaleinsyght/graph':
+        specifier: workspace:*
+        version: link:../graph
       pg:
         specifier: ^8.16.3
         version: 8.23.1

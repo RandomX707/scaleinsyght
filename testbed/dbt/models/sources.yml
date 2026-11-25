@@ -1,0 +1,15 @@
+version: 2
+sources:
+  - name: hospital
+    schema: public
+    tables:
+      - name: departments
+      - name: providers
+      - name: encounters
+      - name: orders
+  # Billing tables are visible to the dbt project but not to the product's read-only role, so lineage
+  # through them must end in an explicit gap, never an invented edge.
+  - name: billing
+    schema: billing
+    tables:
+      - name: claims
