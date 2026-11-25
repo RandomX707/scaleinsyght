@@ -105,7 +105,8 @@ export function decodePlannerOutput(text: string, catalog: PlannerCatalog, joins
   const parsed = JSON.parse(text) as {declaration?: PlanDeclaration; intents?: Array<Record<string, unknown>>; lineage?: {source_index?: unknown; asset?: unknown; direction?: unknown} | null};
   const declaration = parsed.declaration;
   if (!declaration || typeof declaration.answerable !== 'boolean' || typeof declaration.comparison !== 'boolean') throw new Error('missing_declaration');
-  if (!Array.isArray(parsed.intents) || parsed.intents.length > catalog.length) throw new Error('invalid_source_list');
+  if (!Array.isArray(parsed.intents)) throw new Error('invalid_source_list');
+  if (parsed.intents.length > catalog.length) throw new Error('invalid_source_list: return at most one step per source; when no single step kind computes the requested measure, declare the question unanswerable');
   if (parsed.lineage != null) {
     // Lineage is read from recorded evidence, never computed from source data: no query intents go with it.
     const index = Number(parsed.lineage.source_index); const source = catalog[index]; const asset = String(parsed.lineage.asset); const direction = parsed.lineage.direction;
@@ -126,7 +127,7 @@ export function decodePlannerOutput(text: string, catalog: PlannerCatalog, joins
   const steps = parsed.intents.map(item => {
     const index = Number(item.source_index);
     const source = catalog[index];
-    if (!source || seen.has(index)) throw new Error('invalid_or_duplicate_source');
+    if (!source || seen.has(index)) throw new Error('invalid_or_duplicate_source: return at most one step per source; when no single step kind computes the requested measure, declare the question unanswerable');
     seen.add(index);
     const declared = item.declared as {subject_table?: string; measure?: string; measure_column?: string | null; grouping_column?: string | null; filter_columns?: string[]} | undefined;
     if (!declared || !Array.isArray(declared.filter_columns)) throw new Error('missing_step_declaration');
