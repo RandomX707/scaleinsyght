@@ -1,6 +1,6 @@
-# Handover, 25 Nov 2026 (13:45 IST)
+# Handover, 25 Nov 2026 (evening IST)
 
-Stopped at Yashaswi's request after S6 merged. S7 is saved as work in progress on its branch. Nothing else is running.
+Updated by Claude Code after #35. S7 (Codex) and S8 (Claude Code) are merged. The review app on 4284 runs `main` at `de5daa6`.
 
 ## Merged to `main` today
 
@@ -13,12 +13,22 @@ Stopped at Yashaswi's request after S6 merged. S7 is saved as work in progress o
 | #21 | d17611c | S4 lineage: parsed view SQL, dbt artifact upload, Lineage graph screen, lineage questions in chat (decision 46) |
 | #22 | f0570d7 | S5 ID agent and ID trace screen (decision 47) |
 | #23 | 849255f | S6 nightly refresh, findings, audited tag review, Approval matrix findings (decision 48); connector pools survive closed connections |
-
-So **#17 and #18 are both merged.**
+| #25 | bec8e94 | `SI_TEST_DATABASE` and E2E ports configurable per worktree |
+| #24 | 6806471 | Codex's review feedback (merged by Claude Code after rerunning gates on the newer main) |
+| #27 | 7ef50e0 | Absolute `ARTIFACT_VOLUME_PATH` required; a missing workbook file returns "Workbook file not found, upload it again"; K5 (heldout2 reuse) |
+| #26 | a9d1eab | K4: FlowSpec handoff race fixed; c5 tests isolated; ID fingerprint queries no longer time out |
+| #28 | f6fb67a | S8 backend: Tableau `.twb` reader and report-to-column lineage (decision 50) |
+| #29 | be946bc | S8 UI: Tableau in Add connector and its card; CI prints slow query plans on contract failures |
+| #30 | 7575981 | Claims never take a step whose run has ended (migration 035, claims); mixed-tenant queue test; parser wrapper stops its child |
+| #31 | 5231515 | S7 saved questions, reports and exports (Codex; migration 035, saved reuse) |
+| #32 | e7937d5 | K2 (not reproduced; warehouse login and Q46 to Q55) and the 5,000-table scale test with its fixes (decision 51; `docs/phases/scale-test.md`) |
+| #33 | d435b7e | CI on pull requests and pushes to main only |
+| #34 | adf1cfe | Agents checked when a step runs; ID and ID trace agents per tenant (migration 036, decision 52) |
+| #35 | de5daa6 | heldout2 retired; heldout3 added (first runs 9/0/0/1 with and without warehouse marts); K2 closed |
 
 ## Review app on 4284 and riverside-health
 
-- **4284 does not run the latest `main`.** It runs 5f1930b (after #20), started from the main checkout (`../scaleinsyght`) with API 3000, worker 3001, web 4284 and sqlparse 8011; `scale_insyght` was migrated to 031. To bring it to 849255f: in `../scaleinsyght` run `git pull --ff-only`, `pnpm install`, `pnpm db:migrate` (adds 032), then restart the four processes. The script I used is `restart-review.sh` in my scratchpad (not in the repo); its steps are those four plus starting `apps/api/src/main.ts`, `apps/worker/src/main.ts`, the web dev server on 4284 and `pnpm dev:sqlparse`. Until it restarts, 4284 also lacks the pool fix from #23, so a source database that drops connections can crash its API.
+- **4284 runs `main` at `de5daa6`** from `../scaleinsyght-review` (detached): API 3000, worker 3001, web 4284, sqlparse 8011, started with `nohup` by Claude Code (logs in its scratchpad). `scale_insyght` is migrated to 036; backups were taken before the 035 and 036 migrations (Claude Code's scratchpad). Riverside-health now has its ID and ID trace agents. Its workbook refresh and ID trace (3 systems) were checked by running the same code; a browser check needs the riverside-health password.
 - **riverside-health password:** Yashaswi's password (`yashaswi@riverside-health.test`) was reset with `pnpm tenant:reset-password` at about 06:40 IST and given to Yashaswi once in the chat at handover. It is not in the repo. If it is lost, reset it again with the same command.
 - **riverside-health sources:** PostgreSQL (`pgs`) and SQL Server (`sql`) were already connected by Yashaswi; the Operations workbook was added through Add connector, and PostgreSQL and SQL Server were re-profiled so display labels work. No dbt project, no Tableau and no nightly refresh have been run there yet (`profiler.nightly_schedules` is backfilled by migration 032 when 4284 is migrated). Drafts Yashaswi created were left alone.
 - `../scaleinsyght/.env` was changed: `MODEL_DAILY_COST_CAP_USD=5`, `MODEL_DAILY_USER_COST_CAP_USD=1`, token cap removed (backup in my scratchpad as `main-env-backup`).
@@ -34,11 +44,20 @@ So **#17 and #18 are both merged.**
 
 ## Open problems and known issues
 
-- `docs/known-issues.md` on `main`: K1 (Q31 summary view, fixed by #19), K2 (held-out planner refusals when a PostgreSQL source exposes dbt staging views and marts; the testbed now hides the `analytics` schema from the product login; undiagnosed because held-out questions are not read), K3 (one held-out run failed instead of refusing on S4; later full evals were back to 9 correct and 1 refused), K4 (flaky `c8_single_use_grant_race_delivers_exactly_once`). Also seen once and passing on rerun: `c5_racing_workers_claim_step_once_and_fence_completion`.
+- `docs/known-issues.md`: K1 fixed; K2 closed, not reproduced (development and heldout3 score the same with and without dbt marts); K3 open; K4 partly fixed (an intermittent `c2_postgres_connection_credentials` timeout was seen once in CI after the fix; CI now prints slow plans when contracts fail); K5 heldout2 retired; K6 two conditions on one table is not a supported query shape (Q52).
 - The testbed's `pnpm test:testbed` now runs `pnpm testbed:dbt` first, which rebuilds the dbt `analytics` and `billing` schemas in `si_testbed_pg` and revokes the read-only login's access to them.
-- Running anything against `si_test` while another suite is using it breaks both (one collision today). Run suites one at a time.
-- Model spend today: USD 12.91 of the USD 20 cap.
-- Worktrees: `../scaleinsyght-eval` is on `s6-nightly` (merged); `../scaleinsyght-chat` is on `s7-saved-exports`. Testbed ports 3340, 3341, 4290 and parser 8021; eval parser 8041.
+- Running anything against `si_test` while another suite is using it breaks both. Each worktree can set `SI_TEST_DATABASE` (Claude Code uses `si_test_cc`) and its own ports (Claude Code: API 3350, worker 3351, web 4295, parser 8031).
+- **Migrations:** `main` has two 035s (`035_claims_need_an_active_run`, `035_saved_reuse`); both are applied on `scale_insyght`, so neither may be renamed. The next migration is 037. Migrations cannot see tenant rows (row security is forced even for the owner): 036 shows how to backfill with policies for the migration role that live only inside its transaction. 032's backfill of nightly schedules inserted nothing for this reason.
+- Every worktree's `.env` sets `ARTIFACT_VOLUME_PATH=/Users/yashaswiram/.scaleinsyght/artifacts`.
+- The model ledger (`core.model_usage`) lives in the test databases, which the gates reset, so spend has to be tracked from run logs. Claude Code spent about USD 5 today (evals, the scale test and two walkthroughs); with Codex's USD 12.91 plus later runs, the day stays under the USD 30 cap.
+- Worktrees: `../scaleinsyght-review` serves 4284; `../scaleinsyght-cc` and `../scaleinsyght-cc-s8` are Claude Code's; `../scaleinsyght-chat` (S7, merged) and `../scaleinsyght-eval` are Codex's. Orphaned SQL parsers from before #30 may still hold ports 8032 and 8033 (in the chat and eval worktrees); `startSqlParser` treats any server on its port as its own, so stop them before relying on those ports.
+
+## Claude Code queue (in the user's order)
+
+1. Done: K4 follow-ups, K2 and the scale test, CI triggers, agents at execution, heldout3.
+2. **Dictionary rebuild** to match the prototype for every connector type (databases, Excel, dbt with descriptions and tests, Tableau with formulas), landing summary, Standard and Custom, search including SQL, object tabs, and an offline interactive HTML export with an audit record and a Playwright check with no network. Note: decision 50 kept Tableau formulas out of storage; the Dictionary needs them, so they will be stored as descriptive metadata and scrubbed before any model input (contract 7).
+3. **Home as an analytical chat**: prose first, display chosen by code from the declared intent, one collapsed "SQL, sources and lineage" drawer, follow-up reshaping without rerunning, screenshots and a walkthrough per rule.
+4. From the scale test, not yet done: ER explorer and Dictionary payloads at 5,000 tables, per-table profiling time, planner pre-model catalog reads.
 
 ## Codex continuation
 
