@@ -33,7 +33,7 @@ const current = (rows: Flow[], to: string, granularity = 'field') => rows.filter
 async function gaps(): Promise<string[]> {
   return withTenant(adminPool, tenantId, async (db) => (await db.query<{ reason: string }>(
     `SELECT DISTINCT g.reason FROM graph.gaps g JOIN graph.assets a ON a.tenant_id=g.tenant_id AND a.asset_id=ANY(g.between_asset_ids)
-     WHERE g.tenant_id=$1 AND a.source_id=$2 AND g.closed_by_assertion_id IS NULL ORDER BY 1`, [tenantId, tableauId])).rows.map((row) => row.reason));
+     WHERE g.tenant_id=$1 AND a.source_id=$2 AND g.closed_by_assertion_id IS NULL`, [tenantId, tableauId])).rows.map((row) => row.reason).sort());
 }
 const upload = (workbook: string) => server.inject({ method: 'POST', url: `/api/connections/${tableauId}/tableau-workbook`, headers: { cookie }, payload: { workbook } });
 
