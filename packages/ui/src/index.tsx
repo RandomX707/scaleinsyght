@@ -31,6 +31,19 @@ export function Tabs({ label, items, selected, onSelect }: { label: string; item
   return <div className="ui-tabs" role="tablist" aria-label={label}>{items.map(item => <button className="ui-tab" type="button" role="tab" key={item.id} aria-selected={selected === item.id} onClick={() => onSelect(item.id)}>{item.label}</button>)}</div>;
 }
 
+/** Two or more mutually exclusive options in a pill-shaped track (prototype .seg). */
+export function SegmentedControl({ label, items, selected, onSelect }: { label: string; items: Array<{ id: string; label: ReactNode }>; selected: string; onSelect: (id: string) => void }) {
+  return <div className="ui-segmented" role="tablist" aria-label={label}>{items.map(item => <button className="ui-segmented__item" type="button" role="tab" key={item.id} aria-selected={selected === item.id} onClick={() => onSelect(item.id)}>{item.label}</button>)}</div>;
+}
+
+/** Open documents as pill tabs, each closable except the fixed ones (prototype .dtab). */
+export function PillTabs({ label, items, selected, onSelect, onClose }: { label: string; items: Array<{ id: string; label: string; closable?: boolean }>; selected: string; onSelect: (id: string) => void; onClose?: (id: string) => void }) {
+  return <div className="ui-pill-tabs" role="tablist" aria-label={label}>{items.map(item => <span key={item.id} className={`ui-pill-tab${selected === item.id ? ' is-selected' : ''}`}>
+    <button type="button" role="tab" aria-selected={selected === item.id} onClick={() => onSelect(item.id)}>{item.label}</button>
+    {item.closable && onClose && <button type="button" className="ui-pill-tab__close" aria-label={`Close ${item.label}`} onClick={() => onClose(item.id)}>×</button>}
+  </span>)}</div>;
+}
+
 export function Badge({ tone = 'primary', children }: { tone?: 'primary' | 'good' | 'warn' | 'bad' | 'muted'; children: ReactNode }) { return <span className={`ui-badge${tone === 'primary' ? '' : ` ui-badge--${tone}`}`}>{children}</span>; }
 
 export function Table({ headers, rows, caption }: { headers: ReactNode[]; rows: ReactNode[][]; caption?: string }) {

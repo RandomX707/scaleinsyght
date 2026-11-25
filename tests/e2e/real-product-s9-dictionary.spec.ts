@@ -21,7 +21,8 @@ const truth = JSON.parse(readFileSync('testbed/dictionary/truth.json', 'utf8')) 
 };
 const excel = (JSON.parse(readFileSync('testbed/truth.json', 'utf8')) as { excel: { file: string; sheets: Array<{ name: string; columns: string[]; headers: string[] }> } }).excel;
 const short = (name: string) => name.replace(/^(dbo|public)\./, '');
-const screen = (name: string) => `docs/ui/screens/dictionary-${name}.png`;
+// App captures; scripts/compose-ui-screens.ts pairs them with the prototype in docs/ui/screens.
+const screen = (name: string) => `docs/acceptance/s9/${name}.png`;
 
 async function connect(page: Page, data: Record<string, unknown>, workbook?: Buffer): Promise<string> {
   const draft = await page.request.post('/api/connections', { data }); expect(draft.status()).toBe(201);
@@ -78,10 +79,18 @@ test('s9_dictionary_matches_testbed_truth_for_every_connector_type_and_exports_o
   await expect(header).toContainText('Drafted by Scale Insyght · waiting for approval');
   await expect(page.locator('.dict-card', { hasText: 'Keys and indexes' })).toContainText('patients.patient_id');
   await page.screenshot({ path: screen('table'), fullPage: false });
+  // Show in ER diagram opens the ER explorer on this table and its neighbours.
+  await header.getByRole('button', { name: 'Show in ER diagram' }).click();
+  await expect(page.getByText('Showing dbo.encounters and its direct neighbours')).toBeVisible();
+  await expect(page.locator('.er-node h3')).toContainText(['dbo.encounters']);
+  await page.screenshot({ path: screen('er') });
+  await page.goBack(); await expect(page.locator('.dict-card').first()).toBeVisible();
   await side(page).getByRole('tab', { name: /^Custom/ }).click();
   await expect.poll(() => names(page, 'Custom tables')).toEqual(truth.sqlserver.customTables.map(short).sort());
   await expect.poll(() => names(page, 'Custom views')).toEqual(truth.sqlserver.customViews.map(short).sort());
   for (const [name, procedure] of Object.entries(truth.sqlserver.procedures)) await expect.poll(() => names(page, procedure.group), name).toContain(short(name));
+  const routines = Object.values(truth.sqlserver.procedures); const encrypted = routines.filter((procedure) => procedure.encrypted).length;
+  await expect(side(page)).toContainText(`SQL captured for ${routines.length - encrypted} of ${routines.length} procedures and functions · ${encrypted} encrypted`);
   const loader = 'dbo.usp_X_LOAD_READMIT_FLAGS'; const expected = truth.sqlserver.procedures[loader]!;
   await side(page).getByRole('button', { name: short(loader), exact: true }).click();
   const what = page.locator('.dict-card', { hasText: 'What it does' });
@@ -108,6 +117,7 @@ test('s9_dictionary_matches_testbed_truth_for_every_connector_type_and_exports_o
   await side(page).getByRole('button', { name: short(secret), exact: true }).click();
   await page.getByRole('tab', { name: 'SQL' }).click();
   await expect(page.locator('.dict-encrypted')).toContainText('Encrypted');
+  await expect(header).toContainText('Encrypted');
   await page.screenshot({ path: screen('encrypted') });
   await page.getByLabel('Search tables, columns or SQL code').fill(truth.sqlserver.sqlSearch.query);
   const sqlGroup = group(page, 'In SQL code');

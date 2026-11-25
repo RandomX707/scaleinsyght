@@ -1,7 +1,7 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { Badge, Button, Card, Collapsible, EmptyState, FileInput, Input, Logo, Modal, PageHeader, PoweredBy, Select, Table, Tabs, Textarea, Toast } from '../src/index.js';
+import { Badge, Button, Card, PillTabs, SegmentedControl, Collapsible, EmptyState, FileInput, Input, Logo, Modal, PageHeader, PoweredBy, Select, Table, Tabs, Textarea, Toast } from '../src/index.js';
 import { prototypeTokens } from '../src/tokens.js';
 
 describe('prototype-aligned shared UI', () => {
@@ -44,5 +44,14 @@ describe('prototype-aligned shared UI', () => {
     expect(markup).toContain('Choose file');
     expect(markup).toContain('ui-file-input__native');
     expect(markup).toContain('Choose file');
+  });
+  it('ui_segmented_control_and_pill_tabs_mark_the_selection_and_label_close_buttons', () => {
+    const segmented = renderToStaticMarkup(<SegmentedControl label="Standard or custom" items={[{ id: 'standard', label: 'Standard' }, { id: 'custom', label: 'Custom' }]} selected="custom" onSelect={() => undefined} />);
+    expect(segmented).toContain('role="tablist" aria-label="Standard or custom"');
+    expect(segmented).toMatch(/aria-selected="false"[^>]*>Standard<\/button>.*aria-selected="true"[^>]*>Custom<\/button>/);
+    const pills = renderToStaticMarkup(<PillTabs label="Open objects" items={[{ id: 'a', label: 'Overview' }, { id: 'b', label: 'patients', closable: true }]} selected="b" onSelect={() => undefined} onClose={() => undefined} />);
+    expect(pills).toContain('aria-label="Close patients"');
+    expect(pills.match(/aria-label="Close/g)).toHaveLength(1);
+    expect(pills).toContain('class="ui-pill-tab is-selected"');
   });
 });

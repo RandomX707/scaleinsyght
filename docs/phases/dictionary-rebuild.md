@@ -122,3 +122,33 @@ Status: **approved 25 Nov 2026 with Option A** (section 4; decision 53). Require
 - **Option B.** Store raw text, classify it as RESTRICTED when it contains literals, and scrub only before model input. This breaks non-negotiable 6 when a literal is an identifier, so it would need an approved exception.
 
 **Approved: Option A** (decision 53). Stored text is scrubbed; "Show original" fetches the live definition and stores nothing. Tableau formulas are shown scrubbed only.
+
+## 5. As built (25 Nov 2026)
+
+**API, differences from 2.6.**
+- Objects are addressed by qualified name, not asset ID, because procedures, functions and Tableau calculated fields are stored definitions, not graph assets:
+  - `GET /api/connections/:id/dictionary/objects?tab=standard|custom&q=&group=&offset=` (200 per group, "Show more" pages one group);
+  - `GET /api/connections/:id/dictionary/object?name=`;
+  - `POST /api/connections/:id/dictionary/description` with `{ name, action: 'approve'|'edit', text? }`;
+  - `GET /api/connections/:id/dictionary/original?name=` ("Show original"; live, `cache-control: no-store`, nothing stored);
+  - ER: `GET /api/connections/:id/er/neighbourhood?focus=&depth=1|2&possible=` (at most 40 tables drawn, the rest counted) and `GET /api/connections/:id/er/tables?q=`.
+- `GET .../dictionary/export?object=` exports one table in Markdown or Word; without it, the whole source (S7, unchanged).
+
+**Storage.** Migration 037 as planned, plus `graph.relationships` index `graph_relationships_structural_to` for field-to-table lookups at 5,000 tables. Definitions are captured during every profile and nightly run (`captureDefinitions`); unchanged text keeps its version. Draft descriptions are written by code from names, keys and parsed SQL (no model, no data values) the first time an object is opened, and are refreshed while still unapproved.
+
+**Scrubbing (decision 53), one addition.** `scrubDefinition` replaces strings and numbers and also hides comment text (`-- <comment>`, `/* <comment> */`, Tableau `// <comment>`), keeping line breaks so SQL-search line numbers still match. Comments are free text and can name people or values; this is stricter than the decision, not a change to it.
+
+**Testbed.** `pnpm testbed:dictionary` builds `si_testbed_dictionary` on the SQL Server testbed (standard tables, X_ tables, a loader, MERGE, report, data check, archive, a procedure calling another, an encrypted procedure, a custom view, a hard-coded identifier literal). It maps the existing read-only login into the new database without changing its password, and is part of `pnpm testbed:up`. The dbt testbed has a `schema.yml` with descriptions and tests; `pnpm testbed:dbt -- --docs-only` regenerates the artifacts without rebuilding schemas. Truth: `testbed/dictionary/truth.json`.
+
+**Measured on the 5,000-table catalog** (`pnpm test:scale -- --no-planner`, first view = navigation to network idle, bytes = API response bodies):
+
+| Page | Before | After | Target |
+|---|---|---|---|
+| Dictionary | 4.7 MB in one response | 633 ms, 14.5 KB over 9 calls | under 1.5 s and 300 KB |
+| ER explorer | 5.3 MB (whole catalog) plus 5.1 MB of lineage assets | 739 ms, 40 KB over 8 calls | under 1.5 s and 300 KB |
+
+The ER page also stopped loading the Lineage workspace's asset, report and snapshot lists, which only the impact, compare and BI reports views use.
+
+**Tests.** Unit `tests/unit/dictionary.test.ts`, `scrub-definition.test.ts`; contract `tests/contracts/c7_dictionary_export_and_definitions.test.ts` (c7 storage and export, c1 isolation); testbed `tests/testbed/c7_dictionary_sqlserver.test.ts` (including c6 approval with person and time); walkthrough `tests/e2e/real-product-s9-dictionary.spec.ts` (all five connector types and the offline export with every request refused). S1, S2, S3 and S7 were updated for the new page and the neighbourhood ER view.
+
+**Not built (recorded in docs/ui/ui-report.md):** primary keys and indexes, SQL Agent/SSIS/SSRS "Run by", dependencies of encrypted procedures from the catalog, SSIS packages (no testbed source), and the ER grid layout.

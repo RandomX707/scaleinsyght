@@ -13,6 +13,9 @@ export type HtmlSource = { name: string; type: string; objects: HtmlObject[]; re
 export function scriptJson(value: unknown): string {
   return JSON.stringify(value).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
 }
+/** A form control in the exported file. The file is a standalone document, not the React app, so it cannot use the
+ * shared components; controls are built here so their markup stays in one place. */
+const control = (tag: 'input' | 'select' | 'button', attributes: string, inner = '') => tag === 'input' ? `<${tag} ${attributes}>` : `<${tag} ${attributes}>${inner}</${tag}>`;
 const escapeHtml = (value: string) => value.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]!);
 
 const STYLE = `
@@ -92,12 +95,12 @@ export function renderDictionaryHtml(input: { generatedAt: string; sources: Html
 <body><header><h1>Data dictionary</h1><p>Exported from Scale Insyght on ${escapeHtml(input.generatedAt.slice(0, 16).replace('T', ' '))} UTC · ${input.sources.length.toLocaleString('en-US')} ${input.sources.length === 1 ? 'source' : 'sources'} · ${objectCount.toLocaleString('en-US')} objects.
 Metadata only: no row data. Statistics withheld in the product are withheld here. Definitions show literal values as placeholders.</p></header>
 <main><aside class="panel" aria-label="Filters">
-<label for="q">Search names, columns and SQL</label><input id="q" type="search" autocomplete="off">
-<label for="source">Source</label><select id="source"><option value="all">All sources</option></select>
-<label for="side">Standard or custom</label><select id="side"><option value="all">All</option><option value="standard">Standard</option><option value="custom">Custom</option></select>
-<label for="kind">Kind</label><select id="kind"><option value="all">All kinds</option></select>
+<label for="q">Search names, columns and SQL</label>${control('input', 'id="q" type="search" autocomplete="off"')}
+<label for="source">Source</label>${control('select', 'id="source"', '<option value="all">All sources</option>')}
+<label for="side">Standard or custom</label>${control('select', 'id="side"', '<option value="all">All</option><option value="standard">Standard</option><option value="custom">Custom</option>')}
+<label for="kind">Kind</label>${control('select', 'id="kind"', '<option value="all">All kinds</option>')}
 <p class="count" id="count" role="status"></p>
-<p><button type="button" id="expand">Expand all</button> <button type="button" id="collapse">Collapse all</button></p>
+<p>${control('button', 'type="button" id="expand"', 'Expand all')} ${control('button', 'type="button" id="collapse"', 'Collapse all')}</p>
 ${outOfScope.length ? `<details><summary>Out of scope (${outOfScope.length.toLocaleString('en-US')}), name and type only</summary><ul>${outOfScope.map((item) => `<li class="mono">${escapeHtml(item.source)} · ${escapeHtml(item.name)} · ${escapeHtml(item.type)}</li>`).join('')}</ul></details>` : ''}
 </aside><section id="objects" aria-label="Objects"></section></main>
 <script type="application/json" id="dictionary-data">${scriptJson({ sources: input.sources.map((source) => ({ ...source, outOfScope: undefined })) })}</script>

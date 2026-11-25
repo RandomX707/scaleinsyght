@@ -249,7 +249,11 @@ export function registerDictionaryRoutes(app: FastifyInstance, deps: DictionaryD
         // "In SQL code" covers both tabs, as in the prototype.
         sqlHits = rows.rows.map((row) => ({ name: row.qualified_name, kind: row.kind, matches: row.scrubbed_text.toLowerCase().split(search.toLowerCase()).length - 1, lines: sqlSnippets(row.scrubbed_text, search) }));
       }
-      return { tab, hasVendorDictionary, counts: { standard: objects.filter((object) => !object.custom).length, custom: objects.filter((object) => object.custom).length }, groups, sqlHits };
+      // How much procedure SQL could be read here, as the prototype shows on the Custom tab.
+      const coverage = (await client.query<{ routines: number; encrypted: number }>(`SELECT count(*)::int AS routines,count(*) FILTER (WHERE encrypted)::int AS encrypted FROM graph.definitions
+        WHERE tenant_id=$1 AND source_id=$2 AND active AND kind IN ('procedure','function','package')`, [current.tenantId, source.connection_id])).rows[0]!;
+      return { tab, hasVendorDictionary, counts: { standard: objects.filter((object) => !object.custom).length, custom: objects.filter((object) => object.custom).length }, groups, sqlHits,
+        sqlCoverage: coverage.routines ? { routines: coverage.routines, captured: coverage.routines - coverage.encrypted, encrypted: coverage.encrypted } : null };
     });
     if (!body) return reply.code(404).send({ error: 'connection_not_found' });
     return reply.send(body);
@@ -368,7 +372,7 @@ export async function erNeighbourhood(client: PoolClient, input: { tenantId: str
      ORDER BY r.relationship_id`, [input.tenantId, input.connectionId, tables, input.possible])).rows;
   const tables = new Set([focus]); let frontier = [focus]; const relationships = new Map<string, Awaited<ReturnType<typeof links>>[number]>();
   let hidden = 0;
-  for (let level = 0; level < input.depth && frontier.length; level++) {
+  for (let level = 0; input.depth > level && frontier.length; level++) {
     const next: string[] = [];
     for (const link of await links(frontier)) {
       relationships.set(link.relationship_id, link);

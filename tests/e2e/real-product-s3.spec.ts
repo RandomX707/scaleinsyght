@@ -31,7 +31,7 @@ test('s3_empty_tenant_uploads_workbook_profiles_and_answers_with_evidence', asyn
   const tenantId = `s3-${randomUUID()}`; const email = `analyst@${tenantId}.test.invalid`; const password = 's3-testbed-walkthrough-password-2026';
   await createTenant(adminPool, { tenantId, name: 'Workbook test workspace', displayName: 'Test Analyst', email, password });
   await page.goto(`/login?tenant=${tenantId}`); await page.getByLabel('Email').fill(email); await page.getByLabel('Password').fill(password); await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Good afternoon, Test Analyst' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /^Good (morning|afternoon|evening), Test Analyst$/ })).toBeVisible();
 
   // A file that is not an .xlsx workbook is refused with a clear reason and nothing is stored.
   const rejectedDraft = await page.request.post('/api/connections', { data: { connectorType: 'excel', displayName: 'Not a workbook' } });
@@ -110,9 +110,9 @@ test('s3_empty_tenant_uploads_workbook_profiles_and_answers_with_evidence', asyn
   for (const sheet of truth.sheets) { const card = await openSheet(sheet.name); await expect(card.locator('tbody tr')).toHaveCount(sheet.columnCount); }
   const visits = await openSheet('Visits');
   const dischargedRate = (truth.nullRates['Visits.discharged_on']! * 100).toLocaleString('en-US', { maximumFractionDigits: 1 });
-  const discharged = visits.locator('tbody tr').filter({ hasText: 'Discharged On' });
-  await expect(discharged).toHaveCount(1);
-  await expect(discharged).toContainText(`${dischargedRate}%`);
+  const dischargedRow = visits.locator('tbody tr').filter({ hasText: 'Discharged On' });
+  await expect(dischargedRow).toHaveCount(1);
+  await expect(dischargedRow).toContainText(`${dischargedRate}%`);
   const patients = await openSheet('Patients');
   await expect(patients.locator('tbody tr').filter({ hasText: 'Phone' })).toContainText('Withheld');
   await expect(patients.locator('tbody tr').filter({ hasText: 'Phone' })).not.toContainText('%');
