@@ -35,6 +35,9 @@ export class PostgresConnector implements ReadOnlyConnector {
     if(!Number.isSafeInteger(statementTimeoutMs)||statementTimeoutMs<1)throw new Error('postgres_statement_timeout_invalid');
     if(!Number.isSafeInteger(this.maxRows)||this.maxRows<1)throw new Error('postgres_row_limit_invalid');
     this.pool=new Pool({connectionString:input.connectionString,max:2,connectionTimeoutMillis:5000,statement_timeout:statementTimeoutMs,options:`-c default_transaction_read_only=on -c statement_timeout=${statementTimeoutMs}`});
+    // An idle connection the source closes (restart, failover, a dropped database) must not crash the process: pg emits
+    // the error on the pool, and the next query opens a fresh connection.
+    this.pool.on('error',()=>undefined);
     this.id=input.id??'postgres-source';this.name=input.name??'PostgreSQL source';
   }
 
@@ -76,13 +79,19 @@ export class PostgresConnector implements ReadOnlyConnector {
   async discover(input:{mode:'profile'|'nightly';scope?:ConnectorScope}):Promise<DiscoveryResult>{
     const tables=await this.tables();this.current.clear();
     const result:DiscoveryResult={objects:[],listOnlyObjects:[],excludedObjects:[],inaccessibleObjects:[],coverage:{listed:0,accessible:0,inaccessible:0},unchanged:0,unchangedObjects:[]};
-    const profiles=new Map<string,{table:Table;columns:Column[];key:string}>();
+    const profiles=new Map<string,{table:Table;columns:Column[];key:string;signature:string}>();
     for(const table of tables){
       const qualifiedName=`${table.schema_name}.${table.table_name}`;this.current.set(qualifiedName,table);result.coverage.listed++;
       // Listed but not readable by this login (no schema USAGE or no SELECT): recorded by name only, never profiled.
       if(table.readable===false){result.inaccessibleObjects.push({qualifiedName,type:table.table_type==='VIEW'?'view':'table'});result.coverage.inaccessible++;continue;}
-      const columns=await this.columns(table);const signature=createHash('sha256').update(JSON.stringify(columns.map(({column_name,data_type,is_nullable,comment})=>({column_name,data_type,is_nullable,comment})))).digest('hex');
-      const key=assetKey(qualifiedName);profiles.set(qualifiedName,{table,columns,key});result.coverage.accessible++;
+      // The change signature covers the columns and, for base tables, the row count, so a nightly run re-profiles a table
+      // that only gained or lost rows (decision 48).
+      const columns=await this.columns(table);
+      // Base tables only: a view's count runs its query, which may be slow. A count that fails marks the table changed.
+      let rows='view';
+      if(table.table_type==='BASE TABLE'){try{rows=(await this.pool.query<{n:string}>(`SELECT count(*)::text AS n FROM ${quoteIdentifier(table.schema_name)}.${quoteIdentifier(table.table_name)}`)).rows[0]!.n;}catch{rows=`unknown-${Date.now()}`;}}
+      const signature=createHash('sha256').update(JSON.stringify({rows,columns:columns.map(({column_name,data_type,is_nullable,comment})=>({column_name,data_type,is_nullable,comment}))})).digest('hex');
+      const key=assetKey(qualifiedName);profiles.set(qualifiedName,{table,columns,key,signature});result.coverage.accessible++;
       if(input.scope?.exclude?.includes(qualifiedName)){result.excludedObjects.push({qualifiedName,type:table.table_type==='VIEW'?'view':'table'});continue;}
       if(input.scope?.listOnly?.includes(qualifiedName)){result.listOnlyObjects.push({qualifiedName,type:table.table_type==='VIEW'?'view':'table'});continue;}
       if(input.scope?.profile?.length&&!input.scope.profile.includes(qualifiedName)){result.excludedObjects.push({qualifiedName,type:table.table_type==='VIEW'?'view':'table'});continue;}
@@ -90,7 +99,7 @@ export class PostgresConnector implements ReadOnlyConnector {
       if(input.mode==='nightly'&&this.seen.get(qualifiedName)===signature){result.unchanged++;result.unchangedObjects.push(object);continue;}
       result.objects.push(object);
     }
-    for(const [name,{columns}] of profiles){this.seen.set(name,createHash('sha256').update(JSON.stringify(columns.map(({column_name,data_type,is_nullable,comment})=>({column_name,data_type,is_nullable,comment})))).digest('hex'));}
+    for(const [name,{signature}] of profiles)this.seen.set(name,signature);
     return result;
   }
 

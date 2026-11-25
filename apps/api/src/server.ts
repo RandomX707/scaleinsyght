@@ -6,7 +6,7 @@ import { withTenant, getUsage } from '@scaleinsyght/db';
 import { activateConnection, approveGovernedVersion, createConnectionDraft, createGovernedDraft, deletePersonalMemory, getApprovedGovernedVersion, getPersonalMemory, moveConnectionToGroup, putPersonalMemory, type ConnectorType, type PersonalMemoryData } from '@scaleinsyght/registry';
 import { decryptConnectionSecret, encryptConnectionSecret, createExcelConnector, createPostgresConnector, createSqlServerConnector, type ReadOnlyConnector, type SourceConnectorType } from '@scaleinsyght/connectors';
 import { EncryptedArtifactStore } from '@scaleinsyght/artifacts';
-import { getNotifications, markNotificationRead, readConnectionScope, readWorkbook, retireConnection, runProfile, saveConnectionScope, storeWorkbook } from '@scaleinsyght/profiler';
+import { decideFinding, getNotifications, listFindings, markNotificationRead, readConnectionScope, readWorkbook, retireConnection, runProfile, saveConnectionScope, storeWorkbook } from '@scaleinsyght/profiler';
 import { applyPersonalContext, createAnalyticPlan, startAnalyticRun, submitFeedback, type StructuredAnswer } from '@scaleinsyght/analytic';
 import { eventsAfter } from '@scaleinsyght/runner';
 import { AnalyticPlanSchema, FlowSpecSchema, hashPlan, parseQueryIntent, type QueryIntent } from '@scaleinsyght/contracts';
@@ -1311,6 +1311,16 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     await retireConnection(options.pool,options.artifactStore,{tenantId:current.tenantId,connectionId:request.params.connectionId,principalId:current.userId});
     return reply.code(204).send();
+  });
+  app.get('/api/findings',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    return reply.send(await listFindings(options.pool,current.tenantId));
+  });
+  app.post<{Params:{findingId:string};Body:{decision?:string}}>('/api/findings/:findingId/decision',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const decision=request.body?.decision;if((decision!=='approved'&&decision!=='rejected')||!/^[0-9a-f-]{36}$/i.test(request.params.findingId))return reply.code(400).send({error:'invalid_finding_decision'});
+    try{return reply.send(await decideFinding(options.pool,{tenantId:current.tenantId,principalId:current.userId,findingId:request.params.findingId,decision}));}
+    catch(error){if(error instanceof Error&&error.message==='finding_not_open')return reply.code(409).send({error:'finding_not_open'});throw error;}
   });
   app.get('/api/notifications',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});

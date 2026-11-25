@@ -4,6 +4,7 @@ import { EncryptedArtifactStore, type StoredArtifact } from '@scaleinsyght/artif
 import type { ConnectorScope, DiscoveryResult, ObjectProfile, ReadOnlyConnector, ScopeMode } from '@scaleinsyght/connectors';
 import { withTenant } from '@scaleinsyght/db';
 import { runIdAgent } from './id-agent.js';
+import { readProfileState, recordFindings } from './findings.js';
 import { parseStatementLineage, statementHash, writeStatementLineage, SqlParserUnavailable, type LineageDialect, type StatementLineage } from '@scaleinsyght/graph';
 
 export interface ScopeRule {
@@ -26,6 +27,8 @@ export interface ProfileSummary {
   lineage?: { views: number; tableEdges: number; columnEdges: number; gaps: number };
   /** ID agent: identifier fields found, fields fingerprinted and probable cross-source matches. */
   ids?: { fields: number; fingerprinted: number; matches: number };
+  /** Findings recorded by comparing this run with the previous state (decision 48). */
+  findings?: number;
 }
 
 export async function saveConnectionScope(pool: Pool, tenantId: string, connectionId: string, rules: ScopeRule[]): Promise<void> {
@@ -87,6 +90,7 @@ export async function runProfile(
   const rules = await readConnectionScope(pool, input.tenantId, input.connectionId);
   const scope = scopeForConnector(rules);
   const mode = input.jobType === 'nightly' ? 'nightly' : 'profile';
+  const before = await readProfileState(pool, input.tenantId, input.connectionId);
   const discovery: DiscoveryResult = await input.connector.discover(scope ? { mode, scope } : { mode });
   const profiles: Array<{ object: DiscoveryResult['objects'][number]; profile: ObjectProfile }> = [];
   for (const object of discovery.objects) {
@@ -115,6 +119,12 @@ export async function runProfile(
       ...discovery.inaccessibleObjects.map((object) => ({ name: object.qualifiedName, type: object.type, mode: 'profile' as const, state: 'INACCESSIBLE' as const, assetKey: null })),
     ];
 
+    // Inferred tags a person dismissed in the Approval matrix are not re-applied; declared tags always stay (decision 48).
+    const dismissedRows = await client.query<{ qualified_name: string; tag: string }>(
+      `SELECT a.qualified_name,r.tag FROM profiler.tag_reviews r JOIN graph.assets a ON a.tenant_id=r.tenant_id AND a.asset_id=r.asset_id
+       WHERE r.tenant_id=$1 AND a.source_id=$2 AND r.decision='dismissed'`, [input.tenantId, input.connectionId]);
+    const dismissed = new Map<string, Set<string>>();
+    for (const row of dismissedRows.rows) dismissed.set(row.qualified_name, new Set([...(dismissed.get(row.qualified_name) ?? []), row.tag]));
     const tableAssets = new Map<string, string>();
     const fieldAssets = new Map<string, string>();
     for (const { object, profile } of profiles) {
@@ -129,7 +139,10 @@ export async function runProfile(
         const fieldFingerprint = createHash('sha256').update(`${input.connectionId}\0${fieldName}`).digest();
         const fieldAssetId = await ensureAsset(client, input.tenantId, input.connectionId, fieldFingerprint, 'field', fieldName);
         fieldAssets.set(fieldName, fieldAssetId);
-        const fieldStructural = { object_type: 'field', data_type: column.dataType, nullable: column.isNullable };
+        const evidence = column.sensitivityEvidence ?? column.sensitivityTags.map((tag) => ({ tag, detection: 'declared' as const, reason: 'declared by the source' }));
+        const keep = (tag: string) => !(dismissed.get(fieldName)?.has(tag) && !evidence.some((item) => item.tag === tag && item.detection === 'declared'));
+        const tags = column.sensitivityTags.filter(keep);
+        const fieldStructural = { object_type: 'field', data_type: column.dataType, nullable: column.isNullable, sensitivity_tags: [...tags].sort() };
         // Measured statistics are part of the field version: a changed measurement writes a new version and profile row,
         // never overwriting history. Unmeasured and tagged columns keep an empty statistics object.
         const measured = column.statistics.distinctCount === null && column.statistics.nullRate === null ? {}
@@ -141,8 +154,8 @@ export async function runProfile(
            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12)
            ON CONFLICT(tenant_id,asset_id,profile_version,field_name) DO NOTHING`,
           [input.tenantId, fieldAssetId, fieldVersion.version, column.name, column.dataType, column.isNullable,
-            column.sensitivityTags, column.statistics.nullRate, column.statistics.distinctCount,
-            column.label && column.label !== column.name ? column.label : null, JSON.stringify(column.sensitivityEvidence ?? column.sensitivityTags.map((tag) => ({ tag, detection: 'declared', reason: 'declared by the source' }))), column.statistics.averageLength ?? null],
+            tags, column.statistics.nullRate, column.statistics.distinctCount,
+            column.label && column.label !== column.name ? column.label : null, JSON.stringify(evidence.filter((item) => keep(item.tag))), column.statistics.averageLength ?? null],
         );
         await client.query(
           `INSERT INTO graph.relationships(tenant_id,family,relationship_type,from_asset_id,to_asset_id,granularity)
@@ -252,9 +265,15 @@ export async function runProfile(
   const lineage = await collectViewLineage(pool, input);
   const masterKey = process.env.ARTIFACT_MASTER_KEY ? Buffer.from(process.env.ARTIFACT_MASTER_KEY, 'base64') : undefined;
   const ids = await runIdAgent(pool, { ...input, ...(masterKey ? { masterKey } : {}) });
+  const findings = await recordFindings(pool, { tenantId: input.tenantId, connectionId: input.connectionId, jobId, before, scannedObjects: new Set(profiles.map(({ object }) => object.qualifiedName)) });
+  // Every profiled database or workbook connection is refreshed nightly; the first refresh is a day after activation.
+  await withTenant(pool, input.tenantId, (client) => client.query(
+    `INSERT INTO profiler.nightly_schedules(tenant_id,connection_id,next_run_at) SELECT $1,$2,clock_timestamp()+interval '1 day'
+     WHERE EXISTS(SELECT 1 FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2 AND status='active') ON CONFLICT DO NOTHING`, [input.tenantId, input.connectionId]));
   return {
     ...(lineage ? { lineage } : {}),
     ...(ids ? { ids } : {}),
+    findings,
     jobId,
     listed: discovery.coverage.listed,
     profiled: profiles.length,
@@ -472,3 +491,6 @@ export async function retireConnection(
 }
 
 export { runIdAgent, formatPattern, ID_FINGERPRINT_LIMIT } from './id-agent.js';
+export { readProfileState, recordFindings, listFindings, decideFinding, ROW_CHANGE_SHARE, type FindingRow } from './findings.js';
+export { claimDueNightly } from './nightly.js';
+export { connectorForConnection } from './connector-for.js';
