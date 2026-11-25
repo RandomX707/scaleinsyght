@@ -8,12 +8,12 @@ import { activateConnection, approveGovernedVersion, createConnectionDraft, crea
 import { decryptConnectionSecret, encryptConnectionSecret, createExcelConnector, createPostgresConnector, createSqlServerConnector, type ReadOnlyConnector, type SourceConnectorType } from '@scaleinsyght/connectors';
 import { EncryptedArtifactStore } from '@scaleinsyght/artifacts';
 import { decideFinding, getNotifications, listFindings, markNotificationRead, readConnectionScope, readWorkbook, retireConnection, runProfile, saveConnectionScope, storeWorkbook } from '@scaleinsyght/profiler';
-import { applyPersonalContext, createAnalyticPlan, startAnalyticRun, submitFeedback, type StructuredAnswer } from '@scaleinsyght/analytic';
+import { applyPersonalContext, createAnalyticPlan, parseLineageRequest, startAnalyticRun, submitFeedback, type StructuredAnswer } from '@scaleinsyght/analytic';
 import { eventsAfter } from '@scaleinsyght/runner';
 import { AnalyticPlanSchema, FlowSpecSchema, hashPlan, parseQueryIntent, type QueryIntent } from '@scaleinsyght/contracts';
 import { compareGraphSnapshots, getIdentifierPath, getImpactRadius, getLineageGraph, listIdEntities, lookupIdentifierValue, importDbtArtifacts, readDbtArtifacts, importTableauWorkbook, importDbtManifest, listGraphAssertions, listGraphAssets, listGraphSnapshots, listIdentifierFields, listReports, queryLineage, reconcileAssertion, reviewGraphAssertion, traceIdentifier, verifyAssertionFromRun } from '@scaleinsyght/graph';
 import { type DataStudioAdapter, type SemanticsAdapter } from '@scaleinsyght/hub-adapters';
-import { nextScheduleInstant, renderEvidencePack, safeEvidencePack, type ExportFormat, type SafeEvidencePack } from '@scaleinsyght/reports';
+import { nextScheduleInstant, renderDictionary, renderEvidencePack, safeEvidencePack, type ExportFormat, type SafeEvidencePack } from '@scaleinsyght/reports';
 import { ClaimSchema, EvidenceRefSchema } from '@scaleinsyght/contracts';
 import { authorise } from '@scaleinsyght/policy';
 import { createOidcAuthorizationRequest, verifyOidcIdToken } from '@scaleinsyght/auth-oidc';
@@ -22,6 +22,15 @@ import { readTableauWorkbook } from '@scaleinsyght/tableau';
 import { parseDictionaryFile } from './dictionary-file.js';
 
 export interface TestSource { id: string; type: SourceConnectorType | 'dbt' | 'tableau' | 'power_bi'; name: string; }
+const DICTIONARY_SQL=`SELECT dataset.asset_id,dataset.qualified_name,
+        COALESCE(jsonb_agg(jsonb_build_object('name',field.qualified_name,'label',fp.display_name,'dataType',fp.data_type,'nullable',fp.is_nullable,'tags',fp.sensitivity_tags,'tagEvidence',fp.sensitivity_evidence,'nullRate',fp.null_rate,'distinctCount',fp.distinct_count,'description',dd.description)) FILTER (WHERE field.asset_id IS NOT NULL),'[]'::jsonb) AS fields
+       FROM graph.assets dataset LEFT JOIN graph.relationships r ON r.tenant_id=dataset.tenant_id AND r.from_asset_id=dataset.asset_id AND r.relationship_type='CONTAINS'
+       LEFT JOIN graph.assets field ON field.tenant_id=r.tenant_id AND field.asset_id=r.to_asset_id
+       LEFT JOIN LATERAL (SELECT data_type,is_nullable,sensitivity_tags,null_rate,distinct_count,display_name,sensitivity_evidence FROM profiler.field_profiles p WHERE p.tenant_id=field.tenant_id AND p.asset_id=field.asset_id ORDER BY profile_version DESC LIMIT 1) fp ON true
+       LEFT JOIN graph.dictionary_descriptions dd ON dd.tenant_id=dataset.tenant_id AND dd.source_id=dataset.source_id AND dd.table_name=dataset.qualified_name AND dd.column_name=split_part(field.qualified_name,'.',array_length(string_to_array(field.qualified_name,'.'),1))
+       WHERE dataset.tenant_id=$1 AND dataset.source_id=$2 AND dataset.asset_type='dataset' AND dataset.active=true
+       GROUP BY dataset.asset_id,dataset.qualified_name ORDER BY dataset.qualified_name`;
+
 export interface ServerOptions { pool: Pool; sessionSecret: string; testAccounts?: Array<{ tenantId: string; email: string }>; testAnalyticPlanner?: (question:string,sourceCount:number)=>Promise<Array<{sourceIndex:number;intent:QueryIntent}>|null>; artifactStore?: EncryptedArtifactStore; oidcFetch?: typeof fetch; testSources?: TestSource[]; testConnectorFor?: (sourceId: string) => ReadOnlyConnector | null; hubAdapters?: { semantics: SemanticsAdapter; dataStudio: DataStudioAdapter }; }
 const sessionLifetimeMs = 8 * 60 * 60 * 1000;
 export function hashPassword(password: string, salt = randomBytes(16).toString('hex')): string {
@@ -909,8 +918,8 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const format=request.body?.format;
     if(!format||!['pdf','xlsx','pptx'].includes(format))return reply.code(400).send({error:'unsupported_export_format'});
-    const result=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{plan_hash:string;answer:Record<string,unknown>;state:string}>(
-      `SELECT p.plan_hash,a.answer,r.state FROM runs.runs r JOIN runs.analytic_plans p USING(tenant_id,run_id)
+    const result=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{plan_hash:string;answer:Record<string,unknown>;state:string;question:string|null}>(
+      `SELECT p.plan_hash,a.answer,r.state,p.plan->>'question' AS question FROM runs.runs r JOIN runs.analytic_plans p USING(tenant_id,run_id)
        JOIN runs.analytic_answers a USING(tenant_id,run_id)
        WHERE r.tenant_id=$1 AND r.run_id=$2 AND r.principal_id=$3`,[current.tenantId,request.params.runId,current.userId]));
     const row=result.rows[0];if(!row)return reply.code(404).send({error:'run_not_found'});
@@ -918,7 +927,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     let rendered;
     try{
       const answer=((row.answer as {answer?:unknown}).answer??row.answer) as Parameters<typeof safeEvidencePack>[0]['answer'];
-      const pack=safeEvidencePack({runId:request.params.runId,planHash:row.plan_hash,answer});
+      const pack=safeEvidencePack({runId:request.params.runId,planHash:row.plan_hash,...(row.question?{question:row.question}:{}),answer});
       rendered=await renderEvidencePack(pack,format);
     }catch(error){if(error instanceof Error&&['evidence_pack_invalid','evidence_pack_sensitive_value'].includes(error.message))return reply.code(422).send({error:error.message});throw error;}
     await withTenant(options.pool,current.tenantId,async(client)=>{
@@ -933,6 +942,18 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     if(!body||!['useful','not_useful'].includes(String(body.verdict))||(body.correction&&(Object.keys(body.correction).sort().join(',')!=='meaning,term'||typeof body.correction.term!=='string'||typeof body.correction.meaning!=='string')))return reply.code(400).send({error:'invalid_feedback'});
     try{return reply.code(201).send(await submitFeedback(options.pool,{tenantId:current.tenantId,principalId:current.userId,runId:request.params.runId,verdict:body.verdict!,...(body.correction?{correction:body.correction}:{})}));}
     catch(error){const code=error instanceof Error?error.message:'feedback_failed';if(code==='run_not_found')return reply.code(404).send({error:code});if(code==='unsafe_correction'||code==='correction_not_allowed_for_useful_verdict')return reply.code(400).send({error:code});throw error;}
+  });
+  app.post<{Params:{runId:string}}>('/api/runs/:runId/save',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    if(!/^[0-9a-f-]{36}$/i.test(request.params.runId))return reply.code(400).send({error:'invalid_run_id'});
+    // A question is saved only from the person's own completed answer (prototype: thumbs up offers to save it).
+    const run=await withTenant(options.pool,current.tenantId,async(client)=>(await client.query<{plan_id:string}>(
+      `SELECT p.plan->>'plan_id' AS plan_id FROM runs.runs r JOIN runs.analytic_plans p USING(tenant_id,run_id) JOIN runs.analytic_answers a USING(tenant_id,run_id)
+       WHERE r.tenant_id=$1 AND r.run_id=$2 AND r.principal_id=$3 AND r.state='COMPLETED'`,[current.tenantId,request.params.runId,current.userId])).rows[0]);
+    if(!run)return reply.code(404).send({error:'run_not_found'});
+    const memory=await getPersonalMemory(options.pool,{tenantId:current.tenantId,principalId:current.userId});
+    if(!memory.savedPlanIds.includes(run.plan_id))await putPersonalMemory(options.pool,{tenantId:current.tenantId,principalId:current.userId,memory:{...memory,savedPlanIds:[run.plan_id,...memory.savedPlanIds].slice(0,100)}});
+    return reply.code(201).send({planId:run.plan_id});
   });
   app.get('/api/me/saved-questions',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
@@ -959,8 +980,18 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
         `SELECT connection_id AS source_id,connector_agent_id AS agent_id,source_group_id AS group_id,source_group_version AS group_version
          FROM registry.connections WHERE tenant_id=$1 AND status='active' AND connection_id=ANY($2::uuid[])`,[current.tenantId,sourceIds]));
       if(sources.rowCount!==sourceIds.length)return reply.code(403).send({error:'source_not_active_or_available'});
-      const plan=await createAnalyticPlan({question:String(saved.rows[0]!.plan.question),runId:randomUUID(),sources:sources.rows.map(row=>({sourceId:row.source_id,agentId:row.agent_id,groupId:row.group_id,groupVersion:row.group_version}))});
-      return reply.code(201).send({...await startAnalyticRun(options.pool,{tenantId:current.tenantId,principalId:current.userId,plan}),planId:plan.plan_id});
+      // The saved plan's validated steps are the starting plan: the same typed query intents (or lineage requests) run
+      // again on the same sources, revalidated against current metadata and entitlements, with no model call.
+      const savedSteps=(saved.rows[0]!.plan.steps as Array<{source_id:string;inputs:Record<string,unknown>}>|undefined)??[];
+      const ordered=savedSteps.map(step=>sources.rows.find(row=>row.source_id===step.source_id)).filter((row):row is NonNullable<typeof row>=>Boolean(row));
+      if(ordered.length!==savedSteps.length||!savedSteps.length)return reply.code(403).send({error:'source_not_active_or_available'});
+      const intents=savedSteps.every(step=>'query_intent' in step.inputs)?savedSteps.map(step=>parseQueryIntent(step.inputs.query_intent)):undefined;
+      const lineage=savedSteps.every(step=>'lineage_request' in step.inputs)?savedSteps.map(step=>parseLineageRequest(step.inputs.lineage_request)):undefined;
+      if(!intents&&!lineage)return reply.code(409).send({error:'saved_question_has_no_typed_plan'});
+      const question=String(saved.rows[0]!.plan.question);
+      const conversationId=await withTenant(options.pool,current.tenantId,async(client)=>(await client.query<{conversation_id:string}>('INSERT INTO runs.conversations(tenant_id,principal_id,title) VALUES($1,$2,$3) RETURNING conversation_id',[current.tenantId,current.userId,question.slice(0,200)])).rows[0]!.conversation_id);
+      const plan=await createAnalyticPlan({question,runId:randomUUID(),...(intents?{queryIntents:intents}:{lineageRequests:lineage!}),sources:ordered.map(row=>({sourceId:row.source_id,agentId:row.agent_id,groupId:row.group_id,groupVersion:row.group_version}))});
+      return reply.code(201).send({...await startAnalyticRun(options.pool,{tenantId:current.tenantId,principalId:current.userId,plan,conversationId}),planId:plan.plan_id,conversationId});
     }catch(error){const code=error instanceof Error?error.message:'saved_question_start_failed';if(['principal_not_entitled','source_not_active','source_group_version_not_pinned'].includes(code))return reply.code(403).send({error:code});if(code.startsWith('analytic_plan'))return reply.code(400).send({error:code});throw error;}
   });
   app.delete<{Params:{planId:string}}>('/api/me/saved-questions/:planId',async(request,reply)=>{
@@ -1107,9 +1138,25 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     try{return reply.send(await moveConnectionToGroup(options.pool,{tenantId:current.tenantId,connectionId:request.params.connectionId,targetGroupId:request.params.groupId,actor:'person'}));}
     catch(error){const code=error instanceof Error?error.message:'group_move_failed';if(code==='connection_not_found'||code==='source_group_not_found')return reply.code(404).send({error:code});throw error;}
   });
-  app.post<{Body:{name?:string;question?:string;sourceIds?:string[];governedId?:string}}>('/api/governed-agents',async(request,reply)=>{
+  app.post<{Body:{name?:string;question?:string;sourceIds?:string[];governedId?:string;planId?:string}}>('/api/governed-agents',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const {name,question,sourceIds,governedId}=request.body??{};
+    // A governed agent made from a saved question pins that question's validated typed steps, so it runs step by step
+    // with no model at run time (CLAUDE.md section 7).
+    if(typeof request.body?.planId==='string'){
+      if(typeof name!=='string'||!name.trim()||name.length>120||!/^[0-9a-f-]{36}$/i.test(request.body.planId))return reply.code(400).send({error:'invalid_governed_draft'});
+      const memory=await getPersonalMemory(options.pool,{tenantId:current.tenantId,principalId:current.userId});
+      if(!memory.savedPlanIds.includes(request.body.planId))return reply.code(404).send({error:'saved_question_not_found'});
+      const saved=(await withTenant(options.pool,current.tenantId,client=>client.query<{plan:{question:string;steps:Array<{source_id:string;inputs:Record<string,unknown>}>}}>(
+        `SELECT p.plan FROM runs.analytic_plans p JOIN runs.runs r USING(tenant_id,run_id) WHERE p.tenant_id=$1 AND r.principal_id=$2 AND p.plan->>'plan_id'=$3`,[current.tenantId,current.userId,request.body!.planId]))).rows[0];
+      if(!saved||!saved.plan.steps.every(step=>'query_intent' in step.inputs))return reply.code(409).send({error:'saved_question_has_no_typed_plan'});
+      const pinned=await withTenant(options.pool,current.tenantId,client=>client.query<{source_id:string;agent_id:string;group_id:string;group_version:number}>(
+        `SELECT connection_id AS source_id,connector_agent_id AS agent_id,source_group_id AS group_id,source_group_version AS group_version FROM registry.connections WHERE tenant_id=$1 AND status='active' AND connection_id=ANY($2::uuid[])`,[current.tenantId,saved.plan.steps.map(step=>step.source_id)]));
+      const ordered=saved.plan.steps.map(step=>pinned.rows.find(row=>row.source_id===step.source_id));
+      if(ordered.some(row=>!row))return reply.code(403).send({error:'source_not_active_or_available'});
+      const plan=await createAnalyticPlan({question:saved.plan.question,runId:randomUUID(),queryIntents:saved.plan.steps.map(step=>parseQueryIntent(step.inputs.query_intent)),sources:ordered.map(row=>({sourceId:row!.source_id,agentId:row!.agent_id,groupId:row!.group_id,groupVersion:row!.group_version}))});
+      return reply.code(201).send(await createGovernedDraft(options.pool,{tenantId:current.tenantId,principalId:current.userId,name:name.trim(),plan:plan as unknown as Record<string,unknown>}));
+    }
     if(typeof name!=='string'||!name.trim()||typeof question!=='string'||!question.trim()||!Array.isArray(sourceIds)||!sourceIds.length||sourceIds.some((id)=>typeof id!=='string'||! /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)))return reply.code(400).send({error:'invalid_governed_draft'});
     const sources=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{source_id:string;agent_id:string;group_id:string;group_version:number}>(
       `SELECT connection_id AS source_id,connector_agent_id AS agent_id,source_group_id AS group_id,source_group_version AS group_version
@@ -1234,15 +1281,17 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
   app.get<{Params:{connectionId:string}}>('/api/connections/:connectionId/dictionary',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const result=await withTenant(options.pool,current.tenantId,async(client)=>client.query(
-      `SELECT dataset.asset_id,dataset.qualified_name,
-        COALESCE(jsonb_agg(jsonb_build_object('name',field.qualified_name,'label',fp.display_name,'dataType',fp.data_type,'nullable',fp.is_nullable,'tags',fp.sensitivity_tags,'tagEvidence',fp.sensitivity_evidence,'nullRate',fp.null_rate,'distinctCount',fp.distinct_count,'description',dd.description)) FILTER (WHERE field.asset_id IS NOT NULL),'[]'::jsonb) AS fields
-       FROM graph.assets dataset LEFT JOIN graph.relationships r ON r.tenant_id=dataset.tenant_id AND r.from_asset_id=dataset.asset_id AND r.relationship_type='CONTAINS'
-       LEFT JOIN graph.assets field ON field.tenant_id=r.tenant_id AND field.asset_id=r.to_asset_id
-       LEFT JOIN LATERAL (SELECT data_type,is_nullable,sensitivity_tags,null_rate,distinct_count,display_name,sensitivity_evidence FROM profiler.field_profiles p WHERE p.tenant_id=field.tenant_id AND p.asset_id=field.asset_id ORDER BY profile_version DESC LIMIT 1) fp ON true
-       LEFT JOIN graph.dictionary_descriptions dd ON dd.tenant_id=dataset.tenant_id AND dd.source_id=dataset.source_id AND dd.table_name=dataset.qualified_name AND dd.column_name=split_part(field.qualified_name,'.',array_length(string_to_array(field.qualified_name,'.'),1))
-       WHERE dataset.tenant_id=$1 AND dataset.source_id=$2 AND dataset.asset_type='dataset' AND dataset.active=true
-       GROUP BY dataset.asset_id,dataset.qualified_name ORDER BY dataset.qualified_name`,[current.tenantId,request.params.connectionId]));
+      DICTIONARY_SQL,[current.tenantId,request.params.connectionId]));
     const tables=result.rows as Array<{qualified_name:string;fields:Array<{name:string;description:string|null}>}>;const columns=tables.flatMap(table=>table.fields);let routines:Array<{qualifiedName:string;kind:string;definition:string}>=[];try{routines=await (await connectorForConnection(current.tenantId,request.params.connectionId)).routines?.()??[];}catch{/* A metadata-only test connector may not expose source routines. */}return reply.send({tables:result.rows,routines,summary:{tableCount:tables.length,columnCount:columns.length,documentedColumnCount:columns.filter(field=>field.description).length,coverage:columns.length?columns.filter(field=>field.description).length/columns.length:0}});
+  });
+  app.get<{Params:{connectionId:string};Querystring:{format?:string}}>('/api/connections/:connectionId/dictionary/export',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const format=request.query.format;if(format!=='markdown'&&format!=='docx')return reply.code(400).send({error:'unsupported_export_format'});
+    const {tables,name}=await withTenant(options.pool,current.tenantId,async(client)=>({tables:(await client.query<{qualified_name:string;fields:Array<{name:string;label:string|null;dataType:string|null;tags:string[]|null;nullRate:string|number|null;distinctCount:string|number|null;description:string|null}>}>(DICTIONARY_SQL,[current.tenantId,request.params.connectionId])).rows,
+      name:(await client.query<{name:string}>("SELECT coalesce(nullif(display_name,''),connector_type) AS name FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2",[current.tenantId,request.params.connectionId])).rows[0]?.name}));
+    if(!name)return reply.code(404).send({error:'connection_not_found'});
+    const rendered=await renderDictionary({sourceName:name,generatedAt:new Date().toISOString().slice(0,10),tables:tables.map(table=>({name:table.qualified_name,columns:table.fields.sort((a,b)=>a.name.localeCompare(b.name)).map(field=>({name:field.name,label:field.label,dataType:field.dataType,tags:field.tags??[],nullRate:field.nullRate===null?null:Number(field.nullRate),distinctCount:field.distinctCount===null?null:Number(field.distinctCount),description:field.description}))}))},format);
+    return reply.type(rendered.contentType).header('content-disposition',`attachment; filename="${rendered.filename}"`).header('x-content-sha256',rendered.contentHash).send(rendered.bytes);
   });
   app.post<{Params:{connectionId:string};Body:{format:'csv'|'xlsx';filename:string;contentBase64:string}}>('/api/connections/:connectionId/dictionary/import',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
