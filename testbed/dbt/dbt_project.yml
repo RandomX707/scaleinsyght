@@ -1,0 +1,13 @@
+name: testbed_hospital
+version: '1.0.0'
+config-version: 2
+profile: testbed_hospital
+model-paths: ['models']
+target-path: target
+clean-targets: ['target', 'dbt_packages']
+models:
+  testbed_hospital:
+    staging:
+      +materialized: view
+    marts:
+      +materialized: table

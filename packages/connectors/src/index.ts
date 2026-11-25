@@ -67,6 +67,8 @@ export interface ReadOnlyConnector {
   queryAggregate?(assetKey: string, metric: 'count'): Promise<{ metric: 'count'; value: number }>;
   structuralReferences?(): Promise<Array<{from:string;to:string;fromColumn:string;toColumn:string;evidenceMethod?:'declared'|'inferred';confidence?:number;matchedCount?:number;sourceCount?:number}>>;
   routines?():Promise<Array<{qualifiedName:string;kind:'function'|'procedure';definition:string}>>;
+  /** View definitions for SQL lineage parsing. definition is null when the source hides it (for example an encrypted module). */
+  viewDefinitions?():Promise<Array<{qualifiedName:string;schema:string;definition:string|null}>>;
   executeQueryIntent?(intent:unknown,includeCellSize?:boolean):Promise<{sql:string;rows:Array<Record<string,unknown>>}>;
   /** Original text of a column (for example a workbook header) when it differs from its SQL identifier. */
   categoryValues?(table: string, column: string): Promise<{sql: string; values: string[]} | undefined>;

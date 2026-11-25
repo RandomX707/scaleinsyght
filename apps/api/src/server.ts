@@ -10,7 +10,7 @@ import { getNotifications, markNotificationRead, readConnectionScope, readWorkbo
 import { applyPersonalContext, createAnalyticPlan, startAnalyticRun, submitFeedback, type StructuredAnswer } from '@scaleinsyght/analytic';
 import { eventsAfter } from '@scaleinsyght/runner';
 import { AnalyticPlanSchema, FlowSpecSchema, hashPlan, parseQueryIntent, type QueryIntent } from '@scaleinsyght/contracts';
-import { compareGraphSnapshots, getIdentifierPath, getImpactRadius, importDbtManifest, listGraphAssertions, listGraphAssets, listGraphSnapshots, listIdentifierFields, listReports, queryLineage, reconcileAssertion, reviewGraphAssertion, traceIdentifier, verifyAssertionFromRun } from '@scaleinsyght/graph';
+import { compareGraphSnapshots, getIdentifierPath, getImpactRadius, getLineageGraph, importDbtArtifacts, readDbtArtifacts, importDbtManifest, listGraphAssertions, listGraphAssets, listGraphSnapshots, listIdentifierFields, listReports, queryLineage, reconcileAssertion, reviewGraphAssertion, traceIdentifier, verifyAssertionFromRun } from '@scaleinsyght/graph';
 import { type DataStudioAdapter, type SemanticsAdapter } from '@scaleinsyght/hub-adapters';
 import { nextScheduleInstant, renderEvidencePack, safeEvidencePack, type ExportFormat, type SafeEvidencePack } from '@scaleinsyght/reports';
 import { ClaimSchema, EvidenceRefSchema } from '@scaleinsyght/contracts';
@@ -441,6 +441,10 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
   app.get('/api/lineage/assertions',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     return reply.send({assertions:await listGraphAssertions(options.pool,current.tenantId)});
+  });
+  app.get('/api/lineage/graph',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    return reply.send(await getLineageGraph(options.pool,current.tenantId));
   });
   app.get('/api/lineage/assets',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
@@ -1104,14 +1108,26 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
       return reply.code(201).send({...run,governedId:request.params.governedId,version:approved.version});
     }catch(error){const code=error instanceof Error?error.message:'governed_run_failed';if(['governed_version_not_found','governed_version_not_approved'].includes(code))return reply.code(404).send({error:code});if(code==='principal_not_entitled')return reply.code(403).send({error:code});if(code==='governed_plan_mismatch'||code.startsWith('analytic_plan'))return reply.code(400).send({error:code});throw error;}
   });
-  app.post<{Body:{sourceId?:string;connectorType?:string;displayName?:string;credential?:{host?:string;port?:number;database?:string;username?:string;password?:string;sslMode?:string;trustServerCertificate?:boolean}}}>('/api/connections',async(request,reply)=>{
+  app.post<{Body:{sourceId?:string;connectorType?:string;displayName?:string;warehouseConnectionId?:string;credential?:{host?:string;port?:number;database?:string;username?:string;password?:string;sslMode?:string;trustServerCertificate?:boolean}}}>('/api/connections',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const source=request.body?.sourceId?availableConnectorSources().find((item)=>item.id===request.body?.sourceId):undefined;
     if(request.body?.sourceId&&!source)return reply.code(400).send({error:'connector_source_not_found'});
     const connectorType=source?.type??request.body?.connectorType;
-    if(connectorType!=='postgres'&&connectorType!=='sql_server'&&connectorType!=='excel')return reply.code(400).send({error:'connector_type_unsupported'});
+    if(connectorType!=='postgres'&&connectorType!=='sql_server'&&connectorType!=='excel'&&connectorType!=='dbt')return reply.code(400).send({error:'connector_type_unsupported'});
     const displayName=(request.body?.displayName??source?.name??'').trim();if(displayName.length<1||displayName.length>120)return reply.code(400).send({error:'connection_name_invalid'});
     if(source){const draft=await createConnectionDraft(options.pool,{tenantId:current.tenantId,connectorType:source.type as ConnectorType,sourceRef:source.id});await withTenant(options.pool,current.tenantId,client=>client.query('UPDATE registry.connections SET display_name=$3 WHERE tenant_id=$1 AND connection_id=$2',[current.tenantId,draft.connectionId,displayName]));return reply.code(201).send({connectionId:draft.connectionId,status:'draft',connectorType:source.type,sourceName:displayName});}
+    if(connectorType==='dbt'){
+      // A dbt project is read from its uploaded artifacts and linked to the warehouse connection it builds into.
+      const warehouseId=request.body?.warehouseConnectionId;
+      if(typeof warehouseId!=='string'||!/^[0-9a-f-]{36}$/i.test(warehouseId))return reply.code(400).send({error:'dbt_warehouse_required'});
+      const draft=await withTenant(options.pool,current.tenantId,async(client)=>{
+        const warehouse=await client.query("SELECT 1 FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2 AND status='active' AND connector_type IN ('postgres','sql_server','snowflake')",[current.tenantId,warehouseId]);
+        if(!warehouse.rowCount)return null;
+        return (await client.query<{connection_id:string}>("INSERT INTO registry.connections(tenant_id,connector_type,status,display_name,source_ref) VALUES($1,'dbt','draft',$2,$3) RETURNING connection_id",[current.tenantId,displayName,`warehouse:${warehouseId}`])).rows[0]!;
+      });
+      if(!draft)return reply.code(400).send({error:'dbt_warehouse_not_found'});
+      return reply.code(201).send({connectionId:draft.connection_id,status:'draft',connectorType,sourceName:displayName});
+    }
     if(connectorType==='excel'){
       const draft=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{connection_id:string}>("INSERT INTO registry.connections(tenant_id,connector_type,status,display_name) VALUES($1,'excel','draft',$2) RETURNING connection_id",[current.tenantId,displayName]));
       return reply.code(201).send({connectionId:draft.rows[0]!.connection_id,status:'draft',connectorType,sourceName:displayName});
@@ -1245,6 +1261,26 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     await saveConnectionScope(options.pool,current.tenantId,request.params.connectionId,request.body?.rules??[]);
     return reply.send({saved:true});
+  });
+  app.post<{Params:{connectionId:string};Body:{manifest?:unknown;catalog?:unknown}}>('/api/connections/:connectionId/dbt-artifacts',{bodyLimit:60*1024*1024},async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const row=(await withTenant(options.pool,current.tenantId,client=>client.query<{status:string;source_ref:string|null;warehouse_type:string|null}>(
+      `SELECT c.status,c.source_ref,w.connector_type AS warehouse_type FROM registry.connections c LEFT JOIN registry.connections w ON w.tenant_id=c.tenant_id AND 'warehouse:'||w.connection_id::text=c.source_ref AND w.status='active'
+       WHERE c.tenant_id=$1 AND c.connection_id=$2 AND c.connector_type='dbt'`,[current.tenantId,request.params.connectionId]))).rows[0];
+    if(!row||!row.source_ref?.startsWith('warehouse:')||!['draft','active'].includes(row.status))return reply.code(404).send({error:'dbt_connection_not_found'});
+    if(!row.warehouse_type)return reply.code(409).send({error:'dbt_warehouse_not_active'});
+    try{
+      // Both files are checked before anything is activated or written.
+      readDbtArtifacts(request.body?.manifest??null,request.body?.catalog??null);
+      if(row.status==='draft')await activateConnection(options.pool,{tenantId:current.tenantId,principalId:current.userId,connectorType:'dbt',connectionId:request.params.connectionId,sourceRef:row.source_ref});
+      const imported=await importDbtArtifacts(options.pool,{tenantId:current.tenantId,dbtConnectionId:request.params.connectionId,warehouseConnectionId:row.source_ref.slice('warehouse:'.length),warehouseType:row.warehouse_type,manifest:request.body?.manifest,catalog:request.body?.catalog});
+      return reply.send({connectionId:request.params.connectionId,status:'active',imported});
+    }catch(error){
+      const code=error instanceof Error?error.message:'dbt_import_failed';
+      if(['dbt_manifest_invalid','dbt_catalog_invalid','dbt_manifest_has_no_models','dbt_warehouse_unsupported'].includes(code))return reply.code(400).send({error:code});
+      if(code==='connector_allowance_exceeded')return reply.code(409).send({error:code});
+      throw error;
+    }
   });
   app.post<{Params:{connectionId:string}}>('/api/connections/:connectionId/workbooks',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});

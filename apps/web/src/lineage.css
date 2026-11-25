@@ -1,0 +1,41 @@
+/* Lineage graph, matching docs/prototype/index.html ("full lineage graph"). */
+.lineage-graph-page { display:flex; flex-direction:column; gap:16px; }
+.lineage-tiles { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:12px; }
+.lineage-tiles>div,.lineage-stats>div { display:flex; flex-direction:column; gap:4px; padding:14px 16px; border:1px solid var(--line); border-radius:12px; background:var(--surface); }
+.lineage-tiles b,.lineage-stats b { font-size:22px; color:var(--ink); }
+.lineage-tiles span,.lineage-stats span { color:var(--faint); font-size:12px; }
+.lineage-stats { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+.lineage-canvas-card,.lineage-detail { display:flex; flex-direction:column; gap:12px; padding:16px; border:1px solid var(--line); border-radius:12px; background:var(--surface); }
+.lineage-toolbar { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; }
+.lineage-filters { display:flex; flex-wrap:wrap; align-items:center; gap:6px; }
+.lineage-filter i { display:inline-block; width:18px; margin-right:6px; vertical-align:middle; }
+.lineage-filter.off { opacity:.45; text-decoration:line-through; }
+.lineage-find { display:flex; gap:6px; align-items:center; }
+.lineage-find .ui-input { width:220px; }
+.lineage-detail-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:16px; }
+.lineage-detail-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
+.lineage-detail h2 { margin:0; }
+.lineage-actions { display:flex; flex-wrap:wrap; gap:8px; }
+.lineage-method { display:inline-block; padding:1px 8px; border-radius:999px; font-size:11px; font-weight:600; }
+.lineage-coverage { display:flex; height:8px; border-radius:999px; overflow:hidden; background:var(--line); }
+.lineage-coverage i { display:block; height:100%; }
+.lineage-legend { display:flex; gap:12px; color:var(--muted); font-size:12px; margin:6px 0 0; }
+.lineage-inputs { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px; }
+.lineage-kv { display:grid; grid-template-columns:max-content 1fr; gap:6px 16px; margin:0; }
+.lineage-kv dt { color:var(--faint); }
+.lineage-kv dd { margin:0; }
+.ui-button.lineage-link { padding:0; min-height:auto; border:0; background:none; }
+@media (prefers-reduced-motion: reduce) { .lineage-graph-page * { transition:none!important; } }
+.lineage-steps { margin:0; padding-left:20px; display:flex; flex-direction:column; gap:4px; }
+.lineage-answer { display:flex; flex-direction:column; gap:10px; }
+/* The lineage page follows the prototype's light buttons and chips, not the legacy phase 3 button style. */
+.phase3-workspace:has(.lineage-graph-page) { width:min(1460px,100%); }
+.phase3-workspace .lineage-graph-page .ui-button,.phase3-workspace .lineage-answer .ui-button { min-height:28px; border:1px solid var(--line); background:var(--surface); color:var(--ink); border-radius:9px; padding:4px 10px; font-size:13px; font-weight:500; }
+.phase3-workspace .lineage-graph-page .ui-button:hover { border-color:var(--primary); color:var(--primary-ink); }
+.phase3-workspace .lineage-graph-page .ui-button.lineage-filter { border-radius:999px; padding:3px 10px; font-size:12.5px; }
+.phase3-workspace .lineage-graph-page .ui-button.lineage-link { border:0; padding:0; background:none; min-height:auto; }
+.lineage-find { flex-wrap:nowrap; }
+.lineage-graph-page .lgraph { width:auto; max-width:none; }
+.lineage-answer .ui-button { min-height:28px; }
+.phase3-workspace form.lineage-find { display:flex; flex-direction:row; align-items:center; gap:6px; margin:0; }
+.phase3-workspace form.lineage-find .ui-input { width:220px; }

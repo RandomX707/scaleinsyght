@@ -375,5 +375,50 @@
       "x"
     ],
     "paraphraseOf": "Q28"
+  },
+  {
+    "id": "Q41",
+    "turns": [
+      "Where does analytics.mart_department_orders.order_amount in the PostgreSQL testbed come from?"
+    ],
+    "sources": [
+      "p"
+    ]
+  },
+  {
+    "id": "Q42",
+    "turns": [
+      "What breaks if public.orders.amount changes in the PostgreSQL testbed?"
+    ],
+    "sources": [
+      "p"
+    ]
+  },
+  {
+    "id": "Q43",
+    "turns": [
+      "Where does dbo.department_order_summary get its data from in the SQL Server testbed?"
+    ],
+    "sources": [
+      "s"
+    ]
+  },
+  {
+    "id": "Q44",
+    "turns": [
+      "Which tables feed analytics.mart_provider_encounters in the PostgreSQL testbed?"
+    ],
+    "sources": [
+      "p"
+    ]
+  },
+  {
+    "id": "Q45",
+    "turns": [
+      "Where does the claim_amount column of analytics.mart_order_claims come from in the PostgreSQL testbed?"
+    ],
+    "sources": [
+      "p"
+    ]
   }
 ]

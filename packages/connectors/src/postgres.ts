@@ -3,7 +3,7 @@ import { Pool } from 'pg';
 import { classifyColumn } from '@scaleinsyght/classification';
 import { COLUMN_STATISTICS_ROW_LIMIT, POSSIBLE_REFERENCE_COVERAGE, UNMEASURED, type ColumnStatistics, type ConnectorScope, type DiscoveryResult, type ObjectProfile, type ReadOnlyConnector } from './index.js';
 
-export type Table = { schema_name: string; table_name: string; table_type: 'BASE TABLE' | 'VIEW' };
+export type Table = { schema_name: string; table_name: string; table_type: 'BASE TABLE' | 'VIEW'; readable?: boolean };
 type Column = { column_name: string; data_type: string; is_nullable: 'YES' | 'NO'; comment: string | null };
 type RoleSafety = {
   elevated: boolean;
@@ -58,7 +58,8 @@ export class PostgresConnector implements ReadOnlyConnector {
 
   private async tables():Promise<Table[]>{
     const rows=await this.pool.query<Table>(`SELECT table_schema AS schema_name,table_name,
-      CASE WHEN table_type='VIEW' THEN 'VIEW' ELSE 'BASE TABLE' END AS table_type
+      CASE WHEN table_type='VIEW' THEN 'VIEW' ELSE 'BASE TABLE' END AS table_type,
+      has_schema_privilege(current_user,table_schema,'USAGE') AND has_table_privilege(current_user,format('%I.%I',table_schema,table_name),'SELECT') AS readable
       FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema') AND table_type IN ('BASE TABLE','VIEW') ORDER BY table_schema,table_name LIMIT $1`,[this.maxRows+1]);
     if(rows.rows.length>this.maxRows)throw new Error('postgres_connector_result_limit_exceeded');
     return rows.rows;
@@ -78,6 +79,8 @@ export class PostgresConnector implements ReadOnlyConnector {
     const profiles=new Map<string,{table:Table;columns:Column[];key:string}>();
     for(const table of tables){
       const qualifiedName=`${table.schema_name}.${table.table_name}`;this.current.set(qualifiedName,table);result.coverage.listed++;
+      // Listed but not readable by this login (no schema USAGE or no SELECT): recorded by name only, never profiled.
+      if(table.readable===false){result.inaccessibleObjects.push({qualifiedName,type:table.table_type==='VIEW'?'view':'table'});result.coverage.inaccessible++;continue;}
       const columns=await this.columns(table);const signature=createHash('sha256').update(JSON.stringify(columns.map(({column_name,data_type,is_nullable,comment})=>({column_name,data_type,is_nullable,comment})))).digest('hex');
       const key=assetKey(qualifiedName);profiles.set(qualifiedName,{table,columns,key});result.coverage.accessible++;
       if(input.scope?.exclude?.includes(qualifiedName)){result.excludedObjects.push({qualifiedName,type:table.table_type==='VIEW'?'view':'table'});continue;}
@@ -139,6 +142,7 @@ export class PostgresConnector implements ReadOnlyConnector {
       JOIN pg_attribute ta ON ta.attrelid=tt.oid AND ta.attname=tc.column_name AND ta.attnum=ANY(pk.conkey)
       WHERE sc.table_schema NOT IN ('pg_catalog','information_schema') AND tc.table_schema NOT IN ('pg_catalog','information_schema')
         AND sc.table_schema NOT LIKE 'pg_toast%' AND tc.table_schema NOT LIKE 'pg_toast%' AND st.oid<>tt.oid
+        AND has_schema_privilege(current_user,sn.oid,'USAGE') AND has_schema_privilege(current_user,tn.oid,'USAGE') AND has_table_privilege(current_user,st.oid,'SELECT') AND has_table_privilege(current_user,tt.oid,'SELECT')
         AND NOT EXISTS(SELECT 1 FROM pg_constraint source_pk
           JOIN LATERAL unnest(source_pk.conkey) source_key(attnum) ON true
           JOIN pg_attribute source_attribute ON source_attribute.attrelid=source_pk.conrelid AND source_attribute.attnum=source_key.attnum
@@ -154,6 +158,19 @@ export class PostgresConnector implements ReadOnlyConnector {
       if(references.length>=this.maxRows)throw new Error('postgres_connector_result_limit_exceeded');
     }
     return references;
+  }
+
+  async viewDefinitions():Promise<Array<{qualifiedName:string;schema:string;definition:string|null}>>{
+    // With an empty search path, pg_get_viewdef qualifies every table with its schema, so lineage never guesses one.
+    const client=await this.pool.connect();let result;
+    try{
+      await client.query('BEGIN READ ONLY');await client.query("SET LOCAL search_path TO ''");
+      result=await client.query<{qualified_name:string;schema_name:string;definition:string|null}>(`SELECT schemaname||'.'||viewname AS qualified_name,schemaname AS schema_name,definition FROM pg_catalog.pg_views WHERE schemaname NOT IN ('pg_catalog','information_schema')
+        UNION ALL SELECT schemaname||'.'||matviewname,schemaname,definition FROM pg_catalog.pg_matviews ORDER BY 1 LIMIT $1`,[this.maxRows+1]);
+      await client.query('COMMIT');
+    }catch(error){await client.query('ROLLBACK').catch(()=>undefined);throw error;}finally{client.release();}
+    if(result.rows.length>this.maxRows)throw new Error('postgres_connector_result_limit_exceeded');
+    return result.rows.map(row=>({qualifiedName:row.qualified_name,schema:row.schema_name,definition:row.definition}));
   }
 
   async routines():Promise<Array<{qualifiedName:string;kind:'function'|'procedure';definition:string}>>{

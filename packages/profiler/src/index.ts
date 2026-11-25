@@ -3,6 +3,7 @@ import type { Pool, PoolClient } from 'pg';
 import { EncryptedArtifactStore, type StoredArtifact } from '@scaleinsyght/artifacts';
 import type { ConnectorScope, DiscoveryResult, ObjectProfile, ReadOnlyConnector, ScopeMode } from '@scaleinsyght/connectors';
 import { withTenant } from '@scaleinsyght/db';
+import { parseStatementLineage, statementHash, writeStatementLineage, SqlParserUnavailable, type LineageDialect, type StatementLineage } from '@scaleinsyght/graph';
 
 export interface ScopeRule {
   qualifiedName: string;
@@ -20,6 +21,8 @@ export interface ProfileSummary {
   inaccessible: number;
   createdVersions: number;
   elapsedMs: number;
+  /** Parsed view lineage (contract 6): views parsed, edges written and gaps recorded. */
+  lineage?: { views: number; tableEdges: number; columnEdges: number; gaps: number };
 }
 
 export async function saveConnectionScope(pool: Pool, tenantId: string, connectionId: string, rules: ScopeRule[]): Promise<void> {
@@ -243,7 +246,9 @@ export async function runProfile(
     }
   });
 
+  const lineage = await collectViewLineage(pool, input);
   return {
+    ...(lineage ? { lineage } : {}),
     jobId,
     listed: discovery.coverage.listed,
     profiled: profiles.length,
@@ -254,6 +259,54 @@ export async function runProfile(
     createdVersions,
     elapsedMs: performance.now() - started,
   };
+}
+
+const LINEAGE_DIALECTS: Partial<Record<string, LineageDialect>> = { postgres: 'postgres', sql_server: 'sql_server', snowflake: 'snowflake' };
+
+/** Parses every in-scope view's SQL with the SQLGlot service and writes table and column data flow with parsed evidence.
+ * A view whose SQL is hidden, unparseable, or reads something the connection does not expose gets an explicit gap. */
+async function collectViewLineage(pool: Pool, input: { tenantId: string; connectionId: string; connector: ReadOnlyConnector }): Promise<ProfileSummary['lineage']> {
+  const dialect = LINEAGE_DIALECTS[input.connector.type];
+  if (!dialect || !input.connector.viewDefinitions) return undefined;
+  const known = await withTenant(pool, input.tenantId, (client) => client.query<{ asset_id: string; qualified_name: string; asset_type: 'dataset' | 'field'; data_type: string | null }>(
+    `SELECT a.asset_id,a.qualified_name,a.asset_type,p.data_type FROM graph.assets a
+     LEFT JOIN LATERAL(SELECT data_type FROM profiler.field_profiles WHERE tenant_id=a.tenant_id AND asset_id=a.asset_id ORDER BY profile_version DESC LIMIT 1)p ON true
+     WHERE a.tenant_id=$1 AND a.source_id=$2 AND a.active AND a.asset_type IN ('dataset','field')`, [input.tenantId, input.connectionId]));
+  const datasets = new Map(known.rows.filter((row) => row.asset_type === 'dataset').map((row) => [row.qualified_name, row.asset_id]));
+  const fields = new Map(known.rows.filter((row) => row.asset_type === 'field').map((row) => [row.qualified_name, row.asset_id]));
+  const tables: Record<string, Record<string, string>> = {};
+  for (const row of known.rows) {
+    if (row.asset_type !== 'field') continue;
+    const split = row.qualified_name.lastIndexOf('.'); const table = row.qualified_name.slice(0, split);
+    if (datasets.has(table)) (tables[table] ??= {})[row.qualified_name.slice(split + 1)] = row.data_type ?? 'unknown';
+  }
+  const parsed: Array<{ target: string; hash: string; lineage?: StatementLineage; failure?: string }> = [];
+  for (const view of await input.connector.viewDefinitions()) {
+    if (!datasets.has(view.qualifiedName)) continue; // out of scope or not profiled: never parsed (non-negotiable 11)
+    if (!view.definition) { parsed.push({ target: view.qualifiedName, hash: '', failure: 'The view definition is hidden by the source (for example encrypted), so its lineage is unknown' }); continue; }
+    try { parsed.push({ target: view.qualifiedName, hash: statementHash(view.definition), lineage: await parseStatementLineage({ sql: view.definition, dialect, tables, default_schema: view.schema }) }); }
+    catch (error) {
+      parsed.push({ target: view.qualifiedName, hash: statementHash(view.definition), failure: error instanceof SqlParserUnavailable
+        ? 'The SQL parser was unavailable during profiling, so this view\'s lineage was not collected' : `The view SQL could not be parsed (${error instanceof Error ? error.message.replaceAll('_', ' ') : 'parse failed'})` });
+    }
+  }
+  if (!parsed.length) return { views: 0, tableEdges: 0, columnEdges: 0, gaps: 0 };
+  return withTenant(pool, input.tenantId, async (client) => {
+    const totals = { views: 0, tableEdges: 0, columnEdges: 0, gaps: 0 };
+    for (const item of parsed) {
+      if (!item.lineage) {
+        const targetId = datasets.get(item.target)!;
+        const open = await client.query('SELECT 1 FROM graph.gaps WHERE tenant_id=$1 AND between_asset_ids=$2::uuid[] AND reason=$3 AND closed_by_assertion_id IS NULL', [input.tenantId, [targetId], item.failure]);
+        if (!open.rowCount) await client.query('INSERT INTO graph.gaps(tenant_id,between_asset_ids,reason) VALUES($1,$2,$3)', [input.tenantId, [targetId], item.failure]);
+        totals.gaps++; continue;
+      }
+      const written = await writeStatementLineage(client, { tenantId: input.tenantId, target: item.target, lineage: item.lineage,
+        assets: { dataset: (name) => datasets.get(name), field: (name) => fields.get(name) },
+        evidenceMethod: 'parsed', collector: `${input.connector.type}-view-sql-v1`, evidenceType: 'parsed_view_sql', statementHash: item.hash });
+      totals.views++; totals.tableEdges += written.tableEdges; totals.columnEdges += written.columnEdges; totals.gaps += written.gaps;
+    }
+    return totals;
+  });
 }
 
 async function ensureAsset(

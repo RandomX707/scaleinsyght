@@ -16,6 +16,8 @@ export interface StructuredResult {
   minimumCellSize?: number;
   cellSizes?: number[];
   missingCategory?: {column: string; values: string[]};
+  /** A lineage step's answer, read from the metadata graph (no source data). */
+  lineage?: unknown;
   claims: Claim[];
   evidence: EvidenceRef[];
 }
@@ -24,7 +26,7 @@ const isSmall = (size: number | undefined) => size !== undefined && size > 0 && 
 
 export interface StructuredAnswer {
   metric: string;
-  bySource: Array<{ sourceId: string; connectorType: string; value: number | null; withheld?: true; categoryNotFound?: true; rows?: Array<Record<string,unknown>>; summary?: GroupSummary; groupLabel?: string; groupKeyLabel?: string }>;
+  bySource: Array<{ sourceId: string; connectorType: string; value: number | null; withheld?: true; categoryNotFound?: true; rows?: Array<Record<string,unknown>>; summary?: GroupSummary; groupLabel?: string; groupKeyLabel?: string; lineage?: unknown }>;
   claims: Claim[];
   evidence: EvidenceRef[];
   trust: { groupCount: number; sourceCount: number; joins: Array<'group' | 'cross_group'> };
@@ -45,7 +47,8 @@ export function collateGroupResults(results: StructuredResult[]): StructuredAnsw
   }
   return {
     metric: results[0]!.metric,
-    bySource: results.map(({ sourceId, connectorType, value, rows, groupLabel, groupKeyLabel, minimumCellSize, cellSizes, missingCategory }) => {
+    bySource: results.map(({ sourceId, connectorType, value, rows, groupLabel, groupKeyLabel, minimumCellSize, cellSizes, missingCategory, lineage }) => {
+      if (lineage) return { sourceId, connectorType, value, lineage };
       const labels = { ...(groupLabel ? { groupLabel } : {}), ...(groupKeyLabel ? { groupKeyLabel } : {}) };
       if (missingCategory) return {sourceId, connectorType, value: null, categoryNotFound: true};
       if (!rows && isSmall(minimumCellSize)) {
@@ -97,7 +100,7 @@ export async function finalizeAnalyticRun(pool: Pool, runId: string, compose?: (
       metric: 'unavailable', bySource: [], claims: [], evidence: [], trust: { groupCount: 0, sourceCount: 0, joins: [] },
     };
     let compositionFailed=false;let failureReason:string|undefined;
-    if (answer.bySource.some(source => source.withheld || source.categoryNotFound || source.value === 0 && !source.rows)) {
+    if (answer.bySource.some(source => !source.lineage && (source.withheld || source.categoryNotFound || source.value === 0 && !source.rows))) {
       answer.claims = answer.bySource.map((source, index) => {
         const refs = results[index]!.evidence;
         const name = refs[0]?.locator.split(' · ')[0] ?? source.connectorType;

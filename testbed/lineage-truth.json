@@ -1,0 +1,204 @@
+{
+  "_note": "Expected lineage, written by hand from the SQL in testbed/postgres/schema.sql, testbed/sqlserver/schema.sql and testbed/dbt/models. Independent of the product. The product's read-only PostgreSQL login cannot see the dbt analytics schema (known issue K2), so dbt models are recorded under the dbt connection.",
+  "views": {
+    "postgres": {
+      "public.patient_encounter_summary": {
+        "reads": [
+          "public.encounters",
+          "public.patients"
+        ],
+        "columns": {
+          "patient_id": [
+            "public.patients.patient_id"
+          ],
+          "encounter_count": [
+            "public.encounters.encounter_id"
+          ]
+        }
+      },
+      "public.department_order_summary": {
+        "reads": [
+          "public.departments",
+          "public.orders"
+        ],
+        "columns": {
+          "department_id": [
+            "public.departments.department_id"
+          ],
+          "order_count": [
+            "public.orders.order_id"
+          ],
+          "order_amount": [
+            "public.orders.amount"
+          ]
+        }
+      }
+    },
+    "sql_server": {
+      "dbo.patient_encounter_summary": {
+        "reads": [
+          "dbo.encounters",
+          "dbo.patients"
+        ],
+        "columns": {
+          "patient_id": [
+            "dbo.patients.patient_id"
+          ],
+          "encounter_count": [
+            "dbo.encounters.encounter_id"
+          ]
+        }
+      },
+      "dbo.department_order_summary": {
+        "reads": [
+          "dbo.departments",
+          "dbo.orders"
+        ],
+        "columns": {
+          "department_id": [
+            "dbo.departments.department_id"
+          ],
+          "order_count": [
+            "dbo.orders.order_id"
+          ],
+          "order_amount": [
+            "dbo.orders.amount"
+          ]
+        }
+      }
+    }
+  },
+  "dbt": {
+    "models": {
+      "analytics.stg_orders": {
+        "declaredReads": [
+          "public.orders"
+        ],
+        "columns": {
+          "order_id": [
+            "public.orders.order_id"
+          ],
+          "encounter_id": [
+            "public.orders.encounter_id"
+          ],
+          "department_id": [
+            "public.orders.department_id"
+          ],
+          "order_type": [
+            "public.orders.order_type"
+          ],
+          "order_status": [
+            "public.orders.order_status"
+          ],
+          "ordered_at": [
+            "public.orders.ordered_at"
+          ],
+          "amount": [
+            "public.orders.amount"
+          ]
+        }
+      },
+      "analytics.stg_encounters": {
+        "declaredReads": [
+          "public.encounters"
+        ],
+        "columns": {
+          "encounter_id": [
+            "public.encounters.encounter_id"
+          ],
+          "department_id": [
+            "public.encounters.department_id"
+          ],
+          "provider_id": [
+            "public.encounters.provider_id"
+          ],
+          "admitted_at": [
+            "public.encounters.admitted_at"
+          ],
+          "discharged_at": [
+            "public.encounters.discharged_at"
+          ]
+        }
+      },
+      "analytics.mart_department_orders": {
+        "declaredReads": [
+          "analytics.stg_orders",
+          "public.departments"
+        ],
+        "columns": {
+          "department_id": [
+            "public.departments.department_id"
+          ],
+          "department_name": [
+            "public.departments.department_name"
+          ],
+          "order_count": [
+            "analytics.stg_orders.order_id"
+          ],
+          "order_amount": [
+            "analytics.stg_orders.amount"
+          ]
+        }
+      },
+      "analytics.mart_provider_encounters": {
+        "declaredReads": [
+          "analytics.stg_encounters",
+          "public.providers"
+        ],
+        "columns": {
+          "provider_id": [
+            "public.providers.provider_id"
+          ],
+          "provider_name": [
+            "public.providers.provider_name"
+          ],
+          "specialty": [
+            "public.providers.specialty"
+          ],
+          "encounter_count": [
+            "analytics.stg_encounters.encounter_id"
+          ]
+        }
+      },
+      "analytics.mart_order_claims": {
+        "declaredReads": [
+          "analytics.stg_orders"
+        ],
+        "columns": {
+          "order_id": [
+            "analytics.stg_orders.order_id"
+          ],
+          "department_id": [
+            "analytics.stg_orders.department_id"
+          ],
+          "order_amount": [
+            "analytics.stg_orders.amount"
+          ]
+        }
+      }
+    },
+    "gaps": [
+      {
+        "asset": "analytics.mart_order_claims",
+        "reasonIncludes": "billing.claims"
+      },
+      {
+        "asset": "analytics.mart_order_claims.claim_amount",
+        "reasonIncludes": "billing.claims"
+      }
+    ],
+    "modelsInDbtConnection": [
+      "analytics.mart_department_orders",
+      "analytics.mart_order_claims",
+      "analytics.mart_provider_encounters",
+      "analytics.stg_encounters",
+      "analytics.stg_orders"
+    ]
+  },
+  "endToEnd": {
+    "analytics.mart_department_orders.order_amount": [
+      "analytics.stg_orders.amount",
+      "public.orders.amount"
+    ]
+  }
+}

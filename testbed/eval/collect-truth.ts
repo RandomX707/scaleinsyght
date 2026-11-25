@@ -5,7 +5,7 @@ import ExcelJS from 'exceljs';
 import { runSqlServerAdminQuery } from '../sqlserver/admin-query.js';
 
 export type Source = 'p' | 's' | 'x';
-export type Result = number | Array<{label: string; value: number}>;
+export type Result = number | Array<{label: string; value: number}> | {lineage: string[]; gapIncludes?: string};
 export type Expected = Partial<Record<Source, Result>> | null;
 type SheetQuery = [string, string | null, string | null, string | number | null, number | null];
 

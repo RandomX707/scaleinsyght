@@ -27,7 +27,7 @@ type Item = {id: string; status: 'correct' | 'refused correctly' | 'wrong' | 'fa
 const onlySet = process.argv.find(arg=>arg.startsWith('--set='))?.slice('--set='.length);
 if (onlySet && onlySet !== 'heldout2') throw new Error('Only --set=heldout2 is supported');
 // heldout2 has its own SQL-derived truth and is run once, after tuning (testbed/eval/heldout2-truth.ts).
-const truth = {...await load('truth.json'), ...(onlySet === 'heldout2' ? await load('heldout2-truth.json') : {})} as Record<string, Expected>;
+const truth = {...await load('truth.json'), ...Object.fromEntries(Object.entries(await load('lineage-truth.json')).filter(([id]) => /^Q\d+$/.test(id))), ...(onlySet === 'heldout2' ? await load('heldout2-truth.json') : {})} as Record<string, Expected>;
 const smoke = process.argv.includes('--smoke');
 const selectedDevelopmentCases = process.argv.find(arg=>arg.startsWith('--questions='))?.slice('--questions='.length).split(',');
 if (selectedDevelopmentCases?.some(id=>!/^Q[0-9]{2}$/.test(id))) throw new Error('Select development case IDs only');
@@ -82,10 +82,20 @@ async function connect() {
     await checked(path + '/activate', 'POST', {});
     await checked(path + '/discover', 'POST', {jobType: 'profile'});
   }
+  // The testbed dbt project builds into the PostgreSQL testbed; its artifacts come from pnpm testbed:dbt.
+  const dbt = await checked('/connections', 'POST', {connectorType: 'dbt', displayName: 'Hospital dbt project', warehouseConnectionId: ids.p});
+  await checked('/connections/' + dbt.connectionId + '/dbt-artifacts', 'POST', {manifest: JSON.parse(await readFile('testbed/dbt/target/manifest.json', 'utf8')), catalog: JSON.parse(await readFile('testbed/dbt/target/catalog.json', 'utf8'))});
 }
-type Actual = {connectorType: string; value?: number | null; withheld?: true; categoryNotFound?: true; rows?: Array<{group_value: string; group_key?: string; value: number | string}>};
+type Actual = {connectorType: string; sourceId?: string; value?: number | null; withheld?: true; categoryNotFound?: true; rows?: Array<{group_value: string; group_key?: string; value: number | string}>;
+  lineage?: {direction: string; steps: Array<{from: string; to: string}>; gaps: Array<{asset: string; reason: string}>}};
 function same(expected: Result, actual: Actual) {
   if (actual.categoryNotFound) return false;
+  if (typeof expected === 'object' && !Array.isArray(expected)) {
+    // Lineage: exactly the expected related objects, and any expected gap stated.
+    if (!actual.lineage) return false;
+    const related = [...new Set(actual.lineage.steps.map(step => actual.lineage!.direction === 'upstream' ? step.from : step.to))].sort();
+    return JSON.stringify(related) === JSON.stringify([...expected.lineage].sort()) && (!expected.gapIncludes || actual.lineage.gaps.some(gap => gap.reason.includes(expected.gapIncludes!)));
+  }
   if (actual.withheld && typeof expected === 'number') return expected > 0 && expected < 11 && actual.value == null && !actual.rows?.length;
   if (typeof expected === 'number') return actual.value != null && Number(actual.value) === expected && !actual.rows?.length;
   const rows = actual.rows;
@@ -140,7 +150,11 @@ async function evaluate(test: Case): Promise<Item> {
       }
       if (turns.length < test.turns.length) continue;
       const expected = truth[test.id];
-      status = expected && claims.length && evidence.length === actual.length && actual.length === Object.keys(expected).length &&
+      // A query answer carries one evidence item per source; a lineage answer one per recorded link, each tied to an answered source.
+      const evidenced = actual.some(item => item.lineage)
+        ? actual.every(item => evidence.some((ref: {source_id: string}) => ref.source_id === item.sourceId)) && evidence.every((ref: {source_id: string}) => actual.some(item => item.sourceId === ref.source_id))
+        : evidence.length === actual.length;
+      status = expected && claims.length && evidenced && actual.length === Object.keys(expected).length &&
         (Object.entries(expected) as [Source, Result][]).every(([source, value]) =>
           actual.some(item => item.connectorType === catalog[source] && same(value, item))) ? 'correct' : 'wrong';
     } catch (error) {
