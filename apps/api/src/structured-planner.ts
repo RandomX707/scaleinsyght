@@ -320,10 +320,14 @@ export function describePlan(steps: DecodedStep[], catalog: PlannerCatalog): str
 
 /** A plain description of a lineage request for the verification call. */
 export function describeLineage(request: LineageRequest, catalog: PlannerCatalog): string {
-  const source = catalog[request.index]?.name ?? `source ${request.index + 1}`;
+  const name = catalog[request.index]?.name ?? `source ${request.index + 1}`;
+  const inCatalog = (catalog[request.index]?.assets ?? []).some(item => item.qualified_name === request.asset || item.columns.some(column => item.qualified_name + '.' + column.name === request.asset));
+  // A model of a dbt project linked to the source is not in the source's own catalog; say so, so the check can judge it.
+  const source = inCatalog ? name : `${name} and the dbt project built into it (${request.asset} is a dbt model or model column, recorded in the metadata graph)`;
+  const note = ' (the lineage is read from the metadata graph after this check, not from the metadata shown here; judge only whether the object and direction match the question)';
   return request.direction === 'upstream'
-    ? `${source}: list where the data in ${request.asset} comes from, every upstream table or column with its recorded lineage evidence`
-    : `${source}: list everything that reads ${request.asset} and would be affected if it changed, every downstream table or column with its recorded lineage evidence`;
+    ? `${source}: list where the data in ${request.asset} comes from, every upstream table or column with its recorded lineage evidence${note}`
+    : `${source}: list everything that reads ${request.asset} and would be affected if it changed, every downstream table or column with its recorded lineage evidence${note}`;
 }
 
 export const verificationSchema: Schema = object({
