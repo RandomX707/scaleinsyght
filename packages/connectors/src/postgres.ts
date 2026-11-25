@@ -1,3 +1,4 @@
+import { columnScope, objectScope } from './scope.js';
 import { CATALOG_ROW_LIMIT } from './limits.js';
 import { createHash } from 'node:crypto';
 import { Pool } from 'pg';
@@ -85,9 +86,10 @@ export class PostgresConnector implements ReadOnlyConnector {
       const qualifiedName=`${table.schema_name}.${table.table_name}`;this.current.set(qualifiedName,table);result.coverage.listed++;
       // Listed but not readable by this login (no schema USAGE or no SELECT): recorded by name only, never profiled.
       if(table.readable===false){result.inaccessibleObjects.push({qualifiedName,type:table.table_type==='VIEW'?'view':'table'});result.coverage.inaccessible++;continue;}
-      if(input.scope?.exclude?.includes(qualifiedName)){result.excludedObjects.push({qualifiedName,type:table.table_type==='VIEW'?'view':'table'});continue;}
-      if(input.scope?.listOnly?.includes(qualifiedName)){result.listOnlyObjects.push({qualifiedName,type:table.table_type==='VIEW'?'view':'table'});continue;}
-      if(input.scope?.profile?.length&&!input.scope.profile.includes(qualifiedName)){result.excludedObjects.push({qualifiedName,type:table.table_type==='VIEW'?'view':'table'});continue;}
+      const objectType=table.table_type==='VIEW'?'view':'table';
+      const mode=objectScope(input.scope,qualifiedName,objectType);
+      if(mode==='exclude'){result.excludedObjects.push({qualifiedName,type:objectType});continue;}
+      if(mode==='list_only'){result.listOnlyObjects.push({qualifiedName,type:objectType});continue;}
       // The change signature covers the columns and, for base tables, the row count, so a nightly run re-profiles a table
       // that only gained or lost rows (decision 48).
       const columns=await this.columns(table);
@@ -106,8 +108,8 @@ export class PostgresConnector implements ReadOnlyConnector {
 
   async profile(key:string,scope?:ConnectorScope):Promise<ObjectProfile>{
     const found=[...this.current.entries()].find(([name])=>assetKey(name)===key);if(!found)throw new Error('asset_not_found');
-    const [qualifiedName,table]=found;if(scope?.exclude?.includes(qualifiedName)||scope?.listOnly?.includes(qualifiedName)||(scope?.profile?.length&&!scope.profile.includes(qualifiedName)))throw new Error('object_out_of_scope');
-    const columns=await this.columns(table);let rowCount:number|null=null;
+    const [qualifiedName,table]=found;if(objectScope(scope,qualifiedName,table.table_type==='VIEW'?'view':'table')!=='profile')throw new Error('object_out_of_scope');
+    const columns=(await this.columns(table)).filter(col=>columnScope(scope,qualifiedName,col.column_name)!=='exclude');let rowCount:number|null=null;
     try {
       const count=await this.pool.query<{count:string}>(`SELECT count(*)::text AS count FROM ${quoteIdentifier(table.schema_name)}.${quoteIdentifier(table.table_name)}`);
       rowCount=Number(count.rows[0]!.count);
@@ -115,8 +117,8 @@ export class PostgresConnector implements ReadOnlyConnector {
     const structural=columns.map(({column_name,data_type,is_nullable,comment})=>({column_name,data_type,is_nullable,comment}));
     // Bounded text samples feed the sensitivity detector only; they are discarded here and never stored or sent to a model (decision 41).
     const sampled=new Map<string,string[]>();
-    for(const column of columns)if(rowCount!==null&&['text','character varying','character'].includes(column.data_type)){const rows=await this.pool.query<{v:string}>(`SELECT ${quoteIdentifier(column.column_name)}::text AS v FROM ${quoteIdentifier(table.schema_name)}.${quoteIdentifier(table.table_name)} WHERE ${quoteIdentifier(column.column_name)} IS NOT NULL LIMIT 200`);sampled.set(column.column_name,rows.rows.map(row=>row.v));}
-    const classified=new Map(columns.map(column=>{const declared=column.comment?.match(/sensitivity:([a-z_]+)/g)?.map(tag=>tag.slice('sensitivity:'.length))??[];return [column.column_name,classifyColumn({name:column.column_name,declaredTags:declared,sample:sampled.get(column.column_name)??[]})] as const;}));
+    for(const column of columns)if(rowCount!==null&&!columnScope(scope,qualifiedName,column.column_name)&&['text','character varying','character'].includes(column.data_type)){const rows=await this.pool.query<{v:string}>(`SELECT ${quoteIdentifier(column.column_name)}::text AS v FROM ${quoteIdentifier(table.schema_name)}.${quoteIdentifier(table.table_name)} WHERE ${quoteIdentifier(column.column_name)} IS NOT NULL LIMIT 200`);sampled.set(column.column_name,rows.rows.map(row=>row.v));}
+    const classified=new Map(columns.map(column=>{const declared=column.comment?.match(/sensitivity:([a-z_]+)/g)?.map(tag=>tag.slice('sensitivity:'.length))??[];return [column.column_name,classifyColumn({name:column.column_name,declaredTags:declared,sample:sampled.get(column.column_name)??[],...(columnScope(scope,qualifiedName,column.column_name)==='mask'?{declaredTags:[...(declared??[]),'personal']}:{})})] as const;}));
     // Null rate, distinct count and average text length on untagged scalar columns, in one aggregate query per table.
     const measurable=rowCount!==null&&rowCount>0&&rowCount<=COLUMN_STATISTICS_ROW_LIMIT?columns.filter(column=>!classified.get(column.column_name)!.tags.length&&POSTGRES_MEASURABLE.has(column.data_type)):[];
     const statistics=new Map<string,ColumnStatistics>();
@@ -128,7 +130,7 @@ export class PostgresConnector implements ReadOnlyConnector {
     return {assetKey:key,qualifiedName,version:createHash('sha256').update(JSON.stringify(structural)).digest('hex'),rowCount,columns:columns.map(column=>{const found=classified.get(column.column_name)!;return {name:column.column_name,dataType:column.data_type,isNullable:column.is_nullable==='YES',sensitivityTags:found.tags,sensitivityEvidence:found.evidence,statistics:statistics.get(column.column_name)??UNMEASURED};})};
   }
 
-  async structuralReferences():Promise<PostgresStructuralReference[]>{
+  async structuralReferences(scope?: ConnectorScope):Promise<PostgresStructuralReference[]>{
     const result=await this.pool.query<PostgresStructuralReference>(`SELECT local_ns.nspname||'.'||local_table.relname AS "from",target_ns.nspname||'.'||target_table.relname AS "to",
       local_column.attname AS "fromColumn",target_column.attname AS "toColumn"
       FROM pg_constraint fk
@@ -145,7 +147,8 @@ export class PostgresConnector implements ReadOnlyConnector {
       AND EXISTS(SELECT 1 FROM information_schema.tables visible_target WHERE visible_target.table_schema=target_ns.nspname AND visible_target.table_name=target_table.relname)
       ORDER BY local_ns.nspname,local_table.relname,local_key.position LIMIT $1`,[this.maxCatalogRows+1]);
     if(result.rows.length>this.maxCatalogRows)throw new Error('postgres_connector_result_limit_exceeded');
-    const references=result.rows;
+    const permits=(table:string,column:string)=>objectScope(scope,table,'table')==='profile'&&!columnScope(scope,table,column);
+    const references=result.rows.filter(item=>permits(item.from,item.fromColumn)&&permits(item.to,item.toColumn));
     // Candidates by name and type: a column with the same name and type as another table's single-column primary key.
     // The catalog is read with two plain queries and matched here: a planner-chosen join over pg_catalog took minutes on
     // 5,000 tables because catalog statistics underestimate large catalogs. A column that already has a declared foreign
@@ -181,6 +184,7 @@ export class PostgresConnector implements ReadOnlyConnector {
     const inferredCandidates={rows:found};
     const declared=new Set(references.map(item=>`${item.from}\0${item.fromColumn}\0${item.to}\0${item.toColumn}`));
     for(const candidate of inferredCandidates.rows){
+      if(!permits(candidate.from,candidate.fromColumn)||!permits(candidate.to,candidate.toColumn))continue;
       if(declared.has(`${candidate.from}\0${candidate.fromColumn}\0${candidate.to}\0${candidate.toColumn}`))continue;
       const [fromSchema,fromTable]=candidate.from.split('.');const [toSchema,toTable]=candidate.to.split('.');if(!fromSchema||!fromTable||!toSchema||!toTable)continue;
       const counts=await this.pool.query<{source_count:string;matched_count:string}>(`SELECT count(src.${quoteIdentifier(candidate.fromColumn)})::text AS source_count,count(dst.${quoteIdentifier(candidate.toColumn)})::text AS matched_count FROM ${quoteIdentifier(fromSchema)}.${quoteIdentifier(fromTable)} src LEFT JOIN ${quoteIdentifier(toSchema)}.${quoteIdentifier(toTable)} dst ON src.${quoteIdentifier(candidate.fromColumn)}=dst.${quoteIdentifier(candidate.toColumn)}`);

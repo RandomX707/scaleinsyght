@@ -15,7 +15,7 @@ import { OpenAIModelGateway } from '@scaleinsyght/model-gateway';
 import { authorise } from '@scaleinsyght/policy';
 import { checkStepAgent } from '@scaleinsyght/registry';
 import { answerLineageRequest } from '@scaleinsyght/graph';
-import { claimDueNightly, connectorForConnection, readConnectionScope, runProfile, scopeForConnector } from '@scaleinsyght/profiler';
+import { claimDueNightly, connectorForConnection, checkQueryScope, runProfile } from '@scaleinsyght/profiler';
 import { claimDueSchedule, markScheduleSlotSkipped, markScheduleSlotStarted, persistReportSnapshot, startScheduledReportRun } from '@scaleinsyght/reports';
 
 config({path:fileURLToPath(new URL('../../../.env',import.meta.url))});
@@ -141,10 +141,12 @@ while(!stopping){
     }else{
     const intent=step.inputs.query_intent;
     if(!intent||!['postgres','sql_server','excel'].includes(task.connectorType))throw new Error('source_query_executor_unavailable');
-    const scope=scopeForConnector(await readConnectionScope(pool,claim.tenantId,step.source_id));
     const query=intent as Record<string,unknown>;
     const targets=[query.table,query.leftTable,query.rightTable].filter((value):value is string=>typeof value==='string');
-    if(targets.some(name=>scope?.exclude?.includes(name)||scope?.listOnly?.includes(name)||(scope?.profile?.length&&!scope.profile.includes(name))))throw new Error('policy_revoked');
+    const aggregate=query.aggregate as {column?:unknown}|undefined;
+    const filters=Array.isArray(query.filters)?query.filters as Array<{column?:unknown}>:[];
+    const columns=new Set([query.column,query.groupBy,query.groupKey,query.entityColumn,query.leftColumn,query.rightColumn,aggregate?.column,...filters.map(filter=>filter.column)].filter((value):value is string=>typeof value==='string'));
+    const scope=await checkQueryScope(pool,claim.tenantId,step.source_id,targets,columns);
     let connector: ReadOnlyConnector;
     if(task.connectorType==='excel'){
      // The workbook is decrypted for this step only and queried in an in-memory DuckDB copy that close() discards.

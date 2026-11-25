@@ -1,0 +1,11 @@
+.connector-controls { display:grid; gap:1rem; }
+.control-totals { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:.75rem; }
+.control-totals article { display:grid; gap:.3rem; }
+.control-totals strong { font-size:1.5rem; }
+.control-boundary { background:#eef0fc; border:1px solid #c7cdf4; border-radius:.65rem; padding:.85rem 1rem; }
+.control-diff { position:sticky; top:0; z-index:2; padding:.75rem 1rem; background:#eef0fc; border:1px solid #909ce5; border-radius:.65rem; display:flex; align-items:center; justify-content:space-between; gap:1rem; }
+.control-diff p { margin:.25rem 0 0; }
+.control-group { border:1px solid #e1e5ef; border-radius:.65rem; padding:.85rem; margin:.5rem 0; }
+.control-rule-form { display:flex; flex-wrap:wrap; align-items:end; gap:.7rem; }
+.control-rule-form label { flex:1 1 10rem; }
+@media(max-width:720px) { .control-totals { grid-template-columns:repeat(2,minmax(0,1fr)); } }

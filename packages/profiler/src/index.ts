@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import { EncryptedArtifactStore, type StoredArtifact } from '@scaleinsyght/artifacts';
-import type { ConnectorScope, DiscoveryResult, ObjectProfile, ReadOnlyConnector, ScopeMode } from '@scaleinsyght/connectors';
+import { objectScope, type ControlsPolicy, type ConnectorScope, type DiscoveryResult, type ObjectProfile, type ReadOnlyConnector, type ScopeMode } from '@scaleinsyght/connectors';
 import { withTenant } from '@scaleinsyght/db';
+import { queueNewObjectReview } from './controls.js';
 import { runIdAgent } from './id-agent.js';
 import { captureDefinitions } from './definitions.js';
 export { analyseDefinition, captureDefinitions } from './definitions.js';
@@ -77,6 +78,31 @@ export function scopeForConnector(rules: ScopeRule[]): ConnectorScope | undefine
   return result;
 }
 
+export async function readEffectiveScope(pool:Pool, tenantId:string, connectionId:string):Promise<ConnectorScope|undefined> {
+  const scope=scopeForConnector(await readConnectionScope(pool,tenantId,connectionId));
+  const saved=await withTenant(pool,tenantId,async db=>(await db.query<{policy:ControlsPolicy;known_objects:string[]}>(
+    'SELECT policy,known_objects FROM registry.connection_controls WHERE tenant_id=$1 AND connection_id=$2',
+    [tenantId,connectionId],
+  )).rows[0]);
+  return saved ? {...scope,policy:saved.policy,knownObjects:new Set(saved.known_objects)} : scope;
+}
+
+export async function checkQueryScope(pool:Pool, tenantId:string, sourceId:string, targets:string[], columns:ReadonlySet<string>):Promise<ConnectorScope|undefined> {
+  const scope=await readEffectiveScope(pool,tenantId,sourceId);
+  const catalog=scope?.policy ? await withTenant(pool,tenantId,db=>db.query<{object_name:string;object_type:string}>(
+    `SELECT DISTINCT ON (o.object_name) o.object_name,o.object_type
+       FROM profiler.job_objects o JOIN profiler.jobs j USING(tenant_id,job_id)
+      WHERE j.tenant_id=$1 AND j.connection_id=$2 AND o.object_name=ANY($3::text[])
+      ORDER BY o.object_name,j.updated_at DESC`,[tenantId,sourceId,targets])) : undefined;
+  const types=new Map(catalog?.rows.map(row=>[row.object_name,row.object_type]));
+  if(targets.some(name=>(scope?.policy&&!types.has(name))||objectScope(scope,name,types.get(name)??'table')!=='profile'))throw new Error('policy_revoked');
+  for(const rule of scope?.policy?.columnRules??[]){
+    const split=rule.qualifiedName.lastIndexOf('.');
+    if(targets.includes(rule.qualifiedName.slice(0,split))&&columns.has(rule.qualifiedName.slice(split+1)))throw new Error('policy_revoked');
+  }
+  return scope;
+}
+
 function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
   if (value && typeof value === 'object') {
@@ -91,8 +117,7 @@ export async function runProfile(
   input: { tenantId: string; connectionId: string; connector: ReadOnlyConnector; jobType: 'discovery' | 'profile' | 'nightly'; scheduled?: boolean },
 ): Promise<ProfileSummary> {
   const started = performance.now();
-  const rules = await readConnectionScope(pool, input.tenantId, input.connectionId);
-  const scope = scopeForConnector(rules);
+  const scope = await readEffectiveScope(pool, input.tenantId, input.connectionId);
   const mode = input.jobType === 'nightly' ? 'nightly' : 'profile';
   const before = await readProfileState(pool, input.tenantId, input.connectionId);
   const discovery: DiscoveryResult = await input.connector.discover(scope ? { mode, scope } : { mode });
@@ -170,7 +195,7 @@ export async function runProfile(
       }
     }
 
-    const structuralReferences=input.connector.structuralReferences?await input.connector.structuralReferences():[];
+    const structuralReferences=input.connector.structuralReferences?await input.connector.structuralReferences(scope):[];
     for (const reference of structuralReferences) {
       const fromId = fieldAssets.get(`${reference.from}.${reference.fromColumn}`);
       const toId = fieldAssets.get(`${reference.to}.${reference.toColumn}`);
@@ -202,7 +227,7 @@ export async function runProfile(
       }
     }
 
-    const inventoryNames=new Set(objectStates.map((object)=>object.name));
+    const inventoryNames=new Set(objectStates.filter(object=>object.mode==='profile'&&object.state!=='INACCESSIBLE').map(object=>object.name));
     const profiledNames=new Set(profiles.map(({object})=>object.qualifiedName));
     const profiledFields=new Set(profiles.flatMap(({object,profile})=>profile.columns.map((column)=>`${object.qualifiedName}.${column.name}`)));
     const existingAssets=await client.query<{asset_id:string;qualified_name:string;asset_type:'dataset'|'field'}>(
@@ -269,8 +294,11 @@ export async function runProfile(
   const lineage = await collectViewLineage(pool, input);
   const definitions = await captureDefinitions(pool, input);
   const masterKey = process.env.ARTIFACT_MASTER_KEY ? Buffer.from(process.env.ARTIFACT_MASTER_KEY, 'base64') : undefined;
-  const ids = await runIdAgent(pool, { ...input, ...(masterKey ? { masterKey } : {}) });
-  const findings = await recordFindings(pool, { tenantId: input.tenantId, connectionId: input.connectionId, jobId, before, checked: discovery.objects.length + discovery.unchangedObjects.length, scannedObjects: new Set(profiles.map(({ object }) => object.qualifiedName)) });
+  if(input.jobType==='nightly'&&scope?.policy?.newObjects==='approve'){
+    await queueNewObjectReview(pool,input.tenantId,input.connectionId,discovery.listOnlyObjects.map(object=>object.qualifiedName));
+  }
+  const ids = await runIdAgent(pool, { ...input, ...(scope?{scope}:{}), ...(masterKey ? { masterKey } : {}) });
+  const findings = await recordFindings(pool, { tenantId: input.tenantId, connectionId: input.connectionId, jobId, before, inventory:new Set([...discovery.objects,...discovery.unchangedObjects,...discovery.excludedObjects,...discovery.listOnlyObjects,...discovery.inaccessibleObjects].map(object=>object.qualifiedName)), checked: discovery.objects.length + discovery.unchangedObjects.length, scannedObjects: new Set(profiles.map(({ object }) => object.qualifiedName)) });
   // Every profiled database or workbook connection is refreshed nightly; the first refresh is a day after activation.
   await withTenant(pool, input.tenantId, (client) => client.query(
     `INSERT INTO profiler.nightly_schedules(tenant_id,connection_id,next_run_at) SELECT $1,$2,clock_timestamp()+interval '1 day'
@@ -501,3 +529,5 @@ export { runIdAgent, formatPattern, ID_FINGERPRINT_LIMIT } from './id-agent.js';
 export { readProfileState, recordFindings, listFindings, decideFinding, ROW_CHANGE_SHARE, type FindingRow } from './findings.js';
 export { claimDueNightly } from './nightly.js';
 export { connectorForConnection } from './connector-for.js';
+
+export { getControls, saveControls, listControlChanges, decideControlChange } from './controls.js';

@@ -1,3 +1,4 @@
+import { columnScope, objectScope } from './scope.js';
 import { CATALOG_ROW_LIMIT } from './limits.js';
 import { createHash } from 'node:crypto';
 import sql from 'mssql';
@@ -91,18 +92,21 @@ export class SqlServerConnector implements ReadOnlyConnector {
       const type = object.object_type === 'V' ? 'view' : 'table';
       const key = keyFor(qualifiedName);
       this.objects.set(qualifiedName, object); result.coverage.listed++;
-      if (input.scope?.exclude?.includes(qualifiedName) || (input.scope?.profile?.length && !input.scope.profile.includes(qualifiedName))) { result.excludedObjects.push({ qualifiedName, type }); continue; }
-      if (input.scope?.listOnly?.includes(qualifiedName)) { result.listOnlyObjects.push({ qualifiedName, type }); continue; }
+      const objectType=type;
+      const mode=objectScope(input.scope,qualifiedName,objectType);
+      if(mode==='exclude'){result.excludedObjects.push({qualifiedName,type:objectType});continue;}
+      if(mode==='list_only'){result.listOnlyObjects.push({qualifiedName,type:objectType});continue;}
       result.objects.push({ assetKey: key, qualifiedName, type, scopeMode: 'profile' }); result.coverage.accessible++;
     }
     return result;
   }
 
-  async profile(assetKey: string): Promise<ObjectProfile> {
+  async profile(assetKey: string, scope?: ConnectorScope): Promise<ObjectProfile> {
     const found = [...this.objects].find(([name]) => keyFor(name) === assetKey);
     if (!found) throw new Error('asset_not_found');
     const [qualifiedName, object] = found;
-    const columns = await this.columns(object);
+    if(objectScope(scope,qualifiedName,object.object_type==='V'?'view':'table')!=='profile') throw new Error('object_out_of_scope');
+    const columns = (await this.columns(object)).filter(column=>columnScope(scope,qualifiedName,column.column_name)!=='exclude');
     const fullName = `${quote(object.schema_name)}.${quote(object.object_name)}`;
     let rowCount: number | null = null;
     try {
@@ -111,8 +115,8 @@ export class SqlServerConnector implements ReadOnlyConnector {
     } catch { /* Unavailable counts are excluded from change comparisons. */ }
     // Bounded text samples feed the sensitivity detector only; they are discarded here and never stored or sent to a model (decision 41).
     const sampled = new Map<string, string[]>();
-    for (const column of columns) if (rowCount !== null && ['nvarchar', 'varchar', 'nchar', 'char'].includes(column.data_type)) { const rows = await (await this.request()).query<{ v: string }>(`SELECT TOP (200) CAST(${quote(column.column_name)} AS nvarchar(400)) AS v FROM ${fullName} WHERE ${quote(column.column_name)} IS NOT NULL`); sampled.set(column.column_name, rows.recordset.map((row) => row.v)); }
-    const classified = new Map(columns.map((column) => [column.column_name, classifyColumn({ name: column.column_name, declaredTags: column.sensitivity ? [column.sensitivity.replace(/^sensitivity:/, '')] : [], sample: sampled.get(column.column_name) ?? [] })] as const));
+    for (const column of columns) if (rowCount !== null && !columnScope(scope,qualifiedName,column.column_name) && ['nvarchar', 'varchar', 'nchar', 'char'].includes(column.data_type)) { const rows = await (await this.request()).query<{ v: string }>(`SELECT TOP (200) CAST(${quote(column.column_name)} AS nvarchar(400)) AS v FROM ${fullName} WHERE ${quote(column.column_name)} IS NOT NULL`); sampled.set(column.column_name, rows.recordset.map((row) => row.v)); }
+    const classified = new Map(columns.map((column) => [column.column_name, classifyColumn({ name: column.column_name, declaredTags: [...(column.sensitivity ? [column.sensitivity.replace(/^sensitivity:/, '')] : []), ...(columnScope(scope,qualifiedName,column.column_name)==='mask'?['personal']:[])], sample: sampled.get(column.column_name) ?? [] })] as const));
     // Null rate, distinct count and average text length on untagged scalar columns, in one aggregate query per table.
     const measurable = rowCount !== null && rowCount > 0 && rowCount <= COLUMN_STATISTICS_ROW_LIMIT ? columns.filter((column) => !classified.get(column.column_name)!.tags.length && SQL_SERVER_MEASURABLE.has(column.data_type)) : [];
     const statistics = new Map<string, ColumnStatistics>();
@@ -124,13 +128,14 @@ export class SqlServerConnector implements ReadOnlyConnector {
     return { assetKey, qualifiedName, version: createHash('sha256').update(JSON.stringify(columns)).digest('hex'), rowCount, columns: columns.map((column) => { const found = classified.get(column.column_name)!; return { name: column.column_name, dataType: column.data_type, isNullable: column.is_nullable, sensitivityTags: found.tags, sensitivityEvidence: found.evidence, statistics: statistics.get(column.column_name) ?? UNMEASURED }; }) };
   }
 
-  async structuralReferences() {
+  async structuralReferences(scope?: ConnectorScope) {
     const rows = await (await this.request()).query<{ from: string; to: string; fromColumn: string; toColumn: string }>(`SELECT TOP (${this.maxCatalogRows + 1}) ps.name+'.'+pt.name AS [from],rs.name+'.'+rt.name AS [to],pc.name AS fromColumn,rc.name AS toColumn
       FROM sys.foreign_key_columns f JOIN sys.tables pt ON pt.object_id=f.parent_object_id JOIN sys.schemas ps ON ps.schema_id=pt.schema_id
       JOIN sys.columns pc ON pc.object_id=f.parent_object_id AND pc.column_id=f.parent_column_id JOIN sys.tables rt ON rt.object_id=f.referenced_object_id
       JOIN sys.schemas rs ON rs.schema_id=rt.schema_id JOIN sys.columns rc ON rc.object_id=f.referenced_object_id AND rc.column_id=f.referenced_column_id ORDER BY [from],[to]`);
     if (rows.recordset.length > this.maxCatalogRows) throw new Error('sqlserver_connector_result_limit_exceeded');
-    const references: Array<{ from: string; to: string; fromColumn: string; toColumn: string; evidenceMethod: 'declared' | 'inferred'; confidence?:number; matchedCount?:number; sourceCount?:number }> = rows.recordset.map((row) => ({ ...row, evidenceMethod: 'declared' }));
+    const permits=(table:string,column:string)=>objectScope(scope,table,'table')==='profile'&&!columnScope(scope,table,column);
+    const references: Array<{ from: string; to: string; fromColumn: string; toColumn: string; evidenceMethod: 'declared' | 'inferred'; confidence?:number; matchedCount?:number; sourceCount?:number }> = rows.recordset.filter(item=>permits(item.from,item.fromColumn)&&permits(item.to,item.toColumn)).map((row) => ({ ...row, evidenceMethod: 'declared' }));
     const candidates = await (await this.request()).query<{ from: string; to: string; fromColumn: string; toColumn: string }>(`SELECT TOP (${this.maxCatalogRows}) ss.name+'.'+st.name AS [from],ts.name+'.'+tt.name AS [to],sc.name AS fromColumn,tc.name AS toColumn
       FROM sys.columns sc JOIN sys.tables st ON st.object_id=sc.object_id JOIN sys.schemas ss ON ss.schema_id=st.schema_id
       JOIN sys.columns tc ON tc.name=sc.name JOIN sys.tables tt ON tt.object_id=tc.object_id JOIN sys.schemas ts ON ts.schema_id=tt.schema_id
@@ -140,6 +145,7 @@ export class SqlServerConnector implements ReadOnlyConnector {
       AND NOT EXISTS(SELECT 1 FROM sys.index_columns sik JOIN sys.indexes six ON six.object_id=sik.object_id AND six.index_id=sik.index_id AND six.is_primary_key=1 WHERE sik.object_id=sc.object_id AND sik.column_id=sc.column_id)
       ORDER BY [from],[to],fromColumn`);
     for (const candidate of candidates.recordset) {
+      if(!permits(candidate.from,candidate.fromColumn)||!permits(candidate.to,candidate.toColumn))continue;
       if (references.some((item) => item.from === candidate.from && item.fromColumn === candidate.fromColumn && item.to === candidate.to && item.toColumn === candidate.toColumn)) continue;
       const [fromSchema, fromName] = candidate.from.split('.'); const [toSchema, toName] = candidate.to.split('.');
       if (!fromSchema || !fromName || !toSchema || !toName) continue;

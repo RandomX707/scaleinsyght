@@ -1,3 +1,4 @@
+import { columnScope, type ConnectorScope } from '@scaleinsyght/connectors';
 import type { Pool } from 'pg';
 import type { ReadOnlyConnector } from '@scaleinsyght/connectors';
 import { withTenant } from '@scaleinsyght/db';
@@ -27,7 +28,7 @@ export function formatPattern(values: string[]): string {
  * key columns joined to them), stores each distinct value only as a keyed fingerprint (HMAC with a per-tenant key,
  * non-negotiable 6), and proposes probable SAME_AS matches with other connections' identifier fields from fingerprint
  * overlap. Raw values are read, fingerprinted and dropped in this process; none is stored, logged or sent to a model. */
-export async function runIdAgent(pool: Pool, input: { tenantId: string; connectionId: string; connector: ReadOnlyConnector; masterKey?: Uint8Array }): Promise<{ fields: number; fingerprinted: number; matches: number } | undefined> {
+export async function runIdAgent(pool: Pool, input: { tenantId: string; connectionId: string; connector: ReadOnlyConnector; masterKey?: Uint8Array; scope?:ConnectorScope }): Promise<{ fields: number; fingerprinted: number; matches: number } | undefined> {
   if (!input.masterKey || input.masterKey.byteLength < 32 || !input.connector.distinctValues) return undefined;
   const candidates = await withTenant(pool, input.tenantId, async (client) => {
     const fields = await client.query<{ asset_id: string; qualified_name: string; table_name: string; tags: string[] | null; evidence: Array<{ tag: string; detection: string }> | null }>(
@@ -53,6 +54,7 @@ export async function runIdAgent(pool: Pool, input: { tenantId: string; connecti
   });
   const read: Array<{ candidate: Candidate; format: string; fingerprints: Buffer[] | null }> = [];
   for (const candidate of candidates) {
+    if(columnScope(input.scope,candidate.table,candidate.column))continue;
     const values = await input.connector.distinctValues(candidate.table, candidate.column, ID_FINGERPRINT_LIMIT);
     read.push({ candidate, format: values ? formatPattern(values) : 'too_many_values', fingerprints: values ? values.map((value) => Buffer.from(fingerprintIdentifier(input.masterKey!, input.tenantId, value), 'hex')) : null });
   }

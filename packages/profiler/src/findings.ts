@@ -36,7 +36,7 @@ export async function readProfileState(pool: Pool, tenantId: string, connectionI
 /** Compares the state after a run with the state before it and records one finding per change (decision 48): new and
  * dropped tables, added, removed or retyped columns, large row-count changes, newly inferred sensitive columns, and
  * probable relationships and ID matches not yet reviewed. Only names and counts are stored, never values. */
-export async function recordFindings(pool: Pool, input: { tenantId: string; connectionId: string; jobId: string; before: ProfileState; scannedObjects: Set<string>; checked: number }): Promise<number> {
+export async function recordFindings(pool: Pool, input: { tenantId: string; connectionId: string; jobId: string; before: ProfileState; scannedObjects: Set<string>; inventory: Set<string>; checked: number }): Promise<number> {
   const after = await readProfileState(pool, input.tenantId, input.connectionId);
   return withTenant(pool, input.tenantId, async (client) => {
     let count = 0;
@@ -68,7 +68,7 @@ export async function recordFindings(pool: Pool, input: { tenantId: string; conn
           if (Math.abs(change) >= ROW_CHANGE_MIN && Math.abs(change) >= ROW_CHANGE_SHARE * Math.max(previous.rowCount, 1)) await add('data_anomaly', name, { change: 'row_count', before: previous.rowCount, after: table.rowCount }, table.assetId);
         }
       }
-      for (const [name, table] of input.before.datasets) if (!after.datasets.has(name)) {
+      for (const [name, table] of input.before.datasets) if (!after.datasets.has(name)&&!input.inventory.has(name)) {
         checked++;
         changed.add(name);
         await add('schema_change', name, { change: 'dropped' }, table.assetId);
