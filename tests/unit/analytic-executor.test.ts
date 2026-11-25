@@ -43,6 +43,11 @@ describe('decision 42 disclosure', () => {
         .toEqual({sourceId: 'source', connectorType: 'postgres', value: null, withheld: true});
     }
     expect(collateGroupResults([{...source, value: 0, minimumCellSize: 0}]).bySource[0]?.value).toBe(0);
+    // A missing category answers 0 only when an equality on it settles a single count (K6, restored Q04 and Q21).
+    expect(collateGroupResults([{...source, value: 0, minimumCellSize: 0, missingCategory: {column: 'order_status', values: ['placed'], provesZero: true}}]).bySource[0])
+      .toEqual({sourceId: 'source', connectorType: 'postgres', value: 0, categoryNotFound: true});
+    expect(collateGroupResults([{...source, value: 0, minimumCellSize: 0, missingCategory: {column: 'order_status', values: ['placed'], provesZero: false}}]).bySource[0])
+      .toEqual({sourceId: 'source', connectorType: 'postgres', value: null, categoryNotFound: true});
     expect(collateGroupResults([{...source, value: 11, minimumCellSize: 11}]).bySource[0])
       .toEqual({sourceId: 'source', connectorType: 'postgres', value: 11});
   });

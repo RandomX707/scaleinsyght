@@ -164,9 +164,11 @@ while(!stopping){
     try{
       await connector.test();await connector.discover({mode:'profile',...(scope?{scope}:{})});
       const resolvedIntent = structuredClone(intent) as Record<string, unknown>;
-      const filters = resolvedIntent.kind === 'filtered_count' ? [resolvedIntent]
-        : Array.isArray(resolvedIntent.filters) ? resolvedIntent.filters as Array<Record<string, unknown>> : [];
-      let missingCategory: {column: string; values: string[]; sql: string} | undefined;
+      // Single-table kinds name no table on their conditions; they are on the intent's own table (decision 54).
+      const ownConditions = (Array.isArray(resolvedIntent.filters) ? resolvedIntent.filters as Array<Record<string, unknown>> : [])
+        .map(filter => typeof resolvedIntent.table === 'string' && filter.table === undefined ? Object.assign(filter, {table: resolvedIntent.table}) : filter);
+      const filters = resolvedIntent.kind === 'filtered_count' ? [resolvedIntent, ...ownConditions] : ownConditions;
+      let missingCategory: {column: string; values: string[]; sql: string; provesZero: boolean} | undefined;
       for (const filter of filters) {
         if (!connector.categoryValues || typeof filter.value !== 'string' ||
             !['eq', 'neq'].includes(String(filter.operator)) || typeof filter.column !== 'string') continue;
@@ -186,7 +188,10 @@ while(!stopping){
         if (match !== undefined) {
           filter.value = match;
         } else if (categories.values.length <= 100) {
-          missingCategory = {column: filter.column, values: categories.values, sql: categories.sql};
+          // An equality condition on a value that never occurs matches no record, so a single count is exactly 0. A
+          // grouped answer or an inequality is not settled by this, so those report the missing value only.
+          const provesZero = filter.operator === 'eq' && ['filtered_count', 'join_aggregate'].includes(String(resolvedIntent.kind));
+          missingCategory = {column: filter.column, values: categories.values, sql: categories.sql, provesZero};
           break;
         } else {
           throw new Error('category_domain_exceeds_limit');
@@ -205,7 +210,7 @@ while(!stopping){
       const columnLabels=Object.fromEntries(Object.entries(labels).filter(([name,label])=>name!==label));
       const groupLabel=typeof queryIntent.groupBy==='string'?columnLabels[queryIntent.groupBy]:undefined;
       const groupKeyLabel=typeof queryIntent.groupKey==='string'?columnLabels[queryIntent.groupKey]??queryIntent.groupKey:undefined;
-      const analyticResult={sourceId:step.source_id,connectorType:task.connectorType,groupId:task.groupId,metric:String((intent as {kind?:unknown}).kind??'query'),value,...(groupLabel?{groupLabel}:{}),...(groupKeyLabel?{groupKeyLabel}:{}),...(Object.keys(columnLabels).length?{columnLabels}:{}),rows:rows.length===1&&!('group_value'in rows[0]!)?undefined:rows,minimumCellSize:Math.min(...executed.rows.map(row=>Number(row.cell_size??0))),cellSizes:executed.rows.map(row=>Number(row.cell_size??0)),...(missingCategory ? {missingCategory: {column: missingCategory.column, values: missingCategory.values}} : {}),claims:[],evidence:[{evidence_id:evidenceId,kind:'query',source_id:step.source_id,asset_ids:assets.rows.map(item=>item.asset_id),locator:`${task.displayName||'Data source'} · ${executed.sql}`,content_hash:createHash('sha256').update(executed.sql).digest('hex'),captured_at:new Date().toISOString(),collector_version:`${task.connectorType}-query-v1`,redacted_summary:`Executed on ${task.displayName||'Data source'}; returned ${executed.rows.length} aggregate row(s).`}]};
+      const analyticResult={sourceId:step.source_id,connectorType:task.connectorType,groupId:task.groupId,metric:String((intent as {kind?:unknown}).kind??'query'),value,...(groupLabel?{groupLabel}:{}),...(groupKeyLabel?{groupKeyLabel}:{}),...(Object.keys(columnLabels).length?{columnLabels}:{}),rows:rows.length===1&&!('group_value'in rows[0]!)?undefined:rows,minimumCellSize:Math.min(...executed.rows.map(row=>Number(row.cell_size??0))),cellSizes:executed.rows.map(row=>Number(row.cell_size??0)),...(missingCategory ? {missingCategory: {column: missingCategory.column, provesZero: missingCategory.provesZero, values: missingCategory.values}} : {}),claims:[],evidence:[{evidence_id:evidenceId,kind:'query',source_id:step.source_id,asset_ids:assets.rows.map(item=>item.asset_id),locator:`${task.displayName||'Data source'} · ${executed.sql}`,content_hash:createHash('sha256').update(executed.sql).digest('hex'),captured_at:new Date().toISOString(),collector_version:`${task.connectorType}-query-v1`,redacted_summary:`Executed on ${task.displayName||'Data source'}; returned ${executed.rows.length} aggregate row(s).`}]};
       if(!await completeStep(pool,claim,{resultRef:`postgres-query:${evidenceId}`,analyticResult}))throw new Error('worker_fence_lost');
     }finally{await connector.close?.();}
     }
@@ -232,8 +237,8 @@ while(!stopping){
      const mentionedYears=[...question.matchAll(/\b(?:19|20)\d{2}\b/g)].map(match=>Number(match[0]));
      const sources=results.map(result=>{
       const intent=plan.steps.find(step=>step.source_id===result.sourceId)?.inputs.query_intent as Record<string,unknown>|undefined;
-      const candidates=Array.isArray(intent?.filters)?intent.filters:intent?.kind==='filtered_count'?[intent]:[];
-      const filters=candidates.map(({table,column,operator,value})=>{
+      const candidates=[...(intent?.kind==='filtered_count'?[intent]:[]),...(Array.isArray(intent?.filters)?intent.filters:[])];
+      const filters=candidates.map(({table:named,column,operator,value})=>{const table=named??intent?.table;
        const rendered=typeof value==='string'?value:'';
        const rangeBoundary=/^\d{4}-01-01$/.test(rendered)&&mentionedYears.some(year=>Number(rendered.slice(0,4))===year||Number(rendered.slice(0,4))===year+1);
        const knownCategory=/^[a-z][a-z -]{0,63}$/i.test(rendered)&&question.includes(rendered.toLowerCase());

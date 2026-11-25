@@ -81,6 +81,7 @@ async function validateIntentAssets(client:import('pg').PoolClient,sourceId:stri
   if(found.rowCount!==new Set(tables).size)throw new Error('analytic_query_asset_not_found');
   const requiredColumns:string[]=[];
   if(intent.kind==='filtered_count')requiredColumns.push(`${intent.table}.${intent.column}`);
+  if((intent.kind==='filtered_count'||intent.kind==='group_by')&&intent.filters)for(const filter of intent.filters)requiredColumns.push(`${intent.table}.${filter.column}`);
   if(intent.kind==='group_by')requiredColumns.push(`${intent.table}.${intent.groupBy}`);
   if(intent.kind==='group_by'&&intent.aggregate.operation==='sum')requiredColumns.push(`${intent.table}.${intent.aggregate.column}`);
   if(intent.kind==='average_count_by')requiredColumns.push(`${intent.table}.${intent.entityColumn}`,`${intent.table}.${intent.groupBy}`);

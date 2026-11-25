@@ -193,17 +193,23 @@ export function decodePlannerOutput(text: string, catalog: PlannerCatalog, joins
       return {table:target,column,operator:filter.operator,...(filter.value === null ? {} : {value:filter.value}),
         ...(filter.upperExclusive === null ? {} : {upperExclusive:filter.upperExclusive})};
     });
-    if (filters.length && !isJoinIntent && kind !== 'filtered_count') throw new Error('select_an_intent_that_applies_its_filters');
+    // Single-table kinds take conditions on their own table only (decision 54); a range boundary becomes a second condition.
+    if (filters.length && !isJoinIntent && kind !== 'filtered_count' && kind !== 'group_by') throw new Error('select_an_intent_that_applies_its_filters');
+    const ownTable = (list: typeof filters) => list.flatMap(({table: target, upperExclusive, ...condition}) => {
+      if (target !== table) throw new Error('filters_must_be_on_the_counted_table: join the other table with a join intent');
+      return upperExclusive ? [condition, {...condition, operator:'lt', value:upperExclusive}] : [condition];
+    });
     let intent: unknown;
     switch (kind) {
       case 'count': intent = {kind:'count',table}; break;
       case 'compare_aggregates': intent = {kind,table,aggregate:measure}; break;
       case 'filtered_count': {
-        if (filters.length !== 1 || filters[0]?.table !== table) throw new Error('filtered_count_requires_one_filter_on_its_table');
-        intent = {kind,...filters[0]};
+        if (!filters.length || filters[0]?.table !== table) throw new Error('filtered_count_requires_a_filter_on_its_table');
+        const [first, ...rest] = filters; const more = ownTable(rest);
+        intent = {kind,...first,...(more.length ? {filters:more} : {})};
         break;
       }
-      case 'group_by': intent = {kind,table,groupBy:get(item.groupBy,[table])[1],aggregate:measure,...order,...limit}; break;
+      case 'group_by': { const conditions = ownTable(filters); intent = {kind,table,groupBy:get(item.groupBy,[table])[1],aggregate:measure,...order,...limit,...(conditions.length ? {filters:conditions} : {})}; break; }
       case 'average_count_by': intent = {kind,table,groupBy:get(item.groupBy,[table])[1],entityColumn:get(item.entityColumn,[table])[1],...limit}; break;
       case 'join_aggregate':
       case 'grouped_join': {
@@ -228,7 +234,7 @@ export function decodePlannerOutput(text: string, catalog: PlannerCatalog, joins
     const typed = validated.data as QueryIntent;
     rejectSingleRecordGroups(typed, facts[index]);
     const display = displayLabelFor(typed, index, source, joins, facts[index]);
-    const shown = display ? applyDisplayLabel(typed, display) : typed;
+    const shown = attachEntityKey(display ? applyDisplayLabel(typed, display) : typed, source, facts[index]);
     checkDisplayLabel(shown, display);
     return {index,intent:shown,planned:typed,display};
   });
@@ -289,8 +295,21 @@ function applyDisplayLabel(intent: QueryIntent, display: DisplayLabel): QueryInt
   if (intent.kind === 'grouped_join') return {...intent, groupByTable:'right', groupBy:labelColumn, groupKey:rightColumn};
   if (intent.kind !== 'group_by') return intent;
   return QueryIntentSchema.parse({kind:'grouped_join', leftTable:keyTable, rightTable:labelTable, leftColumn:keyColumn, rightColumn,
-    groupByTable:'right', groupBy:labelColumn, groupKey:rightColumn, aggregate:intent.aggregate, filters:[],
+    groupByTable:'right', groupBy:labelColumn, groupKey:rightColumn, aggregate:intent.aggregate, filters:(intent.filters ?? []).map(filter => ({...filter, table:'left' as const})),
     order:intent.order ?? 'desc', limit:intent.limit ?? 100});
+}
+
+/** "Each department": a grouped join that groups by a column of the referenced table which is unique and complete
+ * there (its name) makes exactly the same groups as the join key, so the key is attached as the group key and the
+ * answer shows "Name (key)" (decision 45). Nothing changes when the column can repeat (a department type), because
+ * then the person asked for that attribute. Decided from profile facts, never from names. */
+export function attachEntityKey(intent: QueryIntent, source: PlannerCatalog[number], facts: PlannerFacts[number] | undefined): QueryIntent {
+  if (intent.kind !== 'grouped_join' || intent.groupByTable !== 'right' || intent.groupKey || intent.groupBy === intent.rightColumn) return intent;
+  const related = facts?.[intent.rightTable]; const label = related?.columns[intent.groupBy]; const key = related?.columns[intent.rightColumn];
+  const unique = (stats: typeof label) => Boolean(related?.rowCount && stats && stats.distinctCount === related.rowCount && stats.nullRate === 0);
+  const keyColumn = source.assets.find(item => item.qualified_name === intent.rightTable)?.columns.find(column => column.name === intent.rightColumn);
+  if (!unique(label) || !unique(key) || !keyColumn || (keyColumn.sensitivity_tags ?? []).length) return intent;
+  return {...intent, groupKey: intent.rightColumn};
 }
 
 /** The executable plan must carry the recorded display label: grouped by the label, with the key as the group key. */
@@ -320,7 +339,7 @@ export function describePlan(steps: DecodedStep[], catalog: PlannerCatalog): str
       const groupTable = plan.groupByTable === 'right' ? String(plan.rightTable) : subject;
       parts.push(`for each ${label(index, groupTable, String(plan.groupBy))}`);
     }
-    const conditions = (plan.kind === 'filtered_count' ? [plan] : Array.isArray(plan.filters) ? plan.filters as Array<Record<string, unknown>> : [])
+    const conditions = [...(plan.kind === 'filtered_count' ? [plan] : []), ...(Array.isArray(plan.filters) ? plan.filters as Array<Record<string, unknown>> : [])]
       .map(filter => `${String(filter.column)} ${String(filter.operator).replaceAll('_',' ')}${filter.value === undefined ? '' : ` ${JSON.stringify(filter.value)}`}${filter.upperExclusive === undefined ? '' : ` and before ${JSON.stringify(filter.upperExclusive)}`}`);
     if (conditions.length) parts.push(`where ${conditions.join(' and ')}`);
     // The compiled SQL always breaks ties: by the group key when there is one, otherwise alphabetically by the group.

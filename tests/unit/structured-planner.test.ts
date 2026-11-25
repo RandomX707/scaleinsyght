@@ -92,6 +92,32 @@ describe('structured planner with declared intent (decision 44)', () => {
   });
 });
 
+describe('conditions on the counted table (K6, decision 54)', () => {
+  const filter = (column: string, operator: string, value: unknown, upperExclusive: string | null = null) => ({column,operator,value,upperExclusive});
+  const counted = (filters: unknown[], kind = 'filtered_count', extra: Record<string, unknown> = {}) => ({...step,kind,filters,...extra,
+    declared:{...declared,filter_columns:filters.map(item => (item as {column:string}).column),...(extra.declared as object ?? {})}});
+  it('keeps every condition of a count with two or three conditions', () => {
+    const decoded = decodePlannerOutput(wrap(counted([filter('Charges.charge_type','eq','lab'), filter('Charges.amount','gt',100), filter('Charges.charged_on','gte','2025-01-01','2026-01-01')])), catalog, []).steps[0]!;
+    expect(decoded.intent).toEqual({kind:'filtered_count',table:'Charges',column:'charge_type',operator:'eq',value:'lab',
+      filters:[{column:'amount',operator:'gt',value:100},{column:'charged_on',operator:'gte',value:'2025-01-01'},{column:'charged_on',operator:'lt',value:'2026-01-01'}]});
+    expect(describePlan([decoded], catalog)).toContain('where charge_type eq "lab" and amount gt 100 and charged_on gte "2025-01-01" and charged_on lt "2026-01-01"');
+  });
+  it('keeps a single condition exactly as before', () => {
+    expect(decodePlannerOutput(wrap(counted([filter('Charges.charge_type','eq','lab')])), catalog, []).steps[0]!.intent)
+      .toEqual({kind:'filtered_count',table:'Charges',column:'charge_type',operator:'eq',value:'lab'});
+  });
+  it('applies conditions to a grouped count', () => {
+    const plan = counted([filter('Charges.amount','gt',100)], 'group_by', {groupBy:'Charges.charge_type',declared:{grouping_column:'Charges.charge_type'}});
+    expect(decodePlannerOutput(wrap(plan, {...declaration,grouping:'charge type'}), catalog, []).steps[0]!.intent)
+      .toMatchObject({kind:'group_by',groupBy:'charge_type',filters:[{column:'amount',operator:'gt',value:100}]});
+  });
+  it('refuses a condition on another table without a join', () => {
+    const plan = {...orderStep,join:null,kind:'filtered_count',filters:[filter('dbo.departments.department_name','eq','Emergency')],
+      declared:{...orderStep.declared,filter_columns:['dbo.departments.department_name']}};
+    expect(() => decodePlannerOutput(wrap(plan), orders, orderJoins)).toThrow();
+  });
+});
+
 describe('display labels for key columns (decision 45)', () => {
   const catalog = [{name:'SQL Server hospital',assets:[
     {qualified_name:'dbo.orders',columns:[{name:'order_id'},{name:'department_id'},{name:'encounter_id'}]},
@@ -121,6 +147,23 @@ describe('display labels for key columns (decision 45)', () => {
     const byKey = {...perDepartment,kind:'grouped_join',join:'dbo.orders.department_id = dbo.departments.department_id',groupBy:'dbo.departments.department_id',
       declared:{...perDepartment.declared,grouping_column:'dbo.departments.department_id'}};
     expect(decode(byKey).intent).toMatchObject({kind:'grouped_join',groupByTable:'right',groupBy:'department_name',groupKey:'department_id'});
+  });
+  it('attaches the join key when a grouped join groups by a unique name of the referenced table ("each department")', () => {
+    const byName = {...perDepartment,kind:'grouped_join',join:'dbo.orders.department_id = dbo.departments.department_id',groupBy:'dbo.departments.department_name',
+      declared:{...perDepartment.declared,grouping_column:'dbo.departments.department_name'}};
+    expect(decode(byName).intent).toMatchObject({kind:'grouped_join',groupByTable:'right',groupBy:'department_name',groupKey:'department_id'});
+    // A name that repeats is an attribute the person asked to group by, not one group per department: left as planned.
+    const repeated = facts(); repeated[0]!['dbo.departments']!.columns.department_name = stat(9, 9);
+    expect(decode(byName, repeated).intent).toMatchObject({groupBy:'department_name'});
+    expect(decode(byName, repeated).intent).not.toHaveProperty('groupKey');
+    expect(decode(byName, []).intent).toMatchObject({groupBy:'department_name'});
+    expect(decode(byName, []).intent).not.toHaveProperty('groupKey');
+  });
+  it('keeps the conditions of a grouped count when the key is relabelled ("cancelled orders per department")', () => {
+    const cancelled = {...perDepartment,filters:[{column:'dbo.orders.order_id',operator:'gt',value:0,upperExclusive:null}],
+      declared:{...perDepartment.declared,filter_columns:['dbo.orders.order_id']}};
+    expect(decode(cancelled).intent).toMatchObject({kind:'grouped_join',groupBy:'department_name',groupKey:'department_id',
+      filters:[{table:'left',column:'order_id',operator:'gt',value:0}]});
   });
   it('keeps the key when the relationship or the label cannot be trusted', () => {
     const keep = (known: PlannerFacts, relations = joins) => decode(perDepartment, known, relations);

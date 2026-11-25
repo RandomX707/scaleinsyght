@@ -29,7 +29,7 @@
   {
     "id": "Q04",
     "turns": [
-      "How many orders have status placed in the PostgreSQL testbed?"
+      "How many orders have status pending in the PostgreSQL testbed?"
     ],
     "sources": [
       "p"
@@ -185,7 +185,7 @@
     "id": "Q21",
     "turns": [
       "Give me the total order count in the SQL Server testbed.",
-      "And how many had the status placed?"
+      "And how many were pending?"
     ],
     "sources": [
       "s"

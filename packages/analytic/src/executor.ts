@@ -15,7 +15,8 @@ export interface StructuredResult {
   columnLabels?: Record<string,string>;
   minimumCellSize?: number;
   cellSizes?: number[];
-  missingCategory?: {column: string; values: string[]};
+  /** A requested category that does not occur; provesZero when an equality on it makes a single count exactly 0. */
+  missingCategory?: {column: string; values: string[]; provesZero?: boolean};
   /** A lineage step's answer, read from the metadata graph (no source data). */
   lineage?: unknown;
   claims: Claim[];
@@ -50,7 +51,7 @@ export function collateGroupResults(results: StructuredResult[]): StructuredAnsw
     bySource: results.map(({ sourceId, connectorType, value, rows, groupLabel, groupKeyLabel, minimumCellSize, cellSizes, missingCategory, lineage }) => {
       if (lineage) return { sourceId, connectorType, value, lineage };
       const labels = { ...(groupLabel ? { groupLabel } : {}), ...(groupKeyLabel ? { groupKeyLabel } : {}) };
-      if (missingCategory) return {sourceId, connectorType, value: null, categoryNotFound: true};
+      if (missingCategory) return {sourceId, connectorType, value: missingCategory.provesZero ? 0 : null, categoryNotFound: true};
       if (!rows && isSmall(minimumCellSize)) {
         return { sourceId, connectorType, value: null, withheld: true };
       }
@@ -112,7 +113,9 @@ export async function finalizeAnalyticRun(pool: Pool, runId: string, compose?: (
         const name = refs[0]?.locator.split(' · ')[0] ?? source.connectorType;
         const missing = results[index]!.missingCategory;
         const available = missing?.values.map(value => JSON.stringify(value)).join(', ') ?? '';
-        const statement = missing
+        const statement = missing?.provesZero
+          ? `${name}: 0. No record has that value in ${missing.column}; the values it has are ${available.slice(0, 400) || 'none'}.`
+          : missing
           ? `${name}: That category does not exist in ${missing.column}. Available values: ${available.slice(0, 400) || 'none'}.`
           : source.withheld
           ? source.rows ? `${name}: See the values in the table. Cells marked <11 cover fewer than 11 records and are withheld to protect privacy.` : `${name}: Fewer than 11, withheld to protect privacy`

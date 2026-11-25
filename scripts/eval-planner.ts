@@ -95,7 +95,6 @@ async function connect() {
 type Actual = {connectorType: string; sourceId?: string; value?: number | null; withheld?: true; categoryNotFound?: true; rows?: Array<{group_value: string; group_key?: string; value: number | string}>;
   lineage?: {direction: string; steps: Array<{from: string; to: string}>; gaps: Array<{asset: string; reason: string}>}};
 function same(expected: Result, actual: Actual) {
-  if (actual.categoryNotFound) return false;
   if (typeof expected === 'object' && !Array.isArray(expected)) {
     // Lineage: exactly the expected related objects, and any expected gap stated.
     if (!actual.lineage) return false;

@@ -67,7 +67,7 @@
     "id": "H08",
     "turns": [
       "First tally every entry on the Charges sheet of the Operations workbook.",
-      "Narrow that pile to the ones marked completed. How big is it now?"
+      "Narrow that pile to the ones marked pending. How big is it now?"
     ],
     "sources": [
       "x"

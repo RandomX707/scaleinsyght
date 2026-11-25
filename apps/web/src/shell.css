@@ -372,3 +372,13 @@ h3 { font-size: 14px; line-height: 1.3; }
 .analytic-workspace .refusal-card h2, .analytic-workspace .refusal-card p { margin: 0; }
 .analytic-workspace .grouped-result > .ui-button { justify-self: start; width: auto; }
 .analytic-workspace .chat-thread, .analytic-workspace .composer, .analytic-workspace .home-updates, .analytic-workspace .prompts { width: min(860px, 100%); margin-left: auto; margin-right: auto; }
+/* A typical answer fits the chat area (decision 56, section 6). */
+.analytic-workspace .grouped-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.analytic-workspace .grouped-head .group-summary { margin: 0; }
+.analytic-workspace .grouped-head .ui-button { min-height: 24px; padding: 2px 8px; }
+.analytic-workspace .bar-chart .bar-row { min-height: 18px; padding: 1px 4px; }
+.analytic-workspace .bar-chart figcaption { margin-top: 2px; }
+.analytic-workspace .answer-foot { display: flex; align-items: center; gap: 8px; }
+.analytic-workspace .evidence-drawer .export-actions { margin-top: 8px; }
+.analytic-workspace .evidence-card > h2 { margin: 0; }
+.analytic-workspace .feedback-actions { padding-top: 4px; }
