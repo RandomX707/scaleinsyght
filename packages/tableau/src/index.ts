@@ -3,9 +3,10 @@ import { SaxesParser } from 'saxes';
 /**
  * Reads a Tableau workbook (.twb, the documented workbook XML) for lineage. Only structure leaves this module:
  * data sources and the tables they read, how each field maps to a column, which fields each calculated field refers to,
- * and which fields each worksheet uses. Formula text, connection details (server, user, database) and captions of
- * parameters are never returned. Custom SQL is returned so the caller can parse it in memory; it must not be stored
- * (contract 7).
+ * and which fields each worksheet uses. Formula text, server and user names and parameter captions are never returned;
+ * captions are returned with the data source's server, user and database names removed (Tableau's default captions
+ * embed them). Custom SQL and the database name are returned so the caller can parse and match them in memory; neither
+ * may be stored (contract 7).
  */
 
 export type TableauRelation =
@@ -16,10 +17,13 @@ export type TableauRelation =
 export type TableauFieldSource =
   /** A column of one of the data source's relations, as recorded in the workbook's metadata records. */
   | { kind: 'column'; relation: string; column: string }
-  /** A calculated field: the fields its formula refers to (local names), never the formula itself. */
-  | { kind: 'calculated'; references: string[]; usesParameters: boolean }
+  /** A calculated field: the fields its formula refers to, never the formula itself. `datasource` is set when the
+   * formula names another data source's field (`[federated.x].[Field]`); otherwise the field is in the same one. */
+  | { kind: 'calculated'; references: FieldReference[]; usesParameters: boolean }
   /** Tableau did not record where the field comes from. */
   | { kind: 'unmapped' };
+
+export type FieldReference = { datasource: string | null; field: string };
 
 export type TableauField = { name: string; caption: string; dataType: string | null; role: string | null; source: TableauFieldSource };
 
@@ -29,6 +33,8 @@ export type TableauDatasource = {
   caption: string;
   /** The database driver class, for example `postgres`, `sqlserver` or `snowflake`; null when the workbook has none. */
   connectionClass: string | null;
+  /** Database names the data source connects to. In memory only, for matching to the linked warehouse; never store. */
+  databases: string[];
   relations: TableauRelation[];
   fields: TableauField[];
 };
@@ -96,17 +102,19 @@ const unbracket = (value: string) => splitBracketed(value).at(-1) ?? value;
  * The fields a Tableau formula refers to, by local name. String literals and comments are skipped, so their contents
  * never appear in the result. `[Parameters].[Name]` is a parameter, not data, and is reported only as a flag.
  */
-export function formulaReferences(formula: string): { references: string[]; usesParameters: boolean } {
-  const references = new Set<string>();
+export function formulaReferences(formula: string): { references: FieldReference[]; usesParameters: boolean } {
+  const references = new Map<string, FieldReference>();
+  const add = (datasource: string | null, field: string) => { references.set(`${datasource ?? ''}\0${field}`, { datasource, field }); };
   let usesParameters = false;
   let index = 0;
-  const readBracket = () => {
+  // Returns null for an unterminated bracket, so text after it is never mistaken for a field name.
+  const readBracket = (): string | null => {
     let name = ''; index++;
     while (index < formula.length) {
-      if (formula[index] === ']') { if (formula[index + 1] === ']') { name += ']'; index += 2; continue; } index++; break; }
+      if (formula[index] === ']') { if (formula[index + 1] === ']') { name += ']'; index += 2; continue; } index++; return name; }
       name += formula[index++];
     }
-    return name;
+    return null;
   };
   while (index < formula.length) {
     const character = formula[index]!;
@@ -119,13 +127,18 @@ export function formulaReferences(formula: string): { references: string[]; uses
     }
     if (character === '[') {
       const first = readBracket();
-      if (formula[index] === '.' && formula[index + 1] === '[') { index++; const second = readBracket(); if (first === 'Parameters') usesParameters = true; else references.add(second); continue; }
-      references.add(first);
+      if (first === null) break;
+      if (formula[index] === '.' && formula[index + 1] === '[') {
+        index++; const second = readBracket(); if (second === null) break;
+        if (first === 'Parameters') usesParameters = true; else add(first, second);
+        continue;
+      }
+      add(null, first);
       continue;
     }
     index++;
   }
-  return { references: [...references], usesParameters };
+  return { references: [...references.values()], usesParameters };
 }
 
 function readRelations(datasource: Element): TableauRelation[] {
@@ -158,7 +171,17 @@ function readDatasource(element: Element): TableauDatasource {
   const connection = child(element, 'connection');
   const named = connection ? descendants(connection, 'named-connection').map((item) => child(item, 'connection')).filter((item): item is Element => Boolean(item)) : [];
   const classes = [...new Set(named.map((item) => item.attributes.class).filter((value): value is string => Boolean(value)))];
-  const connectionClass = connection?.attributes.class && connection.attributes.class !== 'federated' ? connection.attributes.class : classes.length === 1 ? classes[0]! : classes.length ? 'multiple' : null;
+  const direct = connection?.attributes.class && connection.attributes.class !== 'federated' ? [connection] : [];
+  const connectionClass = direct.length ? direct[0]!.attributes.class! : classes.length === 1 ? classes[0]! : classes.length ? 'multiple' : null;
+  const details = [...direct, ...named];
+  const databases = [...new Set(details.map((item) => item.attributes.dbname).filter((value): value is string => Boolean(value)))];
+  // Tableau's default captions embed the database, server or user, for example "orders (riverside_dw)".
+  const sensitive = [...new Set(details.flatMap((item) => [item.attributes.dbname, item.attributes.server, item.attributes.username, item.attributes.filename]).filter((value): value is string => Boolean(value && value.length >= 3)))];
+  const scrub = (caption: string) => {
+    let safe = caption;
+    for (const value of sensitive) safe = safe.split(value).join('');
+    return safe.replace(/\(\s*\)/g, '').replace(/\s{2,}/g, ' ').trim();
+  };
   const relations = readRelations(element);
   const fields = new Map<string, TableauField>();
   for (const record of connection ? descendants(connection, 'metadata-record') : []) {
@@ -177,12 +200,16 @@ function readDatasource(element: Element): TableauDatasource {
     if (calculation) {
       const fromFormula = calculation.attributes.formula ? formulaReferences(calculation.attributes.formula) : { references: [], usesParameters: false };
       // Groups and bins name their base field in a column attribute instead of a formula.
-      const base = calculation.attributes.column ? [unbracket(calculation.attributes.column)] : [];
-      source = { kind: 'calculated', references: [...new Set([...fromFormula.references, ...base])].filter((reference) => reference !== field), usesParameters: fromFormula.usesParameters };
+      const base: FieldReference[] = calculation.attributes.column ? [{ datasource: null, field: unbracket(calculation.attributes.column) }] : [];
+      const references = [...fromFormula.references, ...base]
+        .map((reference) => reference.datasource === name ? { datasource: null, field: reference.field } : reference)
+        .filter((reference, index, all) => !(reference.datasource === null && reference.field === field)
+          && all.findIndex((other) => other.datasource === reference.datasource && other.field === reference.field) === index);
+      source = { kind: 'calculated', references, usesParameters: fromFormula.usesParameters };
     }
-    fields.set(field, { name: field, caption: column.attributes.caption?.trim() || existing?.caption || field, dataType: column.attributes.datatype ?? existing?.dataType ?? null, role: column.attributes.role ?? null, source });
+    fields.set(field, { name: field, caption: scrub(column.attributes.caption?.trim() || existing?.caption || field) || field, dataType: column.attributes.datatype ?? existing?.dataType ?? null, role: column.attributes.role ?? null, source });
   }
-  return { name, caption: element.attributes.caption?.trim() || name, connectionClass, relations, fields: [...fields.values()] };
+  return { name, caption: scrub(element.attributes.caption?.trim() || '') || relations.map((relation) => relation.kind === 'table' ? relation.table : relation.name).join(' + ') || name, connectionClass, databases, relations, fields: [...fields.values()] };
 }
 
 function readWorksheet(element: Element): TableauWorksheet {
@@ -190,9 +217,8 @@ function readWorksheet(element: Element): TableauWorksheet {
   for (const dependencies of descendants(element, 'datasource-dependencies')) {
     const datasource = dependencies.attributes.datasource; if (!datasource || datasource === 'Parameters') continue;
     const add = (raw: string | undefined) => { if (!raw) return; const field = unbracket(raw); used.set(`${datasource}\0${field}`, { datasource, field }); };
-    // Column instances are what the sheet actually places on shelves; plain columns are their definitions.
+    // Column instances are what the sheet places on shelves; plain columns are only definitions and are not counted.
     for (const instance of children(dependencies, 'column-instance')) add(instance.attributes.column);
-    if (!children(dependencies, 'column-instance').length) for (const column of children(dependencies, 'column')) add(column.attributes.name);
   }
   return { name: element.attributes.name ?? '', fields: [...used.values()] };
 }

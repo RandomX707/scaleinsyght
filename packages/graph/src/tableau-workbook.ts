@@ -30,6 +30,8 @@ const safeName = (value: string) => value.replaceAll('.', '․').trim() || 'Unti
  */
 export async function importTableauWorkbook(pool: Pool, input: {
   tenantId: string; tableauConnectionId: string; warehouseConnectionId: string; warehouseType: string; workbookName: string; workbook: string | Buffer;
+  /** The warehouse connection's database name, compared in memory with each data source's; never stored. */
+  warehouseDatabase?: string | null;
 }): Promise<TableauImportSummary> {
   const workbook = readTableauWorkbook(input.workbook);
   const dialect = DIALECTS[input.warehouseType];
@@ -54,10 +56,10 @@ export async function importTableauWorkbook(pool: Pool, input: {
     tables[row.dataset] ??= {};
     if (row.field && row.field_id) { warehouseFields.set(row.field, row.field_id); tables[row.dataset]![row.field.slice(row.dataset.length + 1)] = 'unknown'; }
   }
+  // An unqualified table is read from the dialect's default schema only, never matched by name elsewhere.
   const resolveTable = (schema: string | null, table: string): string | null => {
-    if (schema) return warehouseDatasets.has(`${schema}.${table}`) ? `${schema}.${table}` : null;
-    const matches = [...warehouseDatasets.keys()].filter((name) => name.slice(name.lastIndexOf('.') + 1) === table);
-    return matches.length === 1 ? matches[0]! : null;
+    const qualified = schema ?? DEFAULT_SCHEMA[dialect];
+    return qualified && warehouseDatasets.has(`${qualified}.${table}`) ? `${qualified}.${table}` : null;
   };
 
   // Custom SQL is parsed before the transaction opens, in memory, and dropped afterwards.
@@ -75,21 +77,28 @@ export async function importTableauWorkbook(pool: Pool, input: {
       `INSERT INTO graph.evidence(tenant_id,evidence_type,safe_metadata) VALUES($1,'tableau_workbook',$2::jsonb) RETURNING evidence_id`,
       [input.tenantId, JSON.stringify({ collector: COLLECTOR, workbook_hash: workbookHash, datasources: workbook.datasources.length, worksheets: workbook.worksheets.length })]);
     const evidenceId = evidence.rows[0]!.evidence_id;
-    const seen = new Set<string>(); const written = new Set<string>();
+    const seen = new Set<string>(); const written = new Map<string, Set<string>>(); // relationship -> methods
+    const raised = new Set<string>(); // `${asset}\0${reason}`
     const totals = { tableEdges: 0, columnEdges: 0, reportEdges: 0, gaps: 0, fields: 0, calculatedFields: 0 };
+    // Names are unique per connection across types; a name already held by another type gets the type appended.
     const ensure = async (name: string, type: 'dataset' | 'field' | 'report') => {
-      const asset = await client.query<{ asset_id: string }>(
-        `INSERT INTO graph.assets(tenant_id,source_id,asset_type,qualified_name,fingerprint) VALUES($1,$2,$3,$4,$5)
-         ON CONFLICT(tenant_id,source_id,qualified_name) DO UPDATE SET active=true,last_seen_at=clock_timestamp() RETURNING asset_id`,
-        [input.tenantId, input.tableauConnectionId, type, name, createHash('sha256').update(`${input.tableauConnectionId}\0${name}`).digest()]);
-      seen.add(asset.rows[0]!.asset_id);
-      return asset.rows[0]!.asset_id;
+      for (const candidate of [name, `${name} (${type})`]) {
+        const asset = await client.query<{ asset_id: string }>(
+          `INSERT INTO graph.assets(tenant_id,source_id,asset_type,qualified_name,fingerprint) VALUES($1,$2,$3,$4,$5)
+           ON CONFLICT(tenant_id,source_id,qualified_name) DO UPDATE SET active=true,last_seen_at=clock_timestamp() WHERE graph.assets.asset_type=EXCLUDED.asset_type RETURNING asset_id`,
+          [input.tenantId, input.tableauConnectionId, type, candidate, createHash('sha256').update(`${input.tableauConnectionId}\0${candidate}`).digest()]);
+        if (!asset.rows[0]) continue;
+        seen.add(asset.rows[0].asset_id);
+        return asset.rows[0].asset_id;
+      }
+      throw new Error('tableau_asset_name_conflict');
     };
     const edge = async (fromId: string, toId: string, granularity: 'dataset' | 'field' | 'report', method: 'parsed' | 'declared', explanation: string, transformation: Record<string, unknown> | null) => {
-      written.add(await writeFlowEdge(client, { tenantId: input.tenantId, fromId, toId, granularity, method, explanation, transformation, collector: COLLECTOR, evidenceId }));
+      const relationshipId = await writeFlowEdge(client, { tenantId: input.tenantId, fromId, toId, granularity, method, explanation, transformation, collector: COLLECTOR, evidenceId });
+      written.set(relationshipId, (written.get(relationshipId) ?? new Set()).add(method));
       if (granularity === 'dataset') totals.tableEdges++; else if (granularity === 'field') totals.columnEdges++; else totals.reportEdges++;
     };
-    const gap = async (assetId: string, reason: string) => { await openGap(client, input.tenantId, assetId, reason); totals.gaps++; };
+    const gap = async (assetId: string, reason: string) => { await openGap(client, input.tenantId, assetId, reason); raised.add(`${assetId}\0${reason}`); totals.gaps++; };
 
     const datasetNames = new Set<string>();
     const fieldAssets = new Map<string, string>(); // `${datasource.name}\0${field.name}` -> asset id
@@ -98,8 +107,13 @@ export async function importTableauWorkbook(pool: Pool, input: {
       for (let copy = 2; datasetNames.has(datasetName); copy++) datasetName = `${safeName(datasource.caption)} (${copy})`;
       datasetNames.add(datasetName);
       const datasetId = await ensure(datasetName, 'dataset');
+      const fieldNames = new Set<string>();
       for (const field of datasource.fields) {
-        const fieldId = await ensure(`${datasetName}.${safeName(field.caption)}`, 'field');
+        // Two fields with the same caption stay two assets: the second is named with its Tableau field name too.
+        let fieldName = safeName(field.caption);
+        if (fieldNames.has(fieldName)) fieldName = `${fieldName} (${safeName(field.name)})`;
+        fieldNames.add(fieldName);
+        const fieldId = await ensure(`${datasetName}.${fieldName}`, 'field');
         fieldAssets.set(`${datasource.name}\0${field.name}`, fieldId);
         await client.query(`INSERT INTO graph.relationships(tenant_id,family,relationship_type,from_asset_id,to_asset_id,granularity) VALUES($1,'structural','CONTAINS',$2,$3,'field') ON CONFLICT DO NOTHING`, [input.tenantId, datasetId, fieldId]);
         totals.fields++; if (field.source.kind === 'calculated') totals.calculatedFields++;
@@ -111,14 +125,17 @@ export async function importTableauWorkbook(pool: Pool, input: {
       const caption = safeName(datasource.caption);
       const fieldId = (field: TableauField) => fieldAssets.get(`${datasource.name}\0${field.name}`)!;
       const expectedClass = TABLEAU_CLASS[input.warehouseType];
-      if (datasource.connectionClass !== expectedClass) {
-        const reads = datasource.connectionClass === 'multiple' ? 'joins tables from more than one database'
-          : datasource.connectionClass ? `connects to ${datasource.connectionClass}` : 'has no database connection';
+      const warehouseDatabase = input.warehouseDatabase?.toLowerCase();
+      const otherDatabase = Boolean(warehouseDatabase && datasource.databases.length && !datasource.databases.some((name) => name.toLowerCase() === warehouseDatabase));
+      if (datasource.connectionClass !== expectedClass || otherDatabase || datasource.databases.length > 1) {
+        const reads = datasource.connectionClass === 'multiple' || datasource.databases.length > 1 ? 'joins tables from more than one database'
+          : datasource.connectionClass !== expectedClass ? (datasource.connectionClass ? `connects to ${datasource.connectionClass}` : 'has no database connection')
+          : 'reads a different database';
         const reason = `${caption} ${reads}, not the linked warehouse, so its fields are not traced`;
         await gap(datasetId, reason);
         for (const field of datasource.fields) if (field.source.kind !== 'calculated') await gap(fieldId(field), reason);
       }
-      const traced = datasource.connectionClass === expectedClass;
+      const traced = datasource.connectionClass === expectedClass && !otherDatabase && datasource.databases.length <= 1;
       const relations = new Map(datasource.relations.map((relation) => [relation.name, relation]));
       if (traced) for (const relation of datasource.relations) {
         if (relation.kind === 'table') {
@@ -141,9 +158,14 @@ export async function importTableauWorkbook(pool: Pool, input: {
         const source = field.source;
         if (source.kind === 'calculated') {
           for (const reference of source.references) {
-            const referenced = byName.get(reference);
-            if (referenced) await edge(fieldId(referenced), target, 'field', 'parsed', 'Calculated field computed from this field', { kind: 'derived' });
-            else await gap(target, `${label} refers to ${reference}, which the data source does not define`);
+            // A reference to another data source's field resolves there, never to a same-named field here.
+            const referencedId = reference.datasource === null
+              ? (byName.has(reference.field) ? fieldId(byName.get(reference.field)!) : undefined)
+              : fieldAssets.get(`${reference.datasource}\0${reference.field}`);
+            if (referencedId) await edge(referencedId, target, 'field', 'parsed', 'Calculated field computed from this field', { kind: 'derived' });
+            else await gap(target, reference.datasource === null || reference.datasource === datasource.name
+              ? `${label} refers to ${reference.field}, which the data source does not define`
+              : `${label} refers to ${reference.field} in another data source the workbook does not define`);
           }
           continue;
         }
@@ -193,7 +215,15 @@ export async function importTableauWorkbook(pool: Pool, input: {
       }
     }
 
-    await retireUnseen(client, input.tenantId, input.tableauConnectionId, [...seen], [...written]);
+    const pairs = [...written].flatMap(([relationship, methods]) => [...methods].map((method) => [relationship, method] as const));
+    await retireUnseen(client, input.tenantId, input.tableauConnectionId, [...seen], pairs.map((pair) => pair[0]), pairs.map((pair) => pair[1]));
+    // A gap this import no longer raises, on an object that now has current lineage, is closed by that lineage.
+    const open = await client.query<{ gap_id: string; asset_id: string; reason: string; assertion_id: string | null }>(
+      `SELECT g.gap_id,x.asset_id,g.reason,(SELECT a.assertion_id FROM graph.relationships r JOIN graph.assertions a ON a.tenant_id=r.tenant_id AND a.relationship_id=r.relationship_id
+          WHERE r.tenant_id=g.tenant_id AND r.to_asset_id=x.asset_id AND r.family='data_flow' AND a.collector_version=$3 AND a.valid_to IS NULL ORDER BY a.captured_at DESC LIMIT 1) AS assertion_id
+       FROM graph.gaps g CROSS JOIN LATERAL unnest(g.between_asset_ids) AS x(asset_id) JOIN graph.assets s ON s.tenant_id=g.tenant_id AND s.asset_id=x.asset_id
+       WHERE g.tenant_id=$1 AND s.source_id=$2 AND g.closed_by_assertion_id IS NULL`, [input.tenantId, input.tableauConnectionId, COLLECTOR]);
+    for (const row of open.rows) if (row.assertion_id && !raised.has(`${row.asset_id}\0${row.reason}`)) await client.query('UPDATE graph.gaps SET closed_by_assertion_id=$3 WHERE tenant_id=$1 AND gap_id=$2', [input.tenantId, row.gap_id, row.assertion_id]);
     return { datasources: workbook.datasources.length, worksheets: workbook.worksheets.length, fields: totals.fields, calculatedFields: totals.calculatedFields,
       tableEdges: totals.tableEdges, columnEdges: totals.columnEdges, reportEdges: totals.reportEdges, gaps: totals.gaps };
   });
@@ -201,11 +231,13 @@ export async function importTableauWorkbook(pool: Pool, input: {
 
 /** After a re-upload, edges the workbook no longer proves are closed and objects it no longer has become inactive.
  * Nothing is deleted, so earlier dates stay queryable (contract 6). */
-async function retireUnseen(client: PoolClient, tenantId: string, connectionId: string, seen: string[], written: string[]): Promise<void> {
+async function retireUnseen(client: PoolClient, tenantId: string, connectionId: string, seen: string[], relationships: string[], methods: string[]): Promise<void> {
+  // Closed per relationship and evidence method, so a mapping that moved from declared to parsed closes the declared one.
   await client.query(
     `UPDATE graph.assertions a SET valid_to=clock_timestamp() FROM graph.relationships r, graph.assets t
      WHERE a.tenant_id=$1 AND r.tenant_id=a.tenant_id AND r.relationship_id=a.relationship_id AND t.tenant_id=r.tenant_id AND t.asset_id=r.to_asset_id
-       AND t.source_id=$2 AND a.collector_version=$3 AND a.valid_to IS NULL AND NOT (r.relationship_id=ANY($4::uuid[]))`,
-    [tenantId, connectionId, COLLECTOR, written]);
+       AND t.source_id=$2 AND a.collector_version=$3 AND a.valid_to IS NULL
+       AND NOT EXISTS (SELECT 1 FROM unnest($4::uuid[],$5::text[]) AS w(relationship_id,method) WHERE w.relationship_id=r.relationship_id AND w.method=a.evidence_method)`,
+    [tenantId, connectionId, COLLECTOR, relationships, methods]);
   await client.query('UPDATE graph.assets SET active=false WHERE tenant_id=$1 AND source_id=$2 AND active AND NOT (asset_id=ANY($3::uuid[]))', [tenantId, connectionId, seen]);
 }

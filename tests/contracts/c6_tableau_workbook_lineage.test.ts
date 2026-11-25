@@ -75,7 +75,7 @@ describe('contract 6 Tableau workbook lineage', () => {
   it('c6_tableau_worksheets_trace_to_warehouse_columns_with_evidence_on_every_edge_and_explicit_gaps', async () => {
     const uploaded = await upload(fixture);
     expect(uploaded.statusCode, uploaded.body).toBe(200);
-    expect(uploaded.json<{ imported: Record<string, number> }>().imported).toMatchObject({ datasources: 4, worksheets: 5, calculatedFields: 5 });
+    expect(uploaded.json<{ imported: Record<string, number> }>().imported).toMatchObject({ datasources: 5, worksheets: 5, calculatedFields: 6 });
     // Contract 2: the connector agent is created with the activation.
     const connection = await withTenant(adminPool, tenantId, (db) => db.query<{ status: string; connector_agent_id: string | null }>('SELECT status,connector_agent_id FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2', [tenantId, tableauId]));
     expect(connection.rows[0]!.status).toBe('active'); expect(connection.rows[0]!.connector_agent_id).not.toBeNull();
@@ -96,6 +96,10 @@ describe('contract 6 Tableau workbook lineage', () => {
     expect(current(rows, 'Encounters by department.Stay days')).toEqual(['Encounters by department.admitted_at [parsed]', 'Encounters by department.discharged_at [parsed]']);
     expect(current(rows, 'Encounters by department.Long stay')).toEqual(['Encounters by department.Stay days [parsed]']);
     expect(current(rows, 'Encounters by department.Above target')).toEqual(['Encounters by department.Encounter count [parsed]']);
+    // A formula naming another data source's field links to that field, not to a same-named field of its own.
+    expect(current(rows, 'Orders (custom SQL).Encounter department')).toEqual(['Encounters by department.Department [parsed]']);
+    // A data source on another database is never traced into the warehouse, though its table has the same name.
+    expect(rows.filter((row) => row.to_name.startsWith('orders'))).toEqual([]);
     // Worksheets: the fields they place, declared by the workbook.
     expect(current(rows, report('Encounters by department'), 'report')).toEqual(['Encounters by department.Department [declared]', 'Encounters by department.Encounter count [declared]']);
     expect(current(rows, report('Orders by type'), 'report')).toEqual(['Orders (custom SQL).Order lines [declared]', 'Orders (custom SQL).Order type [declared]', 'Orders (custom SQL).department_name [declared]']);
@@ -108,6 +112,7 @@ describe('contract 6 Tableau workbook lineage', () => {
       'Claims archive reads billing.claims, which no connected source exposes',
       'Claims archive.Claim amount reads billing.claims.claim_amount, which no connected source exposes',
       'Encounters by department.Ward refers to ward_code, which the data source does not define',
+      'orders reads a different database, not the linked warehouse, so its fields are not traced',
     ]);
   });
 
@@ -131,7 +136,7 @@ describe('contract 6 Tableau workbook lineage', () => {
               (SELECT json_agg(json_build_array(display_name,source_ref)) FROM registry.connections WHERE tenant_id=$1) AS connections,
               (SELECT count(*) FROM registry.connection_secrets WHERE tenant_id=$1 AND connection_id=$2) AS tableau_secrets`, [tenantId, tableauId])).rows[0]));
     expect(stored).toContain('"tableau_secrets":"0"');
-    for (const secret of ['cancelled-orders-marker', 'SELECT', 'COUNTD', 'DATEDIFF', 'Over a week marker', 'not_a_field', 'tableau_reader', 'warehouse.riverside.example', 'riverside_operations', 'budget-secret-path', 'Encounter target']) {
+    for (const secret of ['cancelled-orders-marker', 'SELECT', 'COUNTD', 'DATEDIFF', 'Over a week marker', 'not_a_field', 'tableau_reader', 'warehouse.riverside.example', 'other_warehouse', 'si_sample_source', 'budget-secret-path', 'Encounter target']) {
       expect(stored, secret).not.toContain(secret);
     }
   });
@@ -141,7 +146,8 @@ describe('contract 6 Tableau workbook lineage', () => {
     // The workbook now maps Department to the department code and no longer has the Budget worksheet.
     const changed = fixture
       .replace('<remote-name>department_name</remote-name>\n            <remote-type>129</remote-type>\n            <local-name>[department_name]</local-name>\n            <parent-name>[departments]</parent-name>', '<remote-name>department_code</remote-name>\n            <remote-type>129</remote-type>\n            <local-name>[department_name]</local-name>\n            <parent-name>[departments]</parent-name>')
-      .replace(/<worksheet name='Budget'>[\s\S]*?<\/worksheet>/, '');
+      .replace(/<worksheet name='Budget'>[\s\S]*?<\/worksheet>/, '')
+      .replace("formula='UPPER([ward_code])'", "formula='UPPER([department_name])'");
     expect(changed).not.toBe(fixture);
     expect((await upload(changed)).statusCode).toBe(200);
     const rows = await flows();
@@ -153,5 +159,10 @@ describe('contract 6 Tableau workbook lineage', () => {
       count: (await db.query<{ count: string }>('SELECT count(*) FROM graph.assets WHERE tenant_id=$1 AND source_id=$2', [tenantId, tableauId])).rows[0]!.count,
     }));
     expect(retired).toEqual({ budget: [{ active: false }], count: before.rows[0]!.count });
+    // The fixed reference closes its gap through the lineage that replaced it; the gap stays on record.
+    expect(await gaps()).not.toContain('Encounters by department.Ward refers to ward_code, which the data source does not define');
+    expect(current(rows, 'Encounters by department.Ward')).toEqual(['Encounters by department.Department [parsed]']);
+    const closed = await withTenant(adminPool, tenantId, (db) => db.query<{ closed: boolean }>("SELECT closed_by_assertion_id IS NOT NULL AS closed FROM graph.gaps WHERE tenant_id=$1 AND reason LIKE '%ward_code%'", [tenantId]));
+    expect(closed.rows).toEqual([{ closed: true }]);
   });
 });

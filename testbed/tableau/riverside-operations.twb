@@ -13,7 +13,7 @@
       <connection class='federated'>
         <named-connections>
           <named-connection caption='warehouse.riverside.example' name='postgres.1a2b3c4d5e6f7'>
-            <connection authentication='username-password' class='postgres' dbname='riverside_warehouse' odbc-native-protocol='' one-time-sql='' port='5432' server='warehouse.riverside.example' username='riverside_tableau' />
+            <connection authentication='username-password' class='postgres' dbname='si_testbed_pg' odbc-native-protocol='' one-time-sql='' port='5432' server='warehouse.riverside.example' username='riverside_tableau' />
           </named-connection>
         </named-connections>
         <_.fcp.ObjectModelEncapsulateLegacy.false...relation connection='postgres.1a2b3c4d5e6f7' name='mart_department_orders' table='[analytics].[mart_department_orders]' type='table' />
@@ -78,7 +78,7 @@
       <connection class='federated'>
         <named-connections>
           <named-connection caption='warehouse.riverside.example' name='postgres.1b3c4d5e6f7a8'>
-            <connection authentication='username-password' class='postgres' dbname='riverside_warehouse' port='5432' server='warehouse.riverside.example' username='riverside_tableau' />
+            <connection authentication='username-password' class='postgres' dbname='si_testbed_pg' port='5432' server='warehouse.riverside.example' username='riverside_tableau' />
           </named-connection>
         </named-connections>
         <_.fcp.ObjectModelEncapsulateLegacy.false...relation connection='postgres.1b3c4d5e6f7a8' name='mart_provider_encounters' table='[analytics].[mart_provider_encounters]' type='table' />
@@ -122,7 +122,7 @@
       <connection class='federated'>
         <named-connections>
           <named-connection caption='warehouse.riverside.example' name='postgres.1c4d5e6f7a8b9'>
-            <connection authentication='username-password' class='postgres' dbname='riverside_warehouse' port='5432' server='warehouse.riverside.example' username='riverside_tableau' />
+            <connection authentication='username-password' class='postgres' dbname='si_testbed_pg' port='5432' server='warehouse.riverside.example' username='riverside_tableau' />
           </named-connection>
         </named-connections>
         <_.fcp.ObjectModelEncapsulateLegacy.false...relation connection='postgres.1c4d5e6f7a8b9' name='Custom SQL Query' type='text'>SELECT d.department_name, sum(c.claim_amount) AS claimed_amount, sum(c.order_amount) AS ordered_amount&#13;&#10;FROM analytics.mart_order_claims c&#13;&#10;JOIN public.departments d ON d.department_id = c.department_id&#13;&#10;WHERE c.order_amount &gt; 0&#13;&#10;GROUP BY d.department_name</_.fcp.ObjectModelEncapsulateLegacy.false...relation>

@@ -1335,7 +1335,12 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
       // The workbook is read in full before anything is activated or written; the file itself is not kept.
       readTableauWorkbook(workbook);
       if(row.status==='draft')await activateConnection(options.pool,{tenantId:current.tenantId,principalId:current.userId,connectorType:'tableau',connectionId:request.params.connectionId,sourceRef:row.source_ref});
-      const imported=await importTableauWorkbook(options.pool,{tenantId:current.tenantId,tableauConnectionId:request.params.connectionId,warehouseConnectionId:row.source_ref.slice('warehouse:'.length),warehouseType:row.warehouse_type,workbookName:row.display_name,workbook});
+      // The warehouse's database name is compared in memory with each data source's, so a workbook on another database
+      // is never traced into this warehouse. Only that one field of the read credential is used; nothing is stored.
+      const warehouseId=row.source_ref.slice('warehouse:'.length);
+      const secret=(await withTenant(options.pool,current.tenantId,client=>client.query<{ciphertext:Buffer;nonce:Buffer;auth_tag:Buffer}>('SELECT ciphertext,nonce,auth_tag FROM registry.connection_secrets WHERE tenant_id=$1 AND connection_id=$2 ORDER BY secret_version DESC LIMIT 1',[current.tenantId,warehouseId]))).rows[0];
+      const warehouseDatabase=secret?decryptConnectionSecret<{database?:string}>({version:1,ciphertext:secret.ciphertext.toString('base64'),nonce:secret.nonce.toString('base64'),authTag:secret.auth_tag.toString('base64')}).database??null:null;
+      const imported=await importTableauWorkbook(options.pool,{tenantId:current.tenantId,tableauConnectionId:request.params.connectionId,warehouseConnectionId:warehouseId,warehouseType:row.warehouse_type,workbookName:row.display_name,workbook,warehouseDatabase});
       return reply.send({connectionId:request.params.connectionId,status:'active',imported});
     }catch(error){
       const code=error instanceof Error?error.message:'tableau_import_failed';

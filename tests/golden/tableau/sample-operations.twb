@@ -21,7 +21,7 @@
       <connection class='federated'>
         <named-connections>
           <named-connection caption='warehouse.riverside.example' name='postgres.0a1b2c3d4e5f6'>
-            <connection authentication='username-password' class='postgres' dbname='riverside_operations' odbc-native-protocol='' one-time-sql='' port='5432' server='warehouse.riverside.example' sslmode='require' username='tableau_reader' />
+            <connection authentication='username-password' class='postgres' dbname='si_sample_source' odbc-native-protocol='' one-time-sql='' port='5432' server='warehouse.riverside.example' sslmode='require' username='tableau_reader' />
           </named-connection>
         </named-connections>
         <_.fcp.ObjectModelEncapsulateLegacy.false...relation join='inner' type='join'>
@@ -148,7 +148,7 @@
       <connection class='federated'>
         <named-connections>
           <named-connection caption='warehouse.riverside.example' name='postgres.0b2c3d4e5f6a7'>
-            <connection authentication='username-password' class='postgres' dbname='riverside_operations' odbc-native-protocol='' one-time-sql='' port='5432' server='warehouse.riverside.example' sslmode='require' username='tableau_reader' />
+            <connection authentication='username-password' class='postgres' dbname='si_sample_source' odbc-native-protocol='' one-time-sql='' port='5432' server='warehouse.riverside.example' sslmode='require' username='tableau_reader' />
           </named-connection>
         </named-connections>
         <_.fcp.ObjectModelEncapsulateLegacy.false...relation connection='postgres.0b2c3d4e5f6a7' name='Custom SQL Query' type='text'>SELECT o.order_id, o.order_type, d.department_name, count(o.order_id) AS line_count&#13;&#10;FROM public.orders o&#13;&#10;JOIN public.encounters e ON e.encounter_id = o.encounter_id&#13;&#10;JOIN public.departments d ON d.department_id = e.department_id&#13;&#10;WHERE o.order_status &lt;&gt; &apos;cancelled-orders-marker&apos;&#13;&#10;GROUP BY o.order_id, o.order_type, d.department_name</_.fcp.ObjectModelEncapsulateLegacy.false...relation>
@@ -194,13 +194,16 @@
       </connection>
       <aliases enabled='yes' />
       <column caption='Order type' datatype='string' name='[order_type]' role='dimension' type='nominal' />
+      <column caption='Encounter department' datatype='string' name='[Calculation_2001]' role='dimension' type='nominal'>
+        <calculation class='tableau' formula='ATTR([federated.0sample1encounters].[department_name])' />
+      </column>
       <column caption='Order lines' datatype='integer' name='[line_count]' role='measure' type='quantitative' />
     </datasource>
     <datasource caption='Claims archive' inline='true' name='federated.0sample3claims' version='18.1'>
       <connection class='federated'>
         <named-connections>
           <named-connection caption='warehouse.riverside.example' name='postgres.0c3d4e5f6a7b8'>
-            <connection authentication='username-password' class='postgres' dbname='riverside_operations' port='5432' server='warehouse.riverside.example' username='tableau_reader' />
+            <connection authentication='username-password' class='postgres' dbname='si_sample_source' port='5432' server='warehouse.riverside.example' username='tableau_reader' />
           </named-connection>
         </named-connections>
         <_.fcp.ObjectModelEncapsulateLegacy.false...relation connection='postgres.0c3d4e5f6a7b8' name='claims' table='[billing].[claims]' type='table' />
@@ -217,6 +220,27 @@
         </metadata-records>
       </connection>
       <column caption='Claim amount' datatype='real' name='[claim_amount]' role='measure' type='quantitative' />
+    </datasource>
+    <datasource caption='orders (other_warehouse)' inline='true' name='federated.0sample5other' version='18.1'>
+      <connection class='federated'>
+        <named-connections>
+          <named-connection caption='warehouse.riverside.example' name='postgres.0e5f6a7b8c9d0'>
+            <connection authentication='username-password' class='postgres' dbname='other_warehouse' port='5432' server='warehouse.riverside.example' username='tableau_reader' />
+          </named-connection>
+        </named-connections>
+        <_.fcp.ObjectModelEncapsulateLegacy.false...relation connection='postgres.0e5f6a7b8c9d0' name='orders' table='[public].[orders]' type='table' />
+        <metadata-records>
+          <metadata-record class='column'>
+            <remote-name>order_type</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[order_type]</local-name>
+            <parent-name>[orders]</parent-name>
+            <remote-alias>order_type</remote-alias>
+            <ordinal>4</ordinal>
+            <local-type>string</local-type>
+          </metadata-record>
+        </metadata-records>
+      </connection>
     </datasource>
     <datasource caption='Budget workbook' inline='true' name='federated.0sample4budget' version='18.1'>
       <connection class='federated'>
