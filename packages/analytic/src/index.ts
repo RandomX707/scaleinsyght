@@ -134,7 +134,7 @@ export async function validateAnalyticPlan(pool: Pool, input: { tenantId: string
   return { tenantId: input.tenantId, principalId: input.principalId, plan };
 }
 
-export async function startAnalyticRun(pool: Pool, input: { tenantId: string; principalId: string; plan: unknown; governed?: { governedId: string; version: number }; conversationId?: string; planningClaim?: {stepId:string;workerId:string;fencingToken:number}; plannerProvenance?: {model:string;inputTokens:number;outputTokens:number;typedPlan:unknown} }): Promise<{ runId: string }> {
+export async function startAnalyticRun(pool: Pool, input: { tenantId: string; principalId: string; plan: unknown; governed?: { governedId: string; version: number }; conversationId?: string; savedReuse?: boolean; planningClaim?: {stepId:string;workerId:string;fencingToken:number}; plannerProvenance?: {model:string;inputTokens:number;outputTokens:number;typedPlan:unknown} }): Promise<{ runId: string }> {
   const validated = await validateAnalyticPlan(pool, input);
   const { plan } = validated; const planHash = plan.plan_hash;
   await withTenant(pool, input.tenantId, async (client) => {
@@ -184,7 +184,7 @@ export async function startAnalyticRun(pool: Pool, input: { tenantId: string; pr
         if (!completed.rowCount) throw new Error('stale_worker_claim');
         await client.query(`UPDATE runs.runs SET plan_id=$3 WHERE tenant_id=$1 AND run_id=$2 AND state='PLANNING'`, [input.tenantId,runId,plan.plan_id]);
       } else {
-      await client.query(`INSERT INTO runs.runs(tenant_id,run_id,principal_id,state,plan_id,conversation_id) VALUES($1,$2,$3,'CREATED',$4,$5)`, [input.tenantId, runId, input.principalId, plan.plan_id,input.conversationId??null]);
+      await client.query(`INSERT INTO runs.runs(tenant_id,run_id,principal_id,state,plan_id,conversation_id,saved_reuse) VALUES($1,$2,$3,'CREATED',$4,$5,$6)`, [input.tenantId, runId, input.principalId, plan.plan_id,input.conversationId??null,input.savedReuse??false]);
       }
       if(input.plannerProvenance){
         const call=input.plannerProvenance;

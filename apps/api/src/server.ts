@@ -991,7 +991,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
       const question=String(saved.rows[0]!.plan.question);
       const conversationId=await withTenant(options.pool,current.tenantId,async(client)=>(await client.query<{conversation_id:string}>('INSERT INTO runs.conversations(tenant_id,principal_id,title) VALUES($1,$2,$3) RETURNING conversation_id',[current.tenantId,current.userId,question.slice(0,200)])).rows[0]!.conversation_id);
       const plan=await createAnalyticPlan({question,runId:randomUUID(),...(intents?{queryIntents:intents}:{lineageRequests:lineage!}),sources:ordered.map(row=>({sourceId:row.source_id,agentId:row.agent_id,groupId:row.group_id,groupVersion:row.group_version}))});
-      return reply.code(201).send({...await startAnalyticRun(options.pool,{tenantId:current.tenantId,principalId:current.userId,plan,conversationId}),planId:plan.plan_id,conversationId});
+      return reply.code(201).send({...await startAnalyticRun(options.pool,{tenantId:current.tenantId,principalId:current.userId,plan,conversationId,savedReuse:true}),planId:plan.plan_id,conversationId});
     }catch(error){const code=error instanceof Error?error.message:'saved_question_start_failed';if(['principal_not_entitled','source_not_active','source_group_version_not_pinned'].includes(code))return reply.code(403).send({error:code});if(code.startsWith('analytic_plan'))return reply.code(400).send({error:code});throw error;}
   });
   app.delete<{Params:{planId:string}}>('/api/me/saved-questions/:planId',async(request,reply)=>{
