@@ -53,3 +53,10 @@ Not started:
 - Running anything against `si_test` while another suite is using it breaks both (one collision today). Run suites one at a time.
 - Model spend today: USD 12.91 of the USD 20 cap.
 - Worktrees: `../scaleinsyght-eval` is on `s6-nightly` (merged); `../scaleinsyght-chat` is on `s7-saved-exports`. Testbed ports 3340, 3341, 4290 and parser 8021; eval parser 8041.
+
+## Codex continuation
+
+- Review restarted from origin/main `849255f` in the separate `../scaleinsyght-review` worktree. Frozen install and local migration 032 succeeded. The main checkout was left alone.
+- Riverside dbt import and nightly refresh need an authenticated product session. Password unchanged.
+- Today's model cap is USD 30, with USD 12.91 already spent at handover. No model calls were made during the restart.
+- Resume with the Riverside import and nightly refresh, then K2, K4, S7, S8 and the fidelity pass.
