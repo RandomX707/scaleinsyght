@@ -1,0 +1,107 @@
+{
+  "H01": {
+    "p": [
+      {
+        "label": "Cardiology",
+        "value": 6
+      },
+      {
+        "label": "General",
+        "value": 6
+      },
+      {
+        "label": "Radiology",
+        "value": 6
+      },
+      {
+        "label": "Surgery",
+        "value": 6
+      }
+    ]
+  },
+  "H02": {
+    "s": 147
+  },
+  "H03": {
+    "x": [
+      {
+        "label": "Emergency",
+        "value": 234
+      },
+      {
+        "label": "Pediatrics",
+        "value": 126
+      },
+      {
+        "label": "Imaging",
+        "value": 116
+      },
+      {
+        "label": "Laboratory",
+        "value": 56
+      },
+      {
+        "label": "Surgery",
+        "value": 55
+      },
+      {
+        "label": "Cardiology",
+        "value": 53
+      },
+      {
+        "label": "Oncology",
+        "value": 47
+      },
+      {
+        "label": "Orthopedics",
+        "value": 25
+      },
+      {
+        "label": "Psychiatry",
+        "value": 23
+      },
+      {
+        "label": "Neurology",
+        "value": 15
+      },
+      {
+        "label": "Dermatology",
+        "value": 10
+      },
+      {
+        "label": "Rehabilitation",
+        "value": 8
+      }
+    ]
+  },
+  "H04": {
+    "p": 233
+  },
+  "H05": {
+    "s": [
+      {
+        "label": "lab",
+        "value": 548
+      },
+      {
+        "label": "medication",
+        "value": 467
+      }
+    ]
+  },
+  "H06": {
+    "p": 401
+  },
+  "H07": {
+    "x": 147
+  },
+  "H08": {
+    "s": 500
+  },
+  "H09": {
+    "p": 64
+  },
+  "H10": {
+    "s": 89
+  }
+}

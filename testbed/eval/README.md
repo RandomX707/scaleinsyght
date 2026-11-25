@@ -30,7 +30,7 @@ A full 55-question run with `--warehouse` costs about USD 0.9 for one eval user,
 cap of USD 1 (`MODEL_DAILY_USER_COST_CAP_USD`); on 25 Nov the last seven questions stopped at that cap. Raise the cap on
 the testbed API for full runs, or rerun the stopped questions as a fresh eval user.
 
-Model spend is capped per day in USD per tenant and per person (decision 43); a full run costs about USD 0.05 with gpt-6-luna planning and USD 0.36 with gpt-6.2-sol, within the defaults. To compare planning models, set `MODEL_CHEAP` on the API and worker processes (planning uses the `cheap` alias). With the live gateway configured, run `pnpm eval:planner`. Run `pnpm eval:planner --set=heldout2` only once, after tuning is finished. It makes a fresh
+Model spend is capped per day in USD per tenant and per person (decision 43); a full run costs about USD 0.05 with gpt-6-luna planning and USD 0.36 with gpt-6.2-sol, within the defaults. To compare planning models, set `MODEL_CHEAP` on the API and worker processes (planning uses the `cheap` alias). With the live gateway configured, run `pnpm eval:planner`. heldout2 is retired (it was run three times; known issue K5). heldout3 (`testbed/eval/heldout3.json`, truth from `testbed/eval/heldout3-truth.ts`) replaces it: run `pnpm eval:planner -- --set=heldout3` without changes in between for its first scores (once with and once without `--warehouse` for known issue K2), never tune against it, and keep its output aggregate only. It makes a fresh
 tenant in local `si_test`, loads all three sources through the API, and runs
 one case at a time. Follow-ups reuse the conversation. Scoring checks the final
 turn's source identities, numeric values, group labels, and the presence of a
