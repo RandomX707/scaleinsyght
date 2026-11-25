@@ -83,7 +83,7 @@ test('s2_empty_tenant_adds_real_sql_server_profiles_and_relationships', async ({
   await expect(page.getByText('Source result: 500', { exact: true })).toBeVisible({ timeout: 60_000 });
   await expect(page.getByText(/Executed on SQL Server hospital; returned 1 aggregate row/)).toBeVisible();
   await expect(page.getByRole('heading',{name:'How this was answered'})).toBeVisible();
-  await page.getByText('Model and typed plan',{exact:true}).click();await expect(page.getByText(/Plan model:/)).toBeVisible();await expect(page.getByText(/Answer model:/)).toBeVisible();
+  await page.getByText('Model calls',{exact:true}).click();await expect(page.getByText(/Plan model:/)).toBeVisible();await expect(page.getByText(/Answer model:/)).toBeVisible();
   await expect(page.getByLabel('Ask a question')).toHaveValue('');await expect(page).toHaveURL(/\/conversations\//);
   const recent=page.locator('.recent-list button').filter({hasText:'How many patients are in SQL Server hospital?'});await expect(recent).toBeVisible();await recent.click();await expect(page.getByText('Source result: 500',{exact:true})).toBeVisible();
   const followUpPost=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/runs'&&response.request().method()==='POST',{timeout:15_000});
