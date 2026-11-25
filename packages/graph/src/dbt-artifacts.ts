@@ -91,6 +91,6 @@ export async function importDbtArtifacts(pool: Pool, input: { tenantId: string; 
         totals.gaps++;
       }
     }
-    return { models: artifacts.models.length, sources: artifacts.sources, ...totals, modelsNotInWarehouse: notInWarehouse };
+    return { models: artifacts.models.length, sources: artifacts.sources, ...totals, modelsNotInWarehouse: notInWarehouse.sort() };
   });
 }

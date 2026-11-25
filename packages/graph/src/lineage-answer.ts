@@ -17,7 +17,7 @@ const RANK: Method[] = ['declared', 'parsed', 'observed', 'inferred'];
  * the evidence behind its link, gaps are stated as gaps, and an inferred link is never presented as verified. */
 export async function answerLineageRequest(pool: Pool, input: { tenantId: string; sourceId: string; sourceName: string; asset: string; direction: 'upstream' | 'downstream' }): Promise<{ value: number; lineage: LineageSummary; claims: Claim[]; evidence: EvidenceRef[] }> {
   const start = await withTenant(pool, input.tenantId, (client) => client.query<{ asset_id: string }>(
-    `SELECT asset_id FROM graph.assets WHERE tenant_id=$1 AND source_id=$2 AND qualified_name=$3 AND active AND asset_type IN ('dataset','field')`, [input.tenantId, input.sourceId, input.asset]));
+    `SELECT asset_id FROM graph.assets WHERE tenant_id=$1 AND qualified_name=$3 AND active AND asset_type IN ('dataset','field') AND (source_id=$2 OR source_id IN (SELECT connection_id FROM registry.connections WHERE tenant_id=$1 AND connector_type='dbt' AND status='active' AND source_ref='warehouse:'||$2::text)) ORDER BY (source_id=$2) DESC LIMIT 1`, [input.tenantId, input.sourceId, input.asset]));
   const assetId = start.rows[0]?.asset_id;
   if (!assetId) throw new Error('lineage_asset_not_found');
   const path = await queryLineage(pool, { tenantId: input.tenantId, assetId, direction: input.direction });
