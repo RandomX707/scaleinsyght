@@ -45,29 +45,10 @@ export async function writeStatementLineage(client: PoolClient, input: {
   const evidenceId = evidence.rows[0]!.evidence_id;
   const written = new Set<string>();
   const edge = async (fromId: string, toId: string, granularity: 'dataset' | 'field', method: 'parsed' | 'declared', explanation: string, transformation: Record<string, unknown> | null) => {
-    const relationship = await client.query<{ relationship_id: string }>(
-      `INSERT INTO graph.relationships(tenant_id,family,relationship_type,from_asset_id,to_asset_id,granularity) VALUES($1,'data_flow','DERIVES_FROM',$2,$3,$4)
-       ON CONFLICT(tenant_id,family,relationship_type,from_asset_id,to_asset_id,granularity) DO UPDATE SET relationship_type=EXCLUDED.relationship_type RETURNING relationship_id`,
-      [input.tenantId, fromId, toId, granularity]);
-    const relationshipId = relationship.rows[0]!.relationship_id;
-    written.add(relationshipId);
-    const existing = await client.query<{ assertion_id: string }>(
-      `SELECT assertion_id FROM graph.assertions WHERE tenant_id=$1 AND relationship_id=$2 AND evidence_method=$3 AND collector_version=$4 AND valid_to IS NULL LIMIT 1`,
-      [input.tenantId, relationshipId, method, input.collector]);
-    if (existing.rows[0]) {
-      await client.query('UPDATE graph.assertions SET evidence_ids=array_append(evidence_ids,$3::uuid) WHERE tenant_id=$1 AND assertion_id=$2 AND NOT ($3::uuid=ANY(evidence_ids))', [input.tenantId, existing.rows[0].assertion_id, evidenceId]);
-      return;
-    }
-    await client.query(
-      `INSERT INTO graph.assertions(tenant_id,relationship_id,evidence_method,evidence_ids,confidence_score,explanation,transformation,collector_version) VALUES($1,$2,$3,$4,1,$5,$6::jsonb,$7)`,
-      [input.tenantId, relationshipId, method, [evidenceId], explanation, transformation === null ? null : JSON.stringify(transformation), input.collector]);
+    written.add(await writeFlowEdge(client, { tenantId: input.tenantId, fromId, toId, granularity, method, explanation, transformation, collector: input.collector, evidenceId }));
   };
   let gaps = 0;
-  const gap = async (assetId: string, reason: string) => {
-    const open = await client.query('SELECT 1 FROM graph.gaps WHERE tenant_id=$1 AND between_asset_ids=$2::uuid[] AND reason=$3 AND closed_by_assertion_id IS NULL', [input.tenantId, [assetId], reason]);
-    if (!open.rowCount) { await client.query('INSERT INTO graph.gaps(tenant_id,between_asset_ids,reason) VALUES($1,$2,$3)', [input.tenantId, [assetId], reason]); }
-    gaps++;
-  };
+  const gap = async (assetId: string, reason: string) => { await openGap(client, input.tenantId, assetId, reason); gaps++; };
   const missing = new Set<string>();
   let tableEdges = 0; let columnEdges = 0;
   const tableMethod = input.declaredReads ? input.evidenceMethod : 'parsed';
@@ -104,6 +85,36 @@ export async function writeStatementLineage(client: PoolClient, input: {
        AND (r.to_asset_id=$3 OR r.to_asset_id IN (SELECT c.to_asset_id FROM graph.relationships c WHERE c.tenant_id=$1 AND c.from_asset_id=$3 AND c.relationship_type='CONTAINS'))`,
     [input.tenantId, input.collector, targetId, [...written]]);
   return { tableEdges, columnEdges, gaps };
+}
+
+/** Writes one DERIVES_FROM data-flow edge and its assertion for a collector, or adds the evidence to the collector's
+ * current assertion on that edge. Returns the relationship id. Assertions are never deleted or overwritten (contract 6). */
+export async function writeFlowEdge(client: PoolClient, input: {
+  tenantId: string; fromId: string; toId: string; granularity: 'dataset' | 'field' | 'report'; method: 'parsed' | 'declared';
+  explanation: string; transformation: Record<string, unknown> | null; collector: string; evidenceId: string;
+}): Promise<string> {
+  const relationship = await client.query<{ relationship_id: string }>(
+    `INSERT INTO graph.relationships(tenant_id,family,relationship_type,from_asset_id,to_asset_id,granularity) VALUES($1,'data_flow','DERIVES_FROM',$2,$3,$4)
+     ON CONFLICT(tenant_id,family,relationship_type,from_asset_id,to_asset_id,granularity) DO UPDATE SET relationship_type=EXCLUDED.relationship_type RETURNING relationship_id`,
+    [input.tenantId, input.fromId, input.toId, input.granularity]);
+  const relationshipId = relationship.rows[0]!.relationship_id;
+  const existing = await client.query<{ assertion_id: string }>(
+    `SELECT assertion_id FROM graph.assertions WHERE tenant_id=$1 AND relationship_id=$2 AND evidence_method=$3 AND collector_version=$4 AND valid_to IS NULL LIMIT 1`,
+    [input.tenantId, relationshipId, input.method, input.collector]);
+  if (existing.rows[0]) {
+    await client.query('UPDATE graph.assertions SET evidence_ids=array_append(evidence_ids,$3::uuid) WHERE tenant_id=$1 AND assertion_id=$2 AND NOT ($3::uuid=ANY(evidence_ids))', [input.tenantId, existing.rows[0].assertion_id, input.evidenceId]);
+    return relationshipId;
+  }
+  await client.query(
+    `INSERT INTO graph.assertions(tenant_id,relationship_id,evidence_method,evidence_ids,confidence_score,explanation,transformation,collector_version) VALUES($1,$2,$3,$4,1,$5,$6::jsonb,$7)`,
+    [input.tenantId, relationshipId, input.method, [input.evidenceId], input.explanation, input.transformation === null ? null : JSON.stringify(input.transformation), input.collector]);
+  return relationshipId;
+}
+
+/** Records an open gap on an asset unless the same gap is already open. Gaps are never hidden (contract 6). */
+export async function openGap(client: PoolClient, tenantId: string, assetId: string, reason: string): Promise<void> {
+  const open = await client.query('SELECT 1 FROM graph.gaps WHERE tenant_id=$1 AND between_asset_ids=$2::uuid[] AND reason=$3 AND closed_by_assertion_id IS NULL', [tenantId, [assetId], reason]);
+  if (!open.rowCount) await client.query('INSERT INTO graph.gaps(tenant_id,between_asset_ids,reason) VALUES($1,$2,$3)', [tenantId, [assetId], reason]);
 }
 
 export const statementHash = (sql: string) => createHash('sha256').update(sql).digest('hex');

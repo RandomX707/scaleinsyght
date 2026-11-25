@@ -12,6 +12,7 @@
     { "path": "./packages/artifacts" },
     { "path": "./packages/profiler" },
     { "path": "./packages/analytic" },
+    { "path": "./packages/tableau" },
     { "path": "./packages/graph" },
     { "path": "./packages/hub-adapters" },
     { "path": "./packages/reports" },

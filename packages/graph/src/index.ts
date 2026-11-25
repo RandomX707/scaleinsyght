@@ -334,6 +334,7 @@ export async function listGraphAssets(pool:Pool,tenantId:string):Promise<Array<{
 }
 export * from './sql-lineage.js';
 export * from './dbt-artifacts.js';
+export * from './tableau-workbook.js';
 export * from './lineage-graph.js';
 export * from './lineage-answer.js';
 export * from './id-trace.js';

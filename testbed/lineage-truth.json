@@ -200,5 +200,109 @@
       "analytics.stg_orders.amount",
       "public.orders.amount"
     ]
+  },
+  "tableau": {
+    "_note": "Written by hand from testbed/tableau/riverside-operations.twb and the dbt models. Data source tables come from the workbook's relations (declared) or its custom SQL (parsed); fields from its metadata records (declared), custom SQL (parsed) or calculated-field formulas (parsed). endToEnd lists the operational columns each worksheet reaches upstream through dbt.",
+    "workbook": "testbed/tableau/riverside-operations.twb",
+    "connectionName": "Riverside operations",
+    "datasets": {
+      "Department orders": {
+        "reads": [
+          "analytics.mart_department_orders"
+        ],
+        "method": "declared"
+      },
+      "Provider workload": {
+        "reads": [
+          "analytics.mart_provider_encounters"
+        ],
+        "method": "declared"
+      },
+      "Claims by department": {
+        "reads": [
+          "analytics.mart_order_claims",
+          "public.departments"
+        ],
+        "method": "parsed"
+      }
+    },
+    "fields": {
+      "Department orders.department_id": [
+        "analytics.mart_department_orders.department_id"
+      ],
+      "Department orders.Department": [
+        "analytics.mart_department_orders.department_name"
+      ],
+      "Department orders.Orders": [
+        "analytics.mart_department_orders.order_count"
+      ],
+      "Department orders.Order amount": [
+        "analytics.mart_department_orders.order_amount"
+      ],
+      "Department orders.Average order value": [
+        "Department orders.Order amount",
+        "Department orders.Orders"
+      ],
+      "Provider workload.Provider": [
+        "analytics.mart_provider_encounters.provider_name"
+      ],
+      "Provider workload.specialty": [
+        "analytics.mart_provider_encounters.specialty"
+      ],
+      "Provider workload.Encounters": [
+        "analytics.mart_provider_encounters.encounter_count"
+      ],
+      "Provider workload.Busy provider": [
+        "Provider workload.Encounters"
+      ],
+      "Claims by department.Department": [
+        "public.departments.department_name"
+      ],
+      "Claims by department.Claimed": [
+        "analytics.mart_order_claims.claim_amount"
+      ],
+      "Claims by department.Ordered": [
+        "analytics.mart_order_claims.order_amount"
+      ]
+    },
+    "reports": {
+      "Riverside operations / Orders by department": [
+        "Department orders.Average order value",
+        "Department orders.Department",
+        "Department orders.Orders"
+      ],
+      "Riverside operations / Provider workload": [
+        "Provider workload.Busy provider",
+        "Provider workload.Encounters",
+        "Provider workload.Provider"
+      ],
+      "Riverside operations / Claims by department": [
+        "Claims by department.Claimed",
+        "Claims by department.Department",
+        "Claims by department.Ordered"
+      ]
+    },
+    "endToEnd": {
+      "Riverside operations / Orders by department": [
+        "public.departments.department_name",
+        "public.orders.amount",
+        "public.orders.order_id"
+      ],
+      "Riverside operations / Provider workload": [
+        "public.encounters.encounter_id",
+        "public.providers.provider_name"
+      ],
+      "Riverside operations / Claims by department": [
+        "public.departments.department_name",
+        "public.orders.amount"
+      ]
+    },
+    "upstreamGaps": [
+      {
+        "report": "Riverside operations / Claims by department",
+        "asset": "analytics.mart_order_claims.claim_amount",
+        "reasonIncludes": "billing.claims"
+      }
+    ]
   }
 }
