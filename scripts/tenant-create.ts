@@ -79,7 +79,7 @@ async function runCli(): Promise<void> {
     const configuredDatabaseUrl = process.env.DATABASE_URL_MIGRATE;
     const databaseUrl = configuredDatabaseUrl ? new URL(configuredDatabaseUrl) : null;
     if (!databaseUrl) throw new Error('DATABASE_URL_MIGRATE is required; run pnpm db:setup first.');
-    if (process.argv.includes('--test')) databaseUrl.pathname = '/si_test';
+    if (process.argv.includes('--test')) databaseUrl.pathname = `/${process.env.SI_TEST_DATABASE??'si_test'}`;
     const pool = new Pool({ connectionString: databaseUrl.toString(), max: 1 });
     try {
       const created = await createTenant(pool, { tenantId, name, displayName, email, password });

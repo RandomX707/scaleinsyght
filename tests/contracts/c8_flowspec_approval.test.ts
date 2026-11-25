@@ -7,7 +7,7 @@ import { createGoldenHubAdapters,getGoldenHubFixtures } from '../support/golden-
 import { withTenant } from '@scaleinsyght/db';
 
 config({path:'.env'});
-function dbUrl(key:'DATABASE_URL'|'DATABASE_URL_MIGRATE'){const value=process.env[key];if(!value)throw new Error(`${key} is required; PostgreSQL contract tests are never skipped or mocked`);const url=new URL(value);url.pathname='/si_test';return url.toString();}
+function dbUrl(key:'DATABASE_URL'|'DATABASE_URL_MIGRATE'){const value=process.env[key];if(!value)throw new Error(`${key} is required; PostgreSQL contract tests are never skipped or mocked`);const url=new URL(value);url.pathname=`/${process.env.SI_TEST_DATABASE??'si_test'}`;return url.toString();}
 const appPool=new Pool({connectionString:dbUrl('DATABASE_URL')});const migrate=new Pool({connectionString:dbUrl('DATABASE_URL_MIGRATE')});
 const tenantId=`flowspec-${crypto.randomUUID()}`;let ownerCookie='';let approverCookie='';let server:Awaited<ReturnType<typeof buildServer>>;
 const spec=(name='Synthetic handoff')=>({name,sourceSnapshotIds:['00000000-0000-4000-8000-000000000001'],nodes:[{id:'read_source',kind:'read',capability:'metadata.read',inputs:{}},{id:'deliver_report',kind:'deliver',capability:'flowspec.handoff',inputs:{}}]});

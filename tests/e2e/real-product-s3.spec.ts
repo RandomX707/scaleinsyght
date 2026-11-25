@@ -7,7 +7,7 @@ import { withTenant } from '@scaleinsyght/db';
 import { createTenant } from '../../scripts/tenant-create.js';
 
 config({ path: '.env' });
-const tenantUrl = () => { const value = process.env.DATABASE_URL_MIGRATE; if (!value) throw new Error('DATABASE_URL_MIGRATE is required for local S3 acceptance.'); const url = new URL(value); url.pathname = '/si_test'; return url.toString(); };
+const tenantUrl = () => { const value = process.env.DATABASE_URL_MIGRATE; if (!value) throw new Error('DATABASE_URL_MIGRATE is required for local S3 acceptance.'); const url = new URL(value); url.pathname = `/${process.env.SI_TEST_DATABASE??'si_test'}`; return url.toString(); };
 const adminPool = new Pool({ connectionString: tenantUrl() });
 type ExcelTruth = {
   sheets: Array<{ name: string; rowCount: number; columnCount: number; columns: string[]; headers: string[] }>;

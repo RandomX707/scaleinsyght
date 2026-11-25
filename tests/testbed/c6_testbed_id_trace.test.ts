@@ -14,7 +14,7 @@ import { startSqlParser } from '../support/sqlparse-server.js';
 // S5: the ID agent fingerprints identifier values in PostgreSQL, SQL Server and the workbook and matches them across
 // systems. Checked against testbed/id-truth.json, measured directly in each testbed.
 config({ path: '.env' });
-const testUrl = (key: 'DATABASE_URL' | 'DATABASE_URL_MIGRATE') => { const value = process.env[key]; if (!value) throw new Error(`${key} is required; ID trace contracts are never skipped`); const url = new URL(value); url.pathname = '/si_test'; return url.toString(); };
+const testUrl = (key: 'DATABASE_URL' | 'DATABASE_URL_MIGRATE') => { const value = process.env[key]; if (!value) throw new Error(`${key} is required; ID trace contracts are never skipped`); const url = new URL(value); url.pathname = `/${process.env.SI_TEST_DATABASE??'si_test'}`; return url.toString(); };
 if (!process.env.ARTIFACT_MASTER_KEY) throw new Error('ARTIFACT_MASTER_KEY is required; set it in .env.');
 const appPool = new Pool({ connectionString: testUrl('DATABASE_URL') }); const adminPool = new Pool({ connectionString: testUrl('DATABASE_URL_MIGRATE') });
 type Truth = Record<string, { fields: Array<{ source: string; field: string; distinct: number }>; pairs: Array<{ left: string; right: string; shared: number }> }>;

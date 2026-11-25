@@ -9,7 +9,7 @@ import { createTenant } from '../../scripts/tenant-create.js';
 // question (through the source-choice step) and then asking again lost earlier turns, filled Recent conversations with
 // identical empty entries, and opening any of them showed an empty Home page.
 config({ path: '.env' });
-const migrateUrl = () => { const value = process.env.DATABASE_URL_MIGRATE; if (!value) throw new Error('DATABASE_URL_MIGRATE is required for the chat-thread walkthrough.'); const url = new URL(value); url.pathname = '/si_test'; return url.toString(); };
+const migrateUrl = () => { const value = process.env.DATABASE_URL_MIGRATE; if (!value) throw new Error('DATABASE_URL_MIGRATE is required for the chat-thread walkthrough.'); const url = new URL(value); url.pathname = `/${process.env.SI_TEST_DATABASE??'si_test'}`; return url.toString(); };
 const adminPool = new Pool({ connectionString: migrateUrl() });
 const postgres = new URL(process.env.DATABASE_URL_TESTBED ?? '');
 if (!postgres.hostname || !process.env.SQLSERVER_TESTBED_PASSWORD) throw new Error('The local SQL Server and PostgreSQL testbeds are required.');

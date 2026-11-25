@@ -10,7 +10,7 @@ config({ path: '.env' });
 function databaseUrl(key: 'DATABASE_URL' | 'DATABASE_URL_MIGRATE'): string {
   const value = process.env[key];
   if (!value) throw new Error(`${key} is required; PostgreSQL contract tests are never skipped`);
-  const url = new URL(value); url.pathname = '/si_test'; return url.toString();
+  const url = new URL(value); url.pathname = `/${process.env.SI_TEST_DATABASE??'si_test'}`; return url.toString();
 }
 const appPool = new Pool({ connectionString: databaseUrl('DATABASE_URL'), max: 2 });
 const migratePool = new Pool({ connectionString: databaseUrl('DATABASE_URL_MIGRATE'), max: 1 });

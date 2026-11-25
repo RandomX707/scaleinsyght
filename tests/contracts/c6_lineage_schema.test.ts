@@ -9,10 +9,10 @@ config({ path: '.env' });
 const url = process.env.DATABASE_URL_MIGRATE;
 if (!url) throw new Error('DATABASE_URL_MIGRATE is required; PostgreSQL contract tests are never skipped');
 const testUrl = new URL(url);
-testUrl.pathname = '/si_test';
+testUrl.pathname = `/${process.env.SI_TEST_DATABASE??'si_test'}`;
 const pool = new Pool({ connectionString: testUrl.toString() });
 const appUrl = new URL(process.env.DATABASE_URL ?? '');
-appUrl.pathname = '/si_test';
+appUrl.pathname = `/${process.env.SI_TEST_DATABASE??'si_test'}`;
 const appPool = new Pool({ connectionString: appUrl.toString() });
 
 describe('c6 lineage and identifier schema contracts', () => {

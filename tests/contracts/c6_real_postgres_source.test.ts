@@ -12,7 +12,7 @@ const sourceUrl=process.env.DATABASE_URL_SAMPLE_SOURCE;
 if(!sourceUrl)throw new Error('DATABASE_URL_SAMPLE_SOURCE is required for the real PostgreSQL connector contract; run pnpm db:setup:sample');
 function testUrl(key:'DATABASE_URL'|'DATABASE_URL_MIGRATE'):string{
   const value=process.env[key];if(!value)throw new Error(`${key} is required; PostgreSQL contract tests are never skipped`);
-  const url=new URL(value);url.pathname='/si_test';return url.toString();
+  const url=new URL(value);url.pathname=`/${process.env.SI_TEST_DATABASE??'si_test'}`;return url.toString();
 }
 const appPool=new Pool({connectionString:testUrl('DATABASE_URL')});
 const migratePool=new Pool({connectionString:testUrl('DATABASE_URL_MIGRATE')});

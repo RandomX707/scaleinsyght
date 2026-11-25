@@ -1,11 +1,11 @@
 import { defineConfig } from '@playwright/test';
 import { config } from 'dotenv';
 config({path:'.env'});
-const appUrl=new URL(process.env.DATABASE_URL??'');appUrl.pathname='/si_test';
-const workerUrl=new URL(process.env.DATABASE_URL_WORKER??'');workerUrl.pathname='/si_test';
-const e2eApiPort=3300;
-const e2eWorkerHealthPort=3301;
-const e2eWebPort=4174;
+const appUrl=new URL(process.env.DATABASE_URL??'');appUrl.pathname=`/${process.env.SI_TEST_DATABASE??'si_test'}`;
+const workerUrl=new URL(process.env.DATABASE_URL_WORKER??'');workerUrl.pathname=`/${process.env.SI_TEST_DATABASE??'si_test'}`;
+const e2eApiPort=Number(process.env.E2E_API_PORT??3300);
+const e2eWorkerHealthPort=Number(process.env.E2E_WORKER_PORT??3301);
+const e2eWebPort=Number(process.env.E2E_WEB_PORT??4174);
 export default defineConfig({
  testDir:'./tests/e2e',
  testIgnore:['real-product-s*.spec.ts'],

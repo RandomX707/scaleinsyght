@@ -8,7 +8,7 @@ import { activateConnection } from '@scaleinsyght/registry';
 import { buildServer, hashPassword } from '@scaleinsyght/api/server';
 
 config({path:resolve(process.cwd(),'.env')});
-function dbUrl(key:'DATABASE_URL'|'DATABASE_URL_MIGRATE') {const value=process.env[key];if(!value)throw new Error(`${key} is required for the load check`);const url=new URL(value);url.pathname='/si_test';return url.toString();}
+function dbUrl(key:'DATABASE_URL'|'DATABASE_URL_MIGRATE') {const value=process.env[key];if(!value)throw new Error(`${key} is required for the load check`);const url=new URL(value);url.pathname=`/${process.env.SI_TEST_DATABASE??'si_test'}`;return url.toString();}
 function percentile(values:number[],p:number){return [...values].sort((a,b)=>a-b)[Math.ceil(values.length*p)-1]!;}
 
 export async function runLoadCheck(count=100):Promise<{runs:number;p50Ms:number;p95Ms:number;maxMs:number}>{

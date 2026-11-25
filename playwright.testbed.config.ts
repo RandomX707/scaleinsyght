@@ -1,8 +1,8 @@
 import { defineConfig } from '@playwright/test';
 import { config } from 'dotenv';
 config({path:'.env'});
-const database=new URL(process.env.DATABASE_URL??'');database.pathname='/si_test';
-const workerDatabase=new URL(process.env.DATABASE_URL_WORKER??'');workerDatabase.pathname='/si_test';
+const database=new URL(process.env.DATABASE_URL??'');database.pathname=`/${process.env.SI_TEST_DATABASE??'si_test'}`;
+const workerDatabase=new URL(process.env.DATABASE_URL_WORKER??'');workerDatabase.pathname=`/${process.env.SI_TEST_DATABASE??'si_test'}`;
 const apiPort=Number(process.env.TESTBED_API_PORT??3320);
 const workerPort=Number(process.env.TESTBED_WORKER_PORT??3321);
 const webPort=Number(process.env.TESTBED_WEB_PORT??4284);

@@ -20,7 +20,7 @@ const email = tenantId + '@example.test';
 const password = randomBytes(24).toString('base64url');
 const database = new URL(process.env.DATABASE_URL_MIGRATE ?? '');
 if (!['localhost', '127.0.0.1'].includes(database.hostname)) throw new Error('Evaluation requires local si_test');
-database.pathname = '/si_test';
+database.pathname = `/${process.env.SI_TEST_DATABASE??'si_test'}`;
 const pool = new Pool({ connectionString: database.toString() });
 type Case = {id: string; sources: Source[]; turns: string[]};
 type Item = {id: string; status: 'correct' | 'refused correctly' | 'wrong' | 'failed'; costUsd: number; latencyMs: number; turns: unknown[]};

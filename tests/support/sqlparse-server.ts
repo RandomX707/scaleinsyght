@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
 /** Starts the real SQLGlot service (services/sqlparse) for a test on its own port and points SQLPARSE_URL at it. */
-export async function startSqlParser(port = 8031): Promise<{ url: string; stop: () => void }> {
+export async function startSqlParser(port = Number(process.env.SQLPARSE_TEST_PORT ?? 8031)): Promise<{ url: string; stop: () => void }> {
   const url = `http://127.0.0.1:${port}`;
   const child: ChildProcess = spawn('node', [resolve('scripts/sqlparse-dev.mjs')], { env: { ...process.env, SQLPARSE_PORT: String(port) }, stdio: 'ignore' });
   for (let attempt = 0; attempt < 60; attempt++) {

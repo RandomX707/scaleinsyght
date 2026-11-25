@@ -8,7 +8,7 @@ import { createTenant } from '../../scripts/tenant-create.js';
 import { createDisposableSqlServerWriter } from '../support/sqlserver-writer.js';
 
 config({ path: '.env' });
-const tenantUrl = () => { const value = process.env.DATABASE_URL_MIGRATE; if (!value) throw new Error('DATABASE_URL_MIGRATE is required for local S2 acceptance.'); const url = new URL(value); url.pathname = '/si_test'; return url.toString(); };
+const tenantUrl = () => { const value = process.env.DATABASE_URL_MIGRATE; if (!value) throw new Error('DATABASE_URL_MIGRATE is required for local S2 acceptance.'); const url = new URL(value); url.pathname = `/${process.env.SI_TEST_DATABASE??'si_test'}`; return url.toString(); };
 const adminPool = new Pool({ connectionString: tenantUrl() });
 const round6=(rows:Array<{providerId:number;average:number}>)=>rows.map(row=>({providerId:row.providerId,average:Math.round(row.average*1e6)/1e6}));
 const truth=JSON.parse(readFileSync('testbed/truth.json','utf8')) as {answerChecks:{emergencyVisits2025:{sqlServer:number};ordersPerDepartmentTop5:{sqlServer:Array<{departmentName:string;orderCount:number}>};averageEncountersPerPatientByProvider:{sqlServer:Array<{providerId:number;average:number}>};patientCountComparison:{postgres:number;sqlServer:number};patientsWithPhone:{postgres:number;sqlServer:number}};expectedRelationships:{sqlServer:Array<{from:string;to:string;evidenceMethod:string;confidence:number}>}};

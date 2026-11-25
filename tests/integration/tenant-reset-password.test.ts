@@ -9,7 +9,7 @@ import { resetPassword } from '../../scripts/tenant-reset-password.js';
 config({ path: '.env' });
 const value = process.env.DATABASE_URL_MIGRATE;
 if (!value) throw new Error('DATABASE_URL_MIGRATE is required; PostgreSQL integration tests are never skipped');
-const url = new URL(value); url.pathname = '/si_test';
+const url = new URL(value); url.pathname = `/${process.env.SI_TEST_DATABASE??'si_test'}`;
 const pool = new Pool({ connectionString: url.toString() });
 const matches = (password: string, encoded: string) => {
   const [salt, hash] = encoded.split(':');

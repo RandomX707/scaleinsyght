@@ -5,7 +5,7 @@ import{withTenant}from'@scaleinsyght/db';
 import{activateConnection,moveConnectionToGroup,putPersonalMemory,getPersonalMemory}from'@scaleinsyght/registry';
 import{createRun,addRunStep,claimNextStep,completeStep,transitionRun}from'@scaleinsyght/runner';
 config({path:'.env'});
-function testUrl(key:'DATABASE_URL'|'DATABASE_URL_WORKER'|'DATABASE_URL_MIGRATE'){const value=process.env[key];if(!value)throw new Error(`${key} is required; PostgreSQL contract tests are never skipped`);const url=new URL(value);url.pathname='/si_test';return url.toString();}
+function testUrl(key:'DATABASE_URL'|'DATABASE_URL_WORKER'|'DATABASE_URL_MIGRATE'){const value=process.env[key];if(!value)throw new Error(`${key} is required; PostgreSQL contract tests are never skipped`);const url=new URL(value);url.pathname=`/${process.env.SI_TEST_DATABASE??'si_test'}`;return url.toString();}
 const app=new Pool({connectionString:testUrl('DATABASE_URL')});const worker=new Pool({connectionString:testUrl('DATABASE_URL_WORKER')});const migrate=new Pool({connectionString:testUrl('DATABASE_URL_MIGRATE')});
 describe('contract 2 source groups and personal memory',()=>{
  afterAll(async()=>{await app.end();await worker.end();await migrate.end();});

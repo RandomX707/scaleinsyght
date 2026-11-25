@@ -7,7 +7,7 @@ import { withTenant } from '@scaleinsyght/db';
 import { signInToTestWorkspace } from '../support/e2e-auth.js';
 
 config({path:'.env'});
-function testUrl(key:'DATABASE_URL'|'DATABASE_URL_MIGRATE'){const value=process.env[key];if(!value)throw new Error(`${key} is required for Phase 6 E2E setup`);const url=new URL(value);url.pathname='/si_test';return url.toString();}
+function testUrl(key:'DATABASE_URL'|'DATABASE_URL_MIGRATE'){const value=process.env[key];if(!value)throw new Error(`${key} is required for Phase 6 E2E setup`);const url=new URL(value);url.pathname=`/${process.env.SI_TEST_DATABASE??'si_test'}`;return url.toString();}
 const setup=new Pool({connectionString:testUrl('DATABASE_URL_MIGRATE')});const app=new Pool({connectionString:testUrl('DATABASE_URL')});
 test.afterAll(async()=>{await setup.end();await app.end();});
 

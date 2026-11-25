@@ -8,7 +8,7 @@ import { hashPassword } from '@scaleinsyght/api/server';
 import { buildTestServer } from '../support/test-api.js';
 
 config({path:'.env'});
-const testUrl=(key:'DATABASE_URL'|'DATABASE_URL_MIGRATE')=>{const value=process.env[key];if(!value)throw new Error(`${key} is required; metadata contracts are never skipped`);const url=new URL(value);url.pathname='/si_test';return url.toString();};
+const testUrl=(key:'DATABASE_URL'|'DATABASE_URL_MIGRATE')=>{const value=process.env[key];if(!value)throw new Error(`${key} is required; metadata contracts are never skipped`);const url=new URL(value);url.pathname=`/${process.env.SI_TEST_DATABASE??'si_test'}`;return url.toString();};
 const appPool=new Pool({connectionString:testUrl('DATABASE_URL')});const adminPool=new Pool({connectionString:testUrl('DATABASE_URL_MIGRATE')});
 const tenantId=`metadata-real-${randomUUID()}`;const email=`admin@${tenantId}.synthetic.invalid`;const password='metadata-real-test-password';let server:Awaited<ReturnType<typeof buildTestServer>>;let cookie='';
 

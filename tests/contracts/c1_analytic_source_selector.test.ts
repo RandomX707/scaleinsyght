@@ -7,7 +7,7 @@ import { activateConnection } from '@scaleinsyght/registry';
 import { withTenant } from '@scaleinsyght/db';
 
 config({path:'.env'});
-function url(key:'DATABASE_URL'|'DATABASE_URL_MIGRATE'):string{const value=process.env[key];if(!value)throw new Error(`${key} is required; PostgreSQL contract tests are never skipped`);const parsed=new URL(value);parsed.pathname='/si_test';return parsed.toString();}
+function url(key:'DATABASE_URL'|'DATABASE_URL_MIGRATE'):string{const value=process.env[key];if(!value)throw new Error(`${key} is required; PostgreSQL contract tests are never skipped`);const parsed=new URL(value);parsed.pathname=`/${process.env.SI_TEST_DATABASE??'si_test'}`;return parsed.toString();}
 const app=new Pool({connectionString:url('DATABASE_URL')});const migrate=new Pool({connectionString:url('DATABASE_URL_MIGRATE')});
 describe('contract 1 authorized analytic source discovery',()=>{
  afterAll(async()=>{await app.end();await migrate.end();});

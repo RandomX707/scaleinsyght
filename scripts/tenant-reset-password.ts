@@ -33,7 +33,7 @@ async function runCli(): Promise<void> {
   const configured = process.env.DATABASE_URL_MIGRATE;
   if (!configured) throw new Error('DATABASE_URL_MIGRATE is required; run pnpm db:setup first.');
   const databaseUrl = new URL(configured);
-  if (process.argv.includes('--test')) databaseUrl.pathname = '/si_test';
+  if (process.argv.includes('--test')) databaseUrl.pathname = `/${process.env.SI_TEST_DATABASE??'si_test'}`;
   const pool = new Pool({ connectionString: databaseUrl.toString(), max: 1 });
   try {
     const result = await resetPassword(pool, { tenantId: tenantArg, email: emailArg, password });

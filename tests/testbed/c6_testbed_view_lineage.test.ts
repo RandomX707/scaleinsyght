@@ -9,7 +9,7 @@ import { buildTestServer } from '../support/test-api.js';
 import { startSqlParser } from '../support/sqlparse-server.js';
 
 config({ path: '.env' });
-const testUrl = (key: 'DATABASE_URL' | 'DATABASE_URL_MIGRATE') => { const value = process.env[key]; if (!value) throw new Error(`${key} is required; lineage contracts are never skipped`); const url = new URL(value); url.pathname = '/si_test'; return url.toString(); };
+const testUrl = (key: 'DATABASE_URL' | 'DATABASE_URL_MIGRATE') => { const value = process.env[key]; if (!value) throw new Error(`${key} is required; lineage contracts are never skipped`); const url = new URL(value); url.pathname = `/${process.env.SI_TEST_DATABASE??'si_test'}`; return url.toString(); };
 const appPool = new Pool({ connectionString: testUrl('DATABASE_URL') }); const adminPool = new Pool({ connectionString: testUrl('DATABASE_URL_MIGRATE') });
 type DbtTruth = { models: Record<string, { declaredReads: string[]; columns?: Record<string, string[]> }>; gaps: Array<{ asset: string; reasonIncludes: string }>; modelsInDbtConnection: string[] };
 const truth = JSON.parse(readFileSync('testbed/lineage-truth.json', 'utf8')) as { views: Record<'postgres' | 'sql_server', Record<string, { reads: string[]; columns: Record<string, string[]> }>>; dbt: DbtTruth; endToEnd: Record<string, string[]> };
