@@ -261,15 +261,20 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     if(!studio.rows[0]?.connected||!hubAdapters.dataStudio.connected)return reply.code(503).send({error:'hub_adapter_disconnected'});
     const version=Number((request.body as {version?:unknown})?.version);if(!Number.isInteger(version)||version<1)return reply.code(400).send({error:'invalid_version'});
     const delivery=await withTenant(options.pool,current.tenantId,async(client)=>{
-      const existing=await client.query<{handoff_id:string;idempotency_key:string;payload_hash:string;status:string;receiver_ref:string|null}>('SELECT handoff_id,idempotency_key,payload_hash,status,receiver_ref FROM hub.handoffs WHERE tenant_id=$1 AND flowspec_id=$2 AND version=$3',[current.tenantId,request.params.id,version]);
-      if(existing.rows[0])return {kind:'existing' as const,row:existing.rows[0],...(existing.rows[0].status==='pending'||existing.rows[0].status==='unknown'?{delivery:{flowspecId:request.params.id,version,payloadHash:existing.rows[0].payload_hash}}:{})};
+      const findExisting=async()=>{
+        const existing=await client.query<{handoff_id:string;idempotency_key:string;payload_hash:string;status:string;receiver_ref:string|null}>('SELECT handoff_id,idempotency_key,payload_hash,status,receiver_ref FROM hub.handoffs WHERE tenant_id=$1 AND flowspec_id=$2 AND version=$3',[current.tenantId,request.params.id,version]);
+        return existing.rows[0]?{kind:'existing' as const,row:existing.rows[0],...(existing.rows[0].status==='pending'||existing.rows[0].status==='unknown'?{delivery:{flowspecId:request.params.id,version,payloadHash:existing.rows[0].payload_hash}}:{})}:null;
+      };
+      const before=await findExisting();if(before)return before;
       const approved=await client.query<{payload:Record<string,unknown>;subject_hash:string;grant_id:string;idempotency_key:string;expires_at:Date;consumed_at:Date|null}>(
         `SELECT v.payload,v.subject_hash,g.grant_id,g.idempotency_key,g.expires_at,g.consumed_at FROM hub.flowspec_versions v
          JOIN hub.flowspec_approvals a USING(tenant_id,flowspec_id,version,subject_hash) JOIN hub.handoff_grants g USING(tenant_id,approval_id,flowspec_id,version,subject_hash)
          WHERE v.tenant_id=$1 AND v.flowspec_id=$2 AND v.version=$3 AND a.status='approved' AND a.expires_at>clock_timestamp() FOR UPDATE OF g`,[current.tenantId,request.params.id,version]);
       const row=approved.rows[0];if(!row)return {kind:'no_grant' as const};
+      // A concurrent request may have consumed the grant while this one waited for the grant lock. Its handoff was
+      // committed with the grant, so this later statement sees it: return that handoff instead of refusing (K4).
+      if(row.consumed_at)return (await findExisting())??{kind:'consumed' as const};
       if(row.expires_at.getTime()<=Date.now())return {kind:'expired' as const};
-      if(row.consumed_at)return {kind:'consumed' as const};
       const runId=randomUUID();await client.query("INSERT INTO runs.runs(tenant_id,run_id,principal_id,state) VALUES($1,$2,$3,'RUNNING')",[current.tenantId,runId,current.userId]);
       const decision=await client.query<{decision_id:string}>("INSERT INTO runs.authz_decisions(tenant_id,run_id,principal_id,capability_id,outcome,policy_version,reasons) VALUES($1,$2,$3,'flowspec.handoff','allow','phase4-v1','[\"approved_single_use_grant\"]') RETURNING decision_id",[current.tenantId,runId,current.userId]);
       const payloadHash=createHash('sha256').update(JSON.stringify(row.payload)).digest('hex');

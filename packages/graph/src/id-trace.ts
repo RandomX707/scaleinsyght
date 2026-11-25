@@ -39,8 +39,11 @@ export async function listIdEntities(pool: Pool, tenantId: string): Promise<IdEn
       const home = [...members].sort((a, b) => Number(b.distinct) - Number(a.distinct) || inbound(b.asset_id) - inbound(a.asset_id) || a.field_name.localeCompare(b.field_name))[0]!;
       const homeColumn = home.field_name.slice(home.field_name.lastIndexOf('.') + 1);
       const shared = await client.query<{ asset_id: string; shared: string }>(
-        `SELECT f.asset_id,count(*)::text AS shared FROM graph.id_fingerprints f JOIN graph.id_fingerprints h ON h.tenant_id=f.tenant_id AND h.asset_id=$2 AND h.fingerprint=f.fingerprint
-         WHERE f.tenant_id=$1 AND f.asset_id=ANY($3::uuid[]) GROUP BY f.asset_id`, [tenantId, home.asset_id, members.map((row) => row.asset_id)]);
+        // Each home fingerprint probes (tenant_id, fingerprint); OFFSET 0 keeps it a per-row index lookup. Freshly written
+        // fingerprints are invisible to statistics, and a reordered join scanned the home field once per member value (K4).
+        `SELECT f.asset_id,count(*)::text AS shared FROM graph.id_fingerprints h
+         CROSS JOIN LATERAL (SELECT m.asset_id FROM graph.id_fingerprints m WHERE m.tenant_id=$1 AND m.fingerprint=h.fingerprint AND m.asset_id=ANY($3::uuid[]) OFFSET 0) f
+         WHERE h.tenant_id=$1 AND h.asset_id=$2 GROUP BY f.asset_id`, [tenantId, home.asset_id, members.map((row) => row.asset_id)]);
       const sharedBy = new Map(shared.rows.map((row) => [row.asset_id, Number(row.shared)]));
       entities.push({ entityId: home.asset_id, home: home.field_name, label: `${homeColumn} · ${home.field_name.slice(0, home.field_name.lastIndexOf('.'))}`,
         fields: members.map((row) => {

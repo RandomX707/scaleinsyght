@@ -5,8 +5,8 @@ import { withRunTenant } from '@scaleinsyght/db';
 import { claimNextStep, completeStep } from '@scaleinsyght/runner';
 
 config({path:fileURLToPath(new URL('../../.env',import.meta.url))});
-const mode=process.argv[2];const workerId=process.argv[3];
-if(!workerId||!['crash','crash-after-boundary','recover'].includes(mode??''))throw new Error('usage: crash-worker.ts <crash|crash-after-boundary|recover> <worker-id>');
+const mode=process.argv[2];const workerId=process.argv[3];const tenantId=process.argv[4];
+if(!workerId||!tenantId||!['crash','crash-after-boundary','recover'].includes(mode??''))throw new Error('usage: crash-worker.ts <crash|crash-after-boundary|recover> <worker-id> <tenant-id>');
 const url=new URL(process.env.DATABASE_URL_WORKER??'');url.pathname=`/${process.env.SI_TEST_DATABASE??'si_test'}`;
 const pool=new Pool({connectionString:url.toString(),max:1});
 async function resultRef(claim:NonNullable<Awaited<ReturnType<typeof claimNextStep>>>):Promise<string>{
@@ -16,12 +16,12 @@ async function resultRef(claim:NonNullable<Awaited<ReturnType<typeof claimNextSt
  });
  const refs=['golden://phase0/summary','golden://phase0/count'];const ref=refs[order-1];if(!ref)throw new Error(`No golden result for step order ${order}`);return ref;
 }
-const claim=await claimNextStep(pool,workerId,60_000);
+const claim=await claimNextStep(pool,workerId,60_000,tenantId);
 if(!claim){await pool.end();process.exit(2);}
 if(mode==='crash-after-boundary'){
  const completed=await completeStep(pool,claim,{resultRef:await resultRef(claim)});
  if(!completed){await pool.end();process.exit(3);}
- const next=await claimNextStep(pool,workerId,60_000);
+ const next=await claimNextStep(pool,workerId,60_000,tenantId);
  if(!next){await pool.end();process.exit(4);}
  process.stdout.write(`${JSON.stringify(next)}\n`);
  await new Promise<void>(()=>{});

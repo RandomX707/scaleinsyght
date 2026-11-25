@@ -15,8 +15,8 @@ function testUrl(key: 'DATABASE_URL_WORKER' | 'DATABASE_URL_MIGRATE'): string {
 const worker = new Pool({ connectionString: testUrl('DATABASE_URL_WORKER'), max: 3 });
 const migrate = new Pool({ connectionString: testUrl('DATABASE_URL_MIGRATE'), max: 2 });
 
-async function spawnWorker(mode:'crash'|'crash-after-boundary'|'recover',workerId:string):Promise<{process:ChildProcess;claim:Awaited<ReturnType<typeof claimNextStep>>;exit:Promise<[number|null,NodeJS.Signals|null]>}>{
-  const child=spawn(process.execPath,['--import','tsx','tests/support/crash-worker.ts',mode,workerId],{cwd:process.cwd(),stdio:['ignore','pipe','pipe']});
+async function spawnWorker(mode:'crash'|'crash-after-boundary'|'recover',workerId:string,tenantId:string):Promise<{process:ChildProcess;claim:Awaited<ReturnType<typeof claimNextStep>>;exit:Promise<[number|null,NodeJS.Signals|null]>}>{
+  const child=spawn(process.execPath,['--import','tsx','tests/support/crash-worker.ts',mode,workerId,tenantId],{cwd:process.cwd(),stdio:['ignore','pipe','pipe']});
   const exit=once(child,'exit') as Promise<[number|null,NodeJS.Signals|null]>;
   let output='';let errorOutput='';child.stderr?.on('data',chunk=>{errorOutput+=String(chunk);});
   const claim=await new Promise<Awaited<ReturnType<typeof claimNextStep>>>((resolve,reject)=>{
@@ -44,9 +44,12 @@ describe('contract 5 durable runner', () => {
     await transitionRun(migrate, { tenantId: tenant, runId: run.runId, to: 'PLAN_VALIDATED' });
     await transitionRun(migrate, { tenantId: tenant, runId: run.runId, to: 'RUNNING' });
 
+    // Both workers race for this tenant's single step. Every claim in this file is scoped to its test's tenant: the
+    // shared contract database also holds other suites' abandoned steps, and once their leases expire an unscoped claim
+    // correctly takes them first (oldest first). That made these tests flaky without any race in the runner (K4).
     const claims = await Promise.all([
-      claimNextStep(worker, 'worker-a', 10_000),
-      claimNextStep(worker, 'worker-b', 10_000),
+      claimNextStep(worker, 'worker-a', 10_000, tenant),
+      claimNextStep(worker, 'worker-b', 10_000, tenant),
     ]);
     const claim = claims.find(Boolean)!;
     expect(claim?.stepId).toBe(stepId);
@@ -101,20 +104,21 @@ describe('contract 5 durable runner', () => {
     const run=await createRun(migrate,{tenantId:tenant,principalId:principal});
     await addRunStep(migrate,{tenantId:tenant,runId:run.runId,capabilityId:'synthetic.effect',capabilityVersion:1,agentId:agent,stepOrder:1});
     for(const to of ['PLANNING','PLAN_VALIDATED','RUNNING'] as const)await transitionRun(migrate,{tenantId:tenant,runId:run.runId,to});
-    const claim=await claimNextStep(worker,'effect-worker',60_000);
+    const claim=await claimNextStep(worker,'effect-worker',60_000,tenant);
     await recordEffectIntent(worker,claim!,{target:'synthetic.sink',payloadHash:'a'.repeat(64)});
     await expect(markEffectUnknown(worker,claim!)).resolves.toBe(true);
     const state=await withTenant(migrate,tenant,async(db)=>db.query<{state:string}>('SELECT state FROM runs.steps WHERE run_id=$1',[run.runId]));
     expect(state.rows[0]?.state).toBe('OUTCOME_UNKNOWN');
-    expect(await claimNextStep(worker,'effect-retry',60_000)).toBeNull();
+    expect(await claimNextStep(worker,'effect-retry',60_000,tenant)).toBeNull();
     expect((await eventsAfter(migrate,tenant,run.runId,0)).map(event=>event.event_type)).toContain('effect_unknown');
   });
 
   it('c5_worker_crash_at_every_step_boundary_recovers_20_runs_across_two_tenants', async () => {
     const completed: Array<{tenant:string;runId:string}> = [];
+    const suffix=crypto.randomUUID();
     const tenants=[
-      {tenant:`${'golden-tenant-north'}-recovery`,label:'Meridian North Synthetic',principal:'',agent:''},
-      {tenant:`${'golden-tenant-south'}-recovery`,label:'Meridian South Synthetic',principal:'',agent:''},
+      {tenant:`golden-tenant-north-recovery-${suffix}`,label:'Meridian North Synthetic',principal:'',agent:''},
+      {tenant:`golden-tenant-south-recovery-${suffix}`,label:'Meridian South Synthetic',principal:'',agent:''},
     ];
     for(const context of tenants)await withTenant(migrate,context.tenant,async(db)=>{
       await db.query('INSERT INTO core.tenants(tenant_id,name) VALUES($1,$2)',[context.tenant,context.label]);
@@ -129,7 +133,7 @@ describe('contract 5 durable runner', () => {
       await transitionRun(migrate,{tenantId:tenant,runId:run.runId,to:'PLANNING'});
       await transitionRun(migrate,{tenantId:tenant,runId:run.runId,to:'PLAN_VALIDATED'});
       await transitionRun(migrate,{tenantId:tenant,runId:run.runId,to:'RUNNING'});
-      const crashedWorker=await spawnWorker('crash-after-boundary',`crashed-${index}`);
+      const crashedWorker=await spawnWorker('crash-after-boundary',`crashed-${index}`,tenant);
       const crashed=crashedWorker.claim;
       expect(crashed?.runId).toBe(run.runId);
       expect(crashed?.stepId).toBe(secondStep);
@@ -140,7 +144,7 @@ describe('contract 5 durable runner', () => {
       expect(crashCode).toBeNull();
       expect(crashSignal).toBe('SIGKILL');
       await withTenant(migrate,tenant,async(db)=>db.query(`UPDATE runs.steps SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE run_id=$1`,[run.runId]));
-      const recoveredWorker=await spawnWorker('recover',`restarted-${index}`);
+      const recoveredWorker=await spawnWorker('recover',`restarted-${index}`,tenant);
       const resumed=recoveredWorker.claim;
       const [recoverCode,recoverSignal]=await recoveredWorker.exit;
       expect(recoverCode).toBe(0);
@@ -168,7 +172,7 @@ describe('contract 5 durable runner', () => {
     const parent=await createRun(migrate,{tenantId:tenant,principalId:principal});
     await addRunStep(migrate,{tenantId:tenant,runId:parent.runId,capabilityId:'golden.read',capabilityVersion:1,agentId:agent,stepOrder:1});
     for(const to of ['PLANNING','PLAN_VALIDATED','RUNNING'] as const)await transitionRun(migrate,{tenantId:tenant,runId:parent.runId,to});
-    const claim=await claimNextStep(worker,'child-failing-worker',60_000);
+    const claim=await claimNextStep(worker,'child-failing-worker',60_000,tenant);
     await failStep(worker,claim!,{reasonCode:'synthetic_timeout'});
     await transitionRun(migrate,{tenantId:tenant,runId:parent.runId,to:'PARTIAL'});
     const before=await eventsAfter(migrate,tenant,parent.runId,0);
@@ -181,7 +185,7 @@ describe('contract 5 durable runner', () => {
     expect(replayRunState(childEvents)).toBe('RUNNING');
     const childSteps=await withTenant(migrate,tenant,async(db)=>db.query<{state:string;reused_from_run_id:string|null}>('SELECT state,reused_from_run_id FROM runs.steps WHERE run_id=$1',[child.runId]));
     expect(childSteps.rows).toEqual([{state:'PENDING',reused_from_run_id:parent.runId}]);
-    const childClaim=await claimNextStep(worker,'child-worker',60_000);
+    const childClaim=await claimNextStep(worker,'child-worker',60_000,tenant);
     await completeStep(worker,childClaim!,{resultRef:'golden://phase0/summary'});
   });
 });
