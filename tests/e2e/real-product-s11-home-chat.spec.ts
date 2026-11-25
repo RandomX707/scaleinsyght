@@ -114,8 +114,7 @@ test('s11_home_answers_take_the_form_code_chooses_and_form_follow_ups_do_not_rer
   await page.getByRole('button', { name: 'New chat' }).click();
   const providers = await truth('SELECT provider_id::text AS g,count(*)::text AS n FROM encounters GROUP BY 1');
   expect(providers.length).toBeGreaterThan(20);
-  // The plain wording "each provider" is refused by the verifier today (known issue K8); provider_id is shown by name (decision 45).
-  await ask(page, 'How many encounters does each provider_id have in the PostgreSQL testbed?');
+  await ask(page, 'How many encounters does each provider have in the PostgreSQL testbed?');
   await answered(page, 1);
   const compact = page.locator('.grouped-result').last();
   await expect(compact.locator('.bar-chart')).toHaveCount(0);
