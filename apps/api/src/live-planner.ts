@@ -56,6 +56,7 @@ Prior turns: ${priorTurns.map(turn=>`${turn.role}: ${normalize(turn.content)}`).
     } catch(error) {
       const reason=error instanceof SyntaxError?'invalid_json':error instanceof Error?error.message:'invalid_intent';
       attempts.at(-1)!.error=reason;
+      if(reason.startsWith('grouping_by_a_sensitive_column_is_not_allowed:')) return {kind:'rejected' as const,reason:'analytic_sensitive_column',attempts};
       repair='\nPrevious response failed validation: '+reason;
       continue;
     }
