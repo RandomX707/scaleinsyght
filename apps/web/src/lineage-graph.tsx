@@ -20,6 +20,11 @@ const LANE_X = 24; const LANE_W = 300; const NODE_W = 270; const HEAD = 30; cons
 const connectorLabel: Record<string, string> = { postgres: 'PostgreSQL', sql_server: 'SQL Server', excel: 'Excel', dbt: 'dbt', snowflake: 'Snowflake', tableau: 'Tableau', power_bi: 'Power BI' };
 
 const shortType = (type: string | null) => !type ? '' : type.length > 14 ? `${type.slice(0, 13)}…` : type;
+function curve(x1: number, y1: number, x2: number, y2: number) {
+  const mid = (x2 - x1) / 2;
+  return `M${x1} ${y1} C${x1 + mid} ${y1},${x2 - mid} ${y2},${x2} ${y2}`;
+}
+
 export function lineageEdgePath(fromX: number, fromY: number, toX: number, toY: number) {
   const start = fromX + NODE_W;
   const end = toX - 2;
