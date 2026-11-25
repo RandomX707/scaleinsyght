@@ -94,8 +94,8 @@ describe('contract 1 S2 conversation history', () => {
 
     const list = await server.inject({ method: 'GET', url: '/api/conversations', headers: { cookie: ownerCookie } });
     expect(list.statusCode).toBe(200);
+    // Recent conversations list only real threads with at least one answer; the unanswered thread is not listed.
     expect(list.json<{ conversations: Array<{ conversationId: string; title: string }> }>().conversations).toEqual([
-      expect.objectContaining({ conversationId: newerConversationId, title: 'A separate question' }),
       expect.objectContaining({ conversationId, title: firstQuestion }),
     ]);
     const thread = await server.inject({ method: 'GET', url: `/api/conversations/${conversationId}`, headers: { cookie: ownerCookie } });
@@ -107,5 +107,24 @@ describe('contract 1 S2 conversation history', () => {
     expect((await server.inject({ method: 'GET', url: '/api/conversations', headers: { cookie: memberCookie } })).json<{ conversations: unknown[] }>().conversations).toHaveLength(0);
     expect((await server.inject({ method: 'GET', url: `/api/conversations/${conversationId}`, headers: { cookie: memberCookie } })).statusCode).toBe(404);
     expect((await server.inject({ method: 'GET', url: `/api/conversations/${conversationId}`, headers: { cookie: otherTenantCookie } })).statusCode).toBe(404);
+  });
+
+  it('c1_a_duplicate_request_id_creates_one_conversation_and_one_run', async () => {
+    const requestId = randomUUID();const question = `Idempotent question ${requestId}`;
+    const send = () => server.inject({ method: 'POST', url: '/api/runs', headers: { cookie: ownerCookie }, payload: { question, sourceIds: [sourceId], requestId } });
+    // A double click sends the same request id twice at once.
+    const [first, second] = await Promise.all([send(), send()]);
+    expect([first.statusCode, second.statusCode].sort()).toEqual(expect.arrayContaining([201]));
+    for (const response of [first, second]) expect([200, 201, 409]).toContain(response.statusCode);
+    const created = [first, second].find((response) => response.statusCode === 201)!.json<{ runId: string; conversationId: string }>();
+    // A later replay of the same id returns the same run and conversation.
+    const replay = await send();
+    expect(replay.statusCode).toBe(200);
+    expect(replay.json()).toMatchObject({ runId: created.runId, conversationId: created.conversationId, replayed: true });
+    const stored = await withTenant(adminPool, tenantA, (db) => db.query<{ conversations: string; runs: string }>(
+      `SELECT (SELECT count(*) FROM runs.conversations WHERE tenant_id=$1 AND title=$2)::text AS conversations,
+              (SELECT count(*) FROM runs.runs r JOIN runs.analytic_plans p USING(tenant_id,run_id) WHERE r.tenant_id=$1 AND p.plan->>'question'=$2)::text AS runs`, [tenantA, question]));
+    expect(stored.rows[0]).toEqual({ conversations: '1', runs: '1' });
+    expect((await server.inject({ method: 'POST', url: '/api/runs', headers: { cookie: ownerCookie }, payload: { question, sourceIds: [sourceId], requestId: 'not-a-uuid' } })).statusCode).toBe(400);
   });
 });

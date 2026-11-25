@@ -4,7 +4,7 @@ import logoUrl from './assets/insyght-logo.png';
 import poweredByUrl from './assets/scalehealthtech-logo.png';
 
 export { prototypeTokens } from './tokens.js';
-export { listNames, runStatusLabel } from './run-status.js';
+export { answerTitle, listNames, plural, runStatusLabel } from './run-status.js';
 
 export function Logo({ className = '' }: { className?: string }) { return <img className={`ui-logo ${className}`.trim()} src={logoUrl} alt="INSYGHT" />; }
 export function PoweredBy() { return <div className="ui-powered-by"><span>Powered by</span><img src={poweredByUrl} alt="ScaleHealthTech" /></div>; }
