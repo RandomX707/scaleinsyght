@@ -63,3 +63,11 @@ Not started:
 - Riverside login verified through port 4284. Imported the testbed dbt project through the product API and ran nightly refresh on both databases. SQL Server produced four findings and PostgreSQL eleven, including seven ID matches. Workbook refresh returned HTTP 500 after relocating the app. Check the encrypted artifact volume path before retrying.
 - Seven review fixes requested before S7. The first is on branch `review-feedback` at `/tmp/scaleinsyght-review-feedback`, commit `4f9f8bf`. Active runs show progress instead of cards. Three status tests and typecheck passed. Remaining review fixes cover privacy refusals, groupable schema options and one-call refusal, attempt summaries, grouped prose, result headers and hidden keys, and notification names and menu duplication.
 - Review feedback checkpoint `7afb4ff`. Grouping schema excludes tagged columns. A validated privacy refusal terminates the planning loop before repair or verification. All 22 structured planner unit tests and typecheck passed. Still need the one-call end-to-end assertion, the refusal card and summaries, result and notification fixes, and the Excel nightly regression. No redeployment or new model spend.
+
+### Additional review-feedback acceptance cases
+
+- Approval matrix cross-system findings show each field with its own connection name. Manual refreshes show “Latest refresh” with the actual timestamp. Scheduled overnight runs retain the overnight label.
+- Open alert and waiting review counts agree. Explain once that approval records a review and leaves verification unchanged. Clean up finding wording and punctuation.
+- Separate Changes from Suggestions, with a filter and a group-scoped Approve all action for each. Verify group scoping, authorization and audit records.
+- ID trace explains the evidence behind a likely origin, or shows “Origin unclear” for an unresolved tie. Field names wrap only at separators or truncate with a tooltip. Explain coverage in plain language.
+- Lineage badges reserve space separate from names. Route edges around intervening cards. Include regression tests for all nine cases before merging review-feedback.
