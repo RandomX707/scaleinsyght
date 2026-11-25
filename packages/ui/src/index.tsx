@@ -44,6 +44,12 @@ export function PillTabs({ label, items, selected, onSelect, onClose }: { label:
   </span>)}</div>;
 }
 
+/** A small set of mutually exclusive choices shown side by side, each with its own tone when chosen (prototype .scseg). */
+export function ChoiceSegments<T extends string>({ label, options, value, onChange }: { label: string; options: Array<{ id: T; label: string; tone: 'good' | 'primary' | 'bad'; title?: string }>; value: T; onChange: (id: T) => void }) {
+  return <div className="ui-choice-segments" role="radiogroup" aria-label={label}>{options.map(option => <button key={option.id} type="button" role="radio" aria-checked={value === option.id}
+    className={value === option.id ? `is-on ui-choice-segments--${option.tone}` : ''} title={option.title} onClick={() => onChange(option.id)}>{option.label}</button>)}</div>;
+}
+
 export function Badge({ tone = 'primary', children }: { tone?: 'primary' | 'good' | 'warn' | 'bad' | 'muted'; children: ReactNode }) { return <span className={`ui-badge${tone === 'primary' ? '' : ` ui-badge--${tone}`}`}>{children}</span>; }
 
 export function Table({ headers, rows, caption }: { headers: ReactNode[]; rows: ReactNode[][]; caption?: string }) {

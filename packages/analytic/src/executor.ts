@@ -98,6 +98,9 @@ export async function finalizeAnalyticRun(pool: Pool, runId: string, compose?: (
     if (states.rows.some((step) => ['PENDING','CLAIMED','RUNNING'].includes(step.state))) return 'WAITING';
     const resultRows = await client.query<{ result: StructuredResult }>('SELECT r.result FROM runs.analytic_results r JOIN runs.steps s ON s.tenant_id=r.tenant_id AND s.run_id=r.run_id AND s.step_id=r.step_id WHERE r.tenant_id=$1 AND r.run_id=$2 ORDER BY s.step_order,r.step_id', [stored.tenant_id, runId]);
     const partial = states.rows.some((step) => step.state !== 'SUCCEEDED');
+    const nothingSucceeded = states.rows.length > 0 && states.rows.every((step) => step.state !== 'SUCCEEDED');
+    const refusals = nothingSucceeded ? (await client.query<{ payload: { reason_codes?: string[]; objects?: string[] } }>(
+      "SELECT safe_payload AS payload FROM runs.events WHERE tenant_id=$1 AND run_id=$2 AND event_type='step_failed' ORDER BY sequence", [stored.tenant_id, runId])).rows.map((row) => row.payload) : [];
     const results = resultRows.rows.map((row) => row.result);
     const answer: StructuredAnswer = results.length ? collateGroupResults(results) : {
       metric: 'unavailable', bySource: [], claims: [], evidence: [], trust: { groupCount: 0, sourceCount: 0, joins: [] },
@@ -125,14 +128,16 @@ export async function finalizeAnalyticRun(pool: Pool, runId: string, compose?: (
     }
     const critic = criticCheck(answer, plan, partial);
     let terminal: 'COMPLETED' | 'PARTIAL' | 'FAILED' = partial ? 'PARTIAL' : 'COMPLETED';
-    if (!critic.accepted || compositionFailed || (compose&&partial&&plan.steps.some(step=>'query_intent' in step.inputs))) terminal = 'FAILED';
+    if (!critic.accepted || compositionFailed || nothingSucceeded || (compose&&partial&&plan.steps.some(step=>'query_intent' in step.inputs))) terminal = 'FAILED';
+    if (nothingSucceeded && !failureReason) failureReason = refusals.flatMap((payload) => payload.reason_codes ?? [])[0];
+    const refusedObjects = [...new Set(refusals.flatMap((payload) => payload.objects ?? []))];
     if (terminal !== 'FAILED') {
       await client.query('INSERT INTO runs.analytic_answers(tenant_id,run_id,status,answer) VALUES($1,$2,$3,$4::jsonb)', [stored.tenant_id, runId, terminal, JSON.stringify(answer)]);
     }
     const nextVersion = run.rows[0]!.state_version + 1;
     await client.query('UPDATE runs.runs SET state=$3,state_version=$4,updated_at=clock_timestamp() WHERE tenant_id=$1 AND run_id=$2', [stored.tenant_id, runId, terminal, nextVersion]);
     const nextSequence = await client.query<{ next: string }>('SELECT COALESCE(MAX(sequence),0)+1 AS next FROM runs.events WHERE tenant_id=$1 AND run_id=$2', [stored.tenant_id, runId]);
-    await client.query('INSERT INTO runs.events(tenant_id,run_id,sequence,event_type,safe_payload) VALUES($1,$2,$3,\'run_terminal\',$4::jsonb)', [stored.tenant_id, runId, Number(nextSequence.rows[0]!.next), JSON.stringify({ state: terminal, state_version: nextVersion, ...(terminal==='FAILED'?{ reason: failureReason ?? (critic.accepted ? 'run_incomplete' : 'critic_rejected') }:{}) })]);
+    await client.query('INSERT INTO runs.events(tenant_id,run_id,sequence,event_type,safe_payload) VALUES($1,$2,$3,\'run_terminal\',$4::jsonb)', [stored.tenant_id, runId, Number(nextSequence.rows[0]!.next), JSON.stringify({ state: terminal, state_version: nextVersion, ...(terminal==='FAILED'?{ reason: failureReason ?? (critic.accepted ? 'run_incomplete' : 'critic_rejected'), ...(refusedObjects.length ? { objects: refusedObjects } : {}) }:{}) })]);
     return terminal;
   });
 }

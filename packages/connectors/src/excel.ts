@@ -1,3 +1,4 @@
+import { columnScope, objectScope } from './scope.js';
 // Read-only connector for an uploaded .xlsx workbook. Each worksheet with a header row is a table.
 // The workbook bytes come from the tenant's encrypted artifact store and are never modified.
 // Questions run as SQL compiled from a validated typed intent against an in-memory DuckDB copy that is
@@ -129,9 +130,10 @@ export class ExcelConnector implements ReadOnlyConnector {
     const result: DiscoveryResult = { objects: [], listOnlyObjects: [], excludedObjects: [], inaccessibleObjects: [], coverage: { listed: 0, accessible: 0, inaccessible: 0 }, unchanged: 0, unchangedObjects: [] };
     for (const sheet of await this.load()) {
       const qualifiedName = sheet.qualifiedName; result.coverage.listed++; result.coverage.accessible++;
-      if (input.scope?.exclude?.includes(qualifiedName)) { result.excludedObjects.push({ qualifiedName, type: 'table' }); continue; }
-      if (input.scope?.listOnly?.includes(qualifiedName)) { result.listOnlyObjects.push({ qualifiedName, type: 'table' }); continue; }
-      if (input.scope?.profile?.length && !input.scope.profile.includes(qualifiedName)) { result.excludedObjects.push({ qualifiedName, type: 'table' }); continue; }
+      const objectType='table';
+      const mode=objectScope(input.scope,qualifiedName,objectType);
+      if(mode==='exclude'){result.excludedObjects.push({qualifiedName,type:objectType});continue;}
+      if(mode==='list_only'){result.listOnlyObjects.push({qualifiedName,type:objectType});continue;}
       result.objects.push({ assetKey: assetKey(qualifiedName), qualifiedName, type: 'table', scopeMode: 'profile' });
     }
     return result;
@@ -141,12 +143,15 @@ export class ExcelConnector implements ReadOnlyConnector {
     const sheet = (await this.load()).find((item) => assetKey(item.qualifiedName) === key);
     if (!sheet) throw new Error('asset_not_found');
     const qualifiedName = sheet.qualifiedName;
-    if (scope?.exclude?.includes(qualifiedName) || scope?.listOnly?.includes(qualifiedName) || (scope?.profile?.length && !scope.profile.includes(qualifiedName))) throw new Error('object_out_of_scope');
+    if (objectScope(scope,qualifiedName,'table')!=='profile') throw new Error('object_out_of_scope');
     const structural = sheet.columns.map(({ name, label, dataType, sensitivityTags }) => ({ name, label, dataType, sensitivityTags }));
     return {
       assetKey: key, qualifiedName, rowCount: sheet.rows.length,
       version: createHash('sha256').update(JSON.stringify(structural)).digest('hex'),
-      columns: sheet.columns.map((column, position) => {
+      columns: sheet.columns.flatMap((column, position) => {
+        const treatment=columnScope(scope,qualifiedName,column.name);
+        if(treatment==='exclude')return [];
+        if(treatment==='mask')return [{...column,isNullable:true,sensitivityTags:[...new Set([...column.sensitivityTags,'personal'])],statistics:{nullRate:null,distinctCount:null,averageLength:null}}];
         const values = sheet.rows.map((row) => row[position] ?? null);
         const nulls = values.filter((value) => value === null).length;
         // Statistics on tagged columns are withheld (contract 7).
@@ -161,13 +166,13 @@ export class ExcelConnector implements ReadOnlyConnector {
 
   /** Infers references between sheets: same column name and type, a unique non-null target, and at least 50% coverage.
    * Below 98% they are possible relationships only (decision 38). */
-  async structuralReferences(): Promise<Array<{ from: string; to: string; fromColumn: string; toColumn: string; evidenceMethod: 'inferred'; confidence: number; matchedCount: number; sourceCount: number }>> {
-    const sheets = await this.load();
+  async structuralReferences(scope?: ConnectorScope): Promise<Array<{ from: string; to: string; fromColumn: string; toColumn: string; evidenceMethod: 'inferred'; confidence: number; matchedCount: number; sourceCount: number }>> {
+    const sheets = (await this.load()).filter(sheet=>objectScope(scope,sheet.qualifiedName,'table')==='profile');
     const references: Array<{ from: string; to: string; fromColumn: string; toColumn: string; evidenceMethod: 'inferred'; confidence: number; matchedCount: number; sourceCount: number }> = [];
     const key = (value: CellValue) => value instanceof Date ? value.toISOString() : String(value);
     for (const target of sheets) {
       for (const [targetPosition, targetColumn] of target.columns.entries()) {
-        if (!['integer', 'text'].includes(targetColumn.dataType)) continue;
+        if (columnScope(scope,target.qualifiedName,targetColumn.name)||!['integer', 'text'].includes(targetColumn.dataType)) continue;
         // Never propose joining sheets on personal or regulated values such as names.
         if (targetColumn.sensitivityTags.some((tag) => tag === 'personal' || tag === 'regulated')) continue;
         const targetValues = target.rows.map((row) => row[targetPosition] ?? null);
@@ -177,7 +182,7 @@ export class ExcelConnector implements ReadOnlyConnector {
         for (const source of sheets) {
           if (source === target) continue;
           const sourcePosition = source.columns.findIndex((column) => column.name === targetColumn.name && column.dataType === targetColumn.dataType);
-          if (sourcePosition < 0) continue;
+          if (sourcePosition < 0 || columnScope(scope,source.qualifiedName,targetColumn.name)) continue;
           const sourceValues = source.rows.map((row) => row[sourcePosition] ?? null).filter((value) => value !== null);
           if (!sourceValues.length) continue;
           const matchedCount = sourceValues.filter((value) => unique.has(key(value))).length;

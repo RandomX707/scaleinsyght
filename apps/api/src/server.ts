@@ -1,3 +1,4 @@
+import { registerControlsRoutes } from './controls.js';
 import { publicPlannerDetails } from './planner-attempt-copy.js';
 import { createHash, createHmac, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -1456,5 +1457,6 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const updated=await markNotificationRead(options.pool,current.tenantId,current.userId,request.params.notificationId);
     return reply.send({updated});
   });
+  registerControlsRoutes(app,options.pool,authenticatedSession);
   return app;
 }

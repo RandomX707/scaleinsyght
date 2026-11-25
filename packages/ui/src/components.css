@@ -61,3 +61,13 @@ label:has(.ui-input[type=checkbox]),label:has(.ui-input[type=radio]) { display: 
 .ui-pill-tab button { border: 0; background: transparent; padding: 5px 11px; cursor: pointer; font: inherit; color: inherit; border-radius: 999px; }
 .ui-pill-tab button:has(+ .ui-pill-tab__close) { padding-right: 4px; }
 .ui-pill-tab .ui-pill-tab__close { padding: 5px 10px 5px 4px; color: var(--faint); }
+
+/* Choice segments (prototype .scseg). */
+.ui-choice-segments { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; flex: none; }
+.ui-choice-segments button { border: 0; background: var(--surface); padding: 6px 11px; font: inherit; font-size: 12.5px; color: var(--muted); cursor: pointer; border-left: 1px solid var(--line); }
+.ui-choice-segments button:first-child { border-left: 0; }
+.ui-choice-segments button:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.ui-choice-segments button.is-on { font-weight: 600; }
+.ui-choice-segments--good { background: var(--good-tint) !important; color: var(--good) !important; }
+.ui-choice-segments--primary { background: var(--primary-tint) !important; color: var(--primary-ink) !important; }
+.ui-choice-segments--bad { background: var(--bad-tint) !important; color: var(--bad) !important; }

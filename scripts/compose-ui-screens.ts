@@ -17,6 +17,7 @@ const pairs: Pair[] = [
   { out: 'dictionary-excel', app: 'docs/acceptance/s9/excel.png', prototype: 'docs/acceptance/s9/prototype/table.png' },
   { out: 'dictionary-dbt', app: 'docs/acceptance/s9/dbt.png', prototype: 'docs/acceptance/s9/prototype/table.png' },
   { out: 'dictionary-tableau', app: 'docs/acceptance/s9/tableau.png', prototype: 'docs/acceptance/s9/prototype/proc-sql.png' },
+  { out: 'controls', app: 'docs/acceptance/s10/controls.png', prototype: 'docs/acceptance/s10/prototype/controls.png' },
   { out: 'dictionary-er-neighbourhood', app: 'docs/acceptance/s9/er.png', prototype: 'docs/ui/screens/er-explorer.png' },
 ];
 const only = process.argv.slice(2);

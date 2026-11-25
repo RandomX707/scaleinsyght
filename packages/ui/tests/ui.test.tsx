@@ -1,7 +1,7 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { Badge, Button, Card, PillTabs, SegmentedControl, Collapsible, EmptyState, FileInput, Input, Logo, Modal, PageHeader, PoweredBy, Select, Table, Tabs, Textarea, Toast } from '../src/index.js';
+import { Badge, Button, Card, ChoiceSegments, PillTabs, SegmentedControl, Collapsible, EmptyState, FileInput, Input, Logo, Modal, PageHeader, PoweredBy, Select, Table, Tabs, Textarea, Toast } from '../src/index.js';
 import { prototypeTokens } from '../src/tokens.js';
 
 describe('prototype-aligned shared UI', () => {
@@ -53,5 +53,12 @@ describe('prototype-aligned shared UI', () => {
     expect(pills).toContain('aria-label="Close patients"');
     expect(pills.match(/aria-label="Close/g)).toHaveLength(1);
     expect(pills).toContain('class="ui-pill-tab is-selected"');
+  });
+  it('ui_choice_segments_are_a_labelled_radio_group_with_the_chosen_tone', () => {
+    const html = renderToStaticMarkup(<ChoiceSegments label="Scope for Tables" value="exclude" onChange={() => undefined}
+      options={[{ id: 'profile', label: 'Profile and query', tone: 'good' }, { id: 'exclude', label: 'Exclude', tone: 'bad' }]} />);
+    expect(html).toContain('role="radiogroup" aria-label="Scope for Tables"');
+    expect(html).toContain('role="radio" aria-checked="true" class="is-on ui-choice-segments--bad"');
+    expect(html).toContain('role="radio" aria-checked="false" class=""');
   });
 });

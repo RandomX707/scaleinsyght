@@ -1,0 +1,49 @@
+/* Controls, matching docs/prototype/index.html (.scseg, .scgroup, .scrow, .scitems, .sclegend, .scbound, .scradio, .scdiff). */
+.connector-controls { display: grid; gap: 16px; }
+.control-totals { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+.control-totals article { display: flex; flex-direction: column; gap: 2px; padding: 18px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--surface); }
+.control-totals strong { font-size: 22px; font-variant-numeric: tabular-nums; }
+.control-totals span { color: var(--faint); font-size: 13px; }
+.control-boundary { display: flex; gap: 10px; align-items: flex-start; background: var(--side); border-radius: 12px; padding: 12px 14px; font-size: 13px; color: var(--muted); margin: 0; }
+.control-boundary svg { flex: none; color: var(--primary); margin-top: 1px; }
+.control-diff { box-shadow: 0 6px 16px rgba(15, 23, 42, .08); display: flex; justify-content: space-between; align-items: center; gap: 12px; background: #FFFBEB; border: 1px solid #F59E0B; border-radius: 12px; padding: 10px 14px; position: sticky; top: 0; z-index: 5; }
+.control-diff p { margin: 2px 0 0; color: var(--faint); font-size: 13px; }
+.control-card { display: grid; gap: 10px; }
+.control-card h2 { margin: 0; }
+.control-card p { margin: 0; color: var(--muted); }
+.control-card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.control-card-head span, .control-muted { color: var(--faint); font-size: 13px; }
+.control-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 12.5px; color: var(--muted); }
+.control-group { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+.control-group.is-changed { border-color: #F59E0B; background: #FFFBEB; }
+.control-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.ui-button.control-toggle { min-height: 0; padding: 4px 6px; gap: 8px; font-weight: 400; }
+.control-chevron { color: var(--muted); width: 12px; }
+.control-count { color: var(--faint); }
+.control-items { display: flex; flex-direction: column; gap: 4px; margin: 10px 0 2px 24px; }
+.control-item { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.control-item code { min-width: 240px; font-family: var(--mono); font-size: 12.5px; }
+.control-item .ui-select { width: auto; min-height: 30px; padding: 4px 8px; font-size: 13px; }
+.control-rule-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.control-rule-form .ui-input:first-child { flex: 1 1 180px; }
+.control-rule-form .ui-input:nth-child(3) { flex: 2 1 200px; }
+.control-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.control-columns > div { display: grid; gap: 8px; align-content: start; }
+.control-columns h3 { margin: 0; font-size: 14px; }
+.control-radio { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
+.control-radio > span { display: flex; flex-direction: column; font-size: 13px; }
+.control-radio > span > span { color: var(--faint); }
+.control-radio .ui-input { width: auto; min-height: 0; margin-top: 3px; padding: 0; }
+.controls-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+.controls-title { display: flex; align-items: center; gap: 10px; }
+.controls-badge { width: 30px; height: 30px; border-radius: 9px; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 11px; color: #fff; flex: none; }
+.controls-picker { display: flex; align-items: center; gap: 10px; color: var(--faint); font-size: 13px; }
+.controls-picker .ui-select { width: auto; min-width: 220px; color: var(--ink); }
+@media (max-width: 720px) { .control-totals, .control-columns { grid-template-columns: repeat(2, minmax(0, 1fr)); } .control-columns { grid-template-columns: 1fr; } }
+.control-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.view form.control-rule-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.control-rule-form > .ui-input, .control-rule-form > .ui-select { width: auto; }
+.control-rule-form > .ui-select { flex: 0 0 auto; }
+.control-card .ui-table caption { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.controls-heading > div > p { margin: 6px 0 10px; color: var(--muted); }
+.view label.controls-picker { flex-direction: row; align-items: center; gap: 10px; color: var(--faint); font-size: 13px; font-weight: 400; }

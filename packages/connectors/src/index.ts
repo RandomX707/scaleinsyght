@@ -1,3 +1,5 @@
+import type { ControlsPolicy } from './scope.js';
+export { objectScope, columnScope, type ControlsPolicy } from './scope.js';
 export type SourceConnectorType = 'sql_server' | 'postgres' | 'snowflake' | 'excel' | 'lake' | 'crm';
 export type AssetType = 'table' | 'view';
 export type ScopeMode = 'profile' | 'list_only' | 'exclude';
@@ -56,6 +58,8 @@ export interface ConnectorScope {
   profile?: string[];
   listOnly?: string[];
   exclude?: string[];
+  policy?: ControlsPolicy;
+  knownObjects?: ReadonlySet<string>;
 }
 
 export interface ReadOnlyConnector {
@@ -67,7 +71,7 @@ export interface ReadOnlyConnector {
   discover(input: { mode: 'profile' | 'nightly'; scope?: ConnectorScope }): Promise<DiscoveryResult>;
   profile(assetKey: string, scope?: ConnectorScope, mode?: 'profile' | 'nightly'): Promise<ObjectProfile>;
   queryAggregate?(assetKey: string, metric: 'count'): Promise<{ metric: 'count'; value: number }>;
-  structuralReferences?(): Promise<Array<{from:string;to:string;fromColumn:string;toColumn:string;evidenceMethod?:'declared'|'inferred';confidence?:number;matchedCount?:number;sourceCount?:number}>>;
+  structuralReferences?(scope?: ConnectorScope): Promise<Array<{from:string;to:string;fromColumn:string;toColumn:string;evidenceMethod?:'declared'|'inferred';confidence?:number;matchedCount?:number;sourceCount?:number}>>;
   /** Procedures and functions: definition text as the source returns it (null when withheld), whether the source
    *  encrypts it, and the declared parameters. Callers scrub the text before storing it (decision 53). */
   routines?():Promise<Routine[]>;
