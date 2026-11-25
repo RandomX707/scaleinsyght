@@ -51,6 +51,8 @@ test('s7_saved_question_reuse_exports_governed_report_schedule_and_dictionary_ma
   await expect(page.getByRole('status').filter({ hasText: 'Saved.' })).toBeVisible();
 
   // Exports of the live answer, opened and checked.
+  // Evidence-pack exports sit in the answer's evidence drawer.
+  await page.locator('.evidence-drawer').last().locator(':scope > summary').click();
   expectFigures(pdfText(await download(page, 'Export PDF')));
   const sheet = await xlsxRows(await download(page, 'Export workbook'), 'Figures');
   expect(sheet[0]).toEqual(['Question', question]);

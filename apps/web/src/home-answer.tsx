@@ -116,12 +116,12 @@ export function GroupedAnswer(props: { rows: Array<Record<string, unknown>>; req
   const [flip, setFlip] = useState<'table' | 'chart' | null>(null);
   const form = flip ?? chosen;
   const rows = requested.rows;
+  const flipButton = chosen === 'chart' ? <Button size="small" variant="ghost" onClick={() => setFlip(form === 'chart' ? 'table' : 'chart')}>{form === 'chart' ? 'Show as a table' : 'Show as a chart'}</Button> : null;
   return <div className="grouped-result">
-    {props.summary}
+    {(props.summary || flipButton) && <div className="grouped-head">{props.summary}{flipButton}</div>}
     {form === 'chart' && <GroupChart rows={rows} sourceName={props.sourceName} groupLabel={props.groupLabel} />}
     {(form === 'table' || form === 'small_table') && <GroupTable rows={rows} groupLabel={props.groupLabel} measureLabel={props.measureLabel} sourceName={props.sourceName} />}
     {form === 'compact_table' && <GroupTable rows={rows} groupLabel={props.groupLabel} measureLabel={props.measureLabel} sourceName={props.sourceName} compact />}
-    {chosen === 'chart' && <Button size="small" variant="ghost" onClick={() => setFlip(form === 'chart' ? 'table' : 'chart')}>{form === 'chart' ? 'Show as a table' : 'Show as a chart'}</Button>}
   </div>;
 }
 
