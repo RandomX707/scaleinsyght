@@ -127,7 +127,8 @@ export async function validateAnalyticPlan(pool: Pool, input: { tenantId: string
       && plan.scope.source_ids.some((sourceId) => !entitlement.rows.some((row) => row.resource_id === sourceId))) throw new Error('principal_not_entitled');
     for(const step of plan.steps)if('query_intent'in step.inputs)await validateIntentAssets(client,step.source_id,parseQueryIntent(step.inputs.query_intent));
     for(const step of plan.steps)if('lineage_request'in step.inputs){const request=parseLineageRequest(step.inputs.lineage_request);
-      const found=await client.query("SELECT 1 FROM graph.assets WHERE tenant_id=current_setting('app.tenant_id') AND source_id=$1 AND qualified_name=$2 AND active AND asset_type IN ('dataset','field')",[step.source_id,request.asset]);
+      const found=await client.query(`SELECT 1 FROM graph.assets WHERE tenant_id=current_setting('app.tenant_id') AND qualified_name=$2 AND active AND asset_type IN ('dataset','field')
+        AND (source_id=$1 OR source_id IN (SELECT connection_id FROM registry.connections WHERE tenant_id=current_setting('app.tenant_id') AND connector_type='dbt' AND status='active' AND source_ref='warehouse:'||$1::text))`,[step.source_id,request.asset]);
       if(!found.rowCount)throw new Error('analytic_query_table_not_found');}
   });
   return { tenantId: input.tenantId, principalId: input.principalId, plan };

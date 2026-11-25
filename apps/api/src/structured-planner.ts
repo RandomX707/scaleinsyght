@@ -39,7 +39,7 @@ export function normalizeCatalogMentions(question: string, catalog: PlannerCatal
 
 /** The response schema. Besides the executable fields, the model declares what the question asks for (decision 44):
  * once for the question, and per source step. The decoder checks the executable plan against those declarations. */
-export function plannerSchema(catalog: PlannerCatalog, joins: PlannerJoin[]): Schema {
+export function plannerSchema(catalog: PlannerCatalog, joins: PlannerJoin[], lineageExtras: string[][] = []): Schema {
   const branches = catalog.flatMap(({assets}, sourceIndex) => {
     const connections = joins.filter(join => join.source_index === sourceIndex);
     const tables = assets.map(asset => asset.qualified_name);
@@ -70,7 +70,8 @@ export function plannerSchema(catalog: PlannerCatalog, joins: PlannerJoin[]): Sc
   });
   // A lineage request names one table or column of one source and a direction; it is answered from the metadata graph.
   const lineageBranches = catalog.flatMap(({assets}, sourceIndex) => {
-    const names = assets.flatMap(asset => [asset.qualified_name, ...asset.columns.map(column => asset.qualified_name + '.' + column.name)]);
+    // Lineage may also name models of dbt projects linked to this source (lineageExtras).
+    const names = [...new Set([...assets.flatMap(asset => [asset.qualified_name, ...asset.columns.map(column => asset.qualified_name + '.' + column.name)]), ...(lineageExtras[sourceIndex] ?? [])])];
     return names.length ? [object({source_index:{type:'integer',enum:[sourceIndex]}, asset:literal(names,'The table, or table.column, the question asks about.'),
       direction:literal(['upstream','downstream'],'upstream: where its data comes from. downstream: what reads it or would break if it changed.')})] : [];
   });
@@ -101,16 +102,17 @@ const sameSet = (left: string[], right: string[]) => new Set(left).size === new 
 
 /** Decodes the structured response into typed intents and checks the executable plan against the declared intent.
  * No pattern matching over the user's question: the declaration is the contract the plan must meet. */
-export function decodePlannerOutput(text: string, catalog: PlannerCatalog, joins: PlannerJoin[], facts: PlannerFacts = []): {declaration: PlanDeclaration; steps: DecodedStep[]; lineage?: LineageRequest} {
+export function decodePlannerOutput(text: string, catalog: PlannerCatalog, joins: PlannerJoin[], facts: PlannerFacts = [], lineageExtras: string[][] = []): {declaration: PlanDeclaration; steps: DecodedStep[]; lineage?: LineageRequest} {
   const parsed = JSON.parse(text) as {declaration?: PlanDeclaration; intents?: Array<Record<string, unknown>>; lineage?: {source_index?: unknown; asset?: unknown; direction?: unknown} | null};
   const declaration = parsed.declaration;
   if (!declaration || typeof declaration.answerable !== 'boolean' || typeof declaration.comparison !== 'boolean') throw new Error('missing_declaration');
-  if (!Array.isArray(parsed.intents) || parsed.intents.length > catalog.length) throw new Error('invalid_source_list');
+  if (!Array.isArray(parsed.intents)) throw new Error('invalid_source_list');
+  if (parsed.intents.length > catalog.length) throw new Error('invalid_source_list: return at most one step per source; when no single step kind computes the requested measure, declare the question unanswerable');
   if (parsed.lineage != null) {
     // Lineage is read from recorded evidence, never computed from source data: no query intents go with it.
     const index = Number(parsed.lineage.source_index); const source = catalog[index]; const asset = String(parsed.lineage.asset); const direction = parsed.lineage.direction;
     if (!source || (direction !== 'upstream' && direction !== 'downstream')) throw new Error('lineage_request_invalid');
-    if (!source.assets.some(item => item.qualified_name === asset || item.columns.some(column => item.qualified_name + '.' + column.name === asset))) throw new Error('lineage_asset_outside_catalog');
+    if (!source.assets.some(item => item.qualified_name === asset || item.columns.some(column => item.qualified_name + '.' + column.name === asset)) && !(lineageExtras[index] ?? []).includes(asset)) throw new Error('lineage_asset_outside_catalog');
     if (parsed.intents.length) throw new Error('lineage_request_with_query_intents');
     if (!declaration.answerable) throw new Error('declared_unanswerable_but_lineage_requested');
     return {declaration, steps: [], lineage: {index, asset, direction}};
@@ -126,7 +128,7 @@ export function decodePlannerOutput(text: string, catalog: PlannerCatalog, joins
   const steps = parsed.intents.map(item => {
     const index = Number(item.source_index);
     const source = catalog[index];
-    if (!source || seen.has(index)) throw new Error('invalid_or_duplicate_source');
+    if (!source || seen.has(index)) throw new Error('invalid_or_duplicate_source: return at most one step per source; when no single step kind computes the requested measure, declare the question unanswerable');
     seen.add(index);
     const declared = item.declared as {subject_table?: string; measure?: string; measure_column?: string | null; grouping_column?: string | null; filter_columns?: string[]} | undefined;
     if (!declared || !Array.isArray(declared.filter_columns)) throw new Error('missing_step_declaration');

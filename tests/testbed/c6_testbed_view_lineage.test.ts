@@ -11,7 +11,7 @@ import { startSqlParser } from '../support/sqlparse-server.js';
 config({ path: '.env' });
 const testUrl = (key: 'DATABASE_URL' | 'DATABASE_URL_MIGRATE') => { const value = process.env[key]; if (!value) throw new Error(`${key} is required; lineage contracts are never skipped`); const url = new URL(value); url.pathname = '/si_test'; return url.toString(); };
 const appPool = new Pool({ connectionString: testUrl('DATABASE_URL') }); const adminPool = new Pool({ connectionString: testUrl('DATABASE_URL_MIGRATE') });
-type DbtTruth = { models: Record<string, { declaredReads: string[]; columns?: Record<string, string[]> }>; gaps: Array<{ asset: string; reasonIncludes: string }> };
+type DbtTruth = { models: Record<string, { declaredReads: string[]; columns?: Record<string, string[]> }>; gaps: Array<{ asset: string; reasonIncludes: string }>; modelsInDbtConnection: string[] };
 const truth = JSON.parse(readFileSync('testbed/lineage-truth.json', 'utf8')) as { views: Record<'postgres' | 'sql_server', Record<string, { reads: string[]; columns: Record<string, string[]> }>>; dbt: DbtTruth; endToEnd: Record<string, string[]> };
 let postgresId = '';
 const tenantId = `lineage-${randomUUID()}`; const email = `admin@${tenantId}.synthetic.invalid`; const password = 'lineage-view-test-password';
@@ -58,7 +58,7 @@ describe('contract 6 parsed view lineage on the testbed', () => {
   it('c6_postgres_view_sql_is_parsed_into_table_and_column_lineage_matching_truth', async () => {
     const url = new URL(process.env.DATABASE_URL_TESTBED ?? ''); if (!url.hostname) throw new Error('DATABASE_URL_TESTBED is required; run pnpm testbed:up first.');
     const id = await connect({ connectorType: 'postgres', displayName: 'PostgreSQL testbed', credential: { host: url.hostname, port: Number(url.port || 5432), database: url.pathname.slice(1), username: decodeURIComponent(url.username), password: decodeURIComponent(url.password), sslMode: 'disable' } });
-    expectViews((await flows(id)).filter((row) => !row.to_name.startsWith('analytics.mart_')), truth.views.postgres);
+    expectViews(await flows(id), truth.views.postgres);
     postgresId = id;
   });
   it('c6_sql_server_view_sql_is_parsed_into_table_and_column_lineage_matching_truth', async () => {
@@ -77,7 +77,7 @@ describe('contract 6 parsed view lineage on the testbed', () => {
     expect(wrong.statusCode).toBe(400); expect(wrong.json()).toEqual({ error: 'dbt_manifest_invalid' });
     const uploaded = await server.inject({ method: 'POST', url: `/api/connections/${id}/dbt-artifacts`, headers: { cookie }, payload: { manifest, catalog } });
     expect(uploaded.statusCode).toBe(200);
-    expect(uploaded.json<{ imported: { models: number; modelsNotInWarehouse: string[] } }>().imported).toMatchObject({ models: Object.keys(truth.dbt.models).length, modelsNotInWarehouse: [] });
+    expect(uploaded.json<{ imported: { models: number; modelsNotInWarehouse: string[] } }>().imported).toMatchObject({ models: Object.keys(truth.dbt.models).length, modelsNotInWarehouse: truth.dbt.modelsInDbtConnection });
     const rows = await withTenant(adminPool, tenantId, async (db) => (await db.query<{ from_name: string; to_name: string; granularity: string; evidence_method: string }>(
       `SELECT f.qualified_name AS from_name,t.qualified_name AS to_name,r.granularity,a.evidence_method FROM graph.assertions a JOIN graph.relationships r ON r.tenant_id=a.tenant_id AND r.relationship_id=a.relationship_id
        JOIN graph.assets f ON f.tenant_id=r.tenant_id AND f.asset_id=r.from_asset_id JOIN graph.assets t ON t.tenant_id=r.tenant_id AND t.asset_id=r.to_asset_id
@@ -97,7 +97,7 @@ describe('contract 6 parsed view lineage on the testbed', () => {
     for (const expected of truth.dbt.gaps) expect(gaps.some((gap) => gap.asset === expected.asset && gap.reason.includes(expected.reasonIncludes)), expected.asset).toBe(true);
     // End to end: a mart column traced upstream through dbt and the staging view to its source column.
     for (const [column, upstream] of Object.entries(truth.endToEnd)) {
-      const asset = await withTenant(adminPool, tenantId, async (db) => (await db.query<{ asset_id: string }>("SELECT asset_id FROM graph.assets WHERE tenant_id=$1 AND source_id=$2 AND qualified_name=$3", [tenantId, postgresId, column])).rows[0]!.asset_id);
+      const asset = await withTenant(adminPool, tenantId, async (db) => (await db.query<{ asset_id: string }>("SELECT asset_id FROM graph.assets WHERE tenant_id=$1 AND qualified_name=$2 AND active", [tenantId, column])).rows[0]!.asset_id);
       const path = (await server.inject({ method: 'GET', url: `/api/lineage?assetId=${asset}&direction=upstream`, headers: { cookie } })).json<{ assets: Array<{ qualified_name: string }> }>();
       expect(path.assets.map((item) => item.qualified_name).filter((name) => name !== column).sort()).toEqual([...upstream].sort());
     }
