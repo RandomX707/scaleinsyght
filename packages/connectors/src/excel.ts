@@ -153,7 +153,8 @@ export class ExcelConnector implements ReadOnlyConnector {
         const withheld = column.sensitivityTags.length > 0;
         const distinct = new Set(values.filter((value) => value !== null).map((value) => value instanceof Date ? value.toISOString() : String(value))).size;
         return { name: column.name, label: column.label, dataType: column.dataType, isNullable: nulls > 0, sensitivityTags: column.sensitivityTags, sensitivityEvidence: column.sensitivityEvidence,
-          statistics: withheld || !values.length ? { nullRate: null, distinctCount: null } : { nullRate: nulls / values.length, distinctCount: distinct } };
+          statistics: withheld || !values.length ? { nullRate: null, distinctCount: null, averageLength: null } : { nullRate: nulls / values.length, distinctCount: distinct,
+            averageLength: column.dataType === 'text' && values.length > nulls ? values.filter((value) => value !== null).reduce<number>((total, value) => total + String(value).length, 0) / (values.length - nulls) : null } };
       }),
     };
   }

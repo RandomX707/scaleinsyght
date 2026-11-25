@@ -3,13 +3,14 @@ import { withTenant } from '@scaleinsyght/db';
 import { OpenAIModelGateway } from '@scaleinsyght/model-gateway';
 import type { QueryIntent } from '@scaleinsyght/contracts';
 import { selectSources,type CandidateSource } from './source-selection.js';
-import { decodePlannerOutput,describePlan,normalizeCatalogMentions,plannerSchema,verificationSchema } from './structured-planner.js';
+import { decodePlannerOutput,describePlan,normalizeCatalogMentions,plannerSchema,verificationSchema,type DisplayLabel,type PlannerFacts } from './structured-planner.js';
 
 export type PlanningSource = {source_id:string;agent_id:string;group_id:string;group_version:number;display_name:string;connector_type:string};
 
 export async function planLiveQuestion(pool:Pool, tenantId:string, question:string, candidates:PlanningSource[], priorTurns:Array<{role:'user'|'assistant';content:string}>, principalId?:string) {
   let selected=candidates;
   let intents:QueryIntent[]|undefined;
+  let displays:Array<DisplayLabel|null>=[];
   let plannerProvenance:{model:string;inputTokens:number;outputTokens:number}|undefined;
   const catalogue=await withTenant(pool,tenantId,client=>client.query<{source_id:string;assets:Array<{qualified_name:string;columns:Array<{name:string;label?:string;data_type:string;sensitivity_tags:string[]}>}>}>(`SELECT c.connection_id AS source_id,coalesce(jsonb_agg(jsonb_build_object('qualified_name',d.qualified_name,'columns',coalesce(fields.columns,'[]'::jsonb)) ORDER BY d.qualified_name) FILTER(WHERE d.asset_id IS NOT NULL),'[]'::jsonb) AS assets
     FROM registry.connections c LEFT JOIN graph.assets d ON d.tenant_id=c.tenant_id AND d.source_id=c.connection_id AND d.asset_type='dataset' AND d.active
@@ -19,6 +20,15 @@ export async function planLiveQuestion(pool:Pool, tenantId:string, question:stri
   const relationships=await withTenant(pool,tenantId,client=>client.query<{source_index:number;from_name:string;to_name:string;evidence_method:string;confidence_score:number}>(`SELECT array_position($2::uuid[],sourceField.source_id)::integer-1 AS source_index,sourceField.qualified_name AS from_name,targetField.qualified_name AS to_name,a.evidence_method,a.confidence_score FROM graph.assets sourceField JOIN graph.relationships r ON r.tenant_id=sourceField.tenant_id AND r.from_asset_id=sourceField.asset_id AND r.relationship_type='REFERENCES' JOIN graph.assets targetField ON targetField.tenant_id=r.tenant_id AND targetField.asset_id=r.to_asset_id JOIN graph.assertions a ON a.tenant_id=r.tenant_id AND a.relationship_id=r.relationship_id WHERE r.tenant_id=$1 AND sourceField.source_id=ANY($2::uuid[]) AND targetField.source_id=sourceField.source_id AND (a.evidence_method='declared' OR (a.evidence_method='inferred' AND a.confidence_score>0.90)) ORDER BY 1,2,3`,[tenantId,candidates.map(row=>row.source_id)]));
   const glossary=await withTenant(pool,tenantId,client=>client.query<{term:string;description:string}>(`SELECT array_position($2::uuid[],source_id)::text||'.'||table_name||'.'||column_name AS term,left(description,400) AS description
     FROM graph.dictionary_descriptions WHERE tenant_id=$1 AND source_id=ANY($2::uuid[]) ORDER BY term LIMIT 60`,[tenantId,candidates.map(row=>row.source_id)]));
+  // Profile facts for code-side plan checks and the display-label rule (decision 45). They never enter the model input.
+  const profiled=await withTenant(pool,tenantId,client=>client.query<{source_id:string;table_name:string;row_count:string|null;column_name:string|null;distinct_count:string|null;null_rate:string|null;average_length:number|null}>(`SELECT d.source_id,d.qualified_name AS table_name,v.statistics->>'row_count' AS row_count,p.field_name AS column_name,p.distinct_count::text,p.null_rate::text,p.average_length
+    FROM graph.assets d LEFT JOIN LATERAL(SELECT statistics FROM graph.asset_versions WHERE tenant_id=d.tenant_id AND asset_id=d.asset_id ORDER BY version DESC LIMIT 1)v ON true
+    LEFT JOIN graph.relationships r ON r.tenant_id=d.tenant_id AND r.from_asset_id=d.asset_id AND r.relationship_type='CONTAINS' LEFT JOIN graph.assets f ON f.tenant_id=r.tenant_id AND f.asset_id=r.to_asset_id
+    LEFT JOIN LATERAL(SELECT field_name,distinct_count,null_rate,average_length FROM profiler.field_profiles WHERE tenant_id=f.tenant_id AND asset_id=f.asset_id ORDER BY profile_version DESC LIMIT 1)p ON true
+    WHERE d.tenant_id=$1 AND d.source_id=ANY($2::uuid[]) AND d.asset_type='dataset' AND d.active`,[tenantId,candidates.map(row=>row.source_id)]));
+  const facts:PlannerFacts=candidates.map(()=>({}));
+  const number=(value:string|number|null)=>value===null?null:Number(value);
+  for(const row of profiled.rows){const index=candidates.findIndex(candidate=>candidate.source_id===row.source_id);const table=(facts[index]![row.table_name]??={rowCount:number(row.row_count),columns:{}});if(row.column_name)table.columns[row.column_name]={distinctCount:number(row.distinct_count),nullRate:number(row.null_rate),averageLength:number(row.average_length)};}
   const metadata={classification:'METADATA_DESCRIPTIVE' as const,structural:{sources:candidates.map((row,index)=>({index,name:row.display_name||row.connector_type,type:row.connector_type,assets:catalogById.get(row.source_id)??[]})),relationships:relationships.rows},descriptive:Object.fromEntries(glossary.rows.map(row=>[row.term,row.description])),statistical:{},sensitivityTags:[]};
   const catalog=metadata.structural.sources;
   const schema=plannerSchema(catalog,relationships.rows);
@@ -38,7 +48,7 @@ Prior turns: ${priorTurns.map(turn=>`${turn.role}: ${normalize(turn.content)}`).
     attempts.push({...provenance,purpose:'plan'});
     let decoded;
     try {
-      decoded=decodePlannerOutput(completion.text,catalog,relationships.rows);
+      decoded=decodePlannerOutput(completion.text,catalog,relationships.rows,facts);
     } catch(error) {
       const reason=error instanceof SyntaxError?'invalid_json':error instanceof Error?error.message:'invalid_intent';
       attempts.at(-1)!.error=reason;
@@ -58,6 +68,7 @@ Does this plan answer this question? A plan over a loosely related object, a sin
     if(answers){
       selected=decoded.steps.map(item=>candidates[item.index]!);
       intents=decoded.steps.map(item=>item.intent);
+      displays=decoded.steps.map(item=>item.display??null);
       plannerProvenance=provenance;
       break;
     }
@@ -69,5 +80,5 @@ Does this plan answer this question? A plan over a loosely related object, a sin
   const candidateSources:CandidateSource[]=candidates.map(row=>({sourceId:row.source_id,name:row.display_name||row.connector_type,connectorType:row.connector_type,tables:new Map((catalogById.get(row.source_id)??[]).map(asset=>[(asset.qualified_name.split('.').at(-1)??asset.qualified_name).toLowerCase(),new Set(asset.columns.map(column=>column.name.toLowerCase()))]))}));
   const choice=selectSources({question,context:priorTurns.map(turn=>turn.content).join('\n'),candidates:candidateSources,selected:selected.map(row=>candidateSources.find(source=>source.sourceId===row.source_id)!),intents:intents as unknown as Array<Record<string,unknown>>});
   if(choice.kind==='ask')return {kind:'choice' as const,options:choice.options,attempts};
-  return {kind:'planned' as const,selected,intents,provenance:{...plannerProvenance!,typedPlan:{attempts,intents:intents.map((intent,index)=>({source_index:candidates.indexOf(selected[index]!),source_name:selected[index]!.display_name,intent})),source_selection:{used:choice.used,unused:choice.unused}}}};
+  return {kind:'planned' as const,selected,intents,provenance:{...plannerProvenance!,typedPlan:{attempts,intents:intents.map((intent,index)=>({source_index:candidates.indexOf(selected[index]!),source_name:selected[index]!.display_name,intent,...(displays[index]?{display_label:displays[index]}:{})})),source_selection:{used:choice.used,unused:choice.unused}}}};
 }

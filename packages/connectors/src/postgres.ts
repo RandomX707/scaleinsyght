@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { Pool } from 'pg';
 import { classifyColumn } from '@scaleinsyght/classification';
-import type { ConnectorScope, DiscoveryResult, ObjectProfile, ReadOnlyConnector } from './index.js';
+import { COLUMN_STATISTICS_ROW_LIMIT, UNMEASURED, type ColumnStatistics, type ConnectorScope, type DiscoveryResult, type ObjectProfile, type ReadOnlyConnector } from './index.js';
 
 export type Table = { schema_name: string; table_name: string; table_type: 'BASE TABLE' | 'VIEW' };
 type Column = { column_name: string; data_type: string; is_nullable: 'YES' | 'NO'; comment: string | null };
@@ -15,6 +15,8 @@ type RoleSafety = {
 };
 export type PostgresStructuralReference = { from: string; to: string; fromColumn: string; toColumn: string; evidenceMethod?: 'declared'|'inferred'; confidence?:number; matchedCount?:number; sourceCount?:number };
 const quoteIdentifier=(value:string)=>`"${value.replaceAll('"','""')}"`;
+const POSTGRES_TEXT=new Set(['text','character varying','character']);
+const POSTGRES_MEASURABLE=new Set([...POSTGRES_TEXT,'smallint','integer','bigint','numeric','real','double precision','boolean','date','timestamp without time zone','timestamp with time zone','uuid']);
 const assetKey=(qualifiedName:string)=>createHash('sha256').update(`postgres\0${qualifiedName}`).digest('hex');
 
 export class PostgresConnector implements ReadOnlyConnector {
@@ -97,7 +99,17 @@ export class PostgresConnector implements ReadOnlyConnector {
     // Bounded text samples feed the sensitivity detector only; they are discarded here and never stored or sent to a model (decision 41).
     const sampled=new Map<string,string[]>();
     for(const column of columns)if(['text','character varying','character'].includes(column.data_type)){const rows=await this.pool.query<{v:string}>(`SELECT ${quoteIdentifier(column.column_name)}::text AS v FROM ${quoteIdentifier(table.schema_name)}.${quoteIdentifier(table.table_name)} WHERE ${quoteIdentifier(column.column_name)} IS NOT NULL LIMIT 200`);sampled.set(column.column_name,rows.rows.map(row=>row.v));}
-    return {assetKey:key,qualifiedName,version:createHash('sha256').update(JSON.stringify(structural)).digest('hex'),rowCount:Number(count.rows[0]!.count),columns:columns.map(column=>{const declared=column.comment?.match(/sensitivity:([a-z_]+)/g)?.map(tag=>tag.slice('sensitivity:'.length))??[];const classified=classifyColumn({name:column.column_name,declaredTags:declared,sample:sampled.get(column.column_name)??[]});return {name:column.column_name,dataType:column.data_type,isNullable:column.is_nullable==='YES',sensitivityTags:classified.tags,sensitivityEvidence:classified.evidence,statistics:{nullRate:null,distinctCount:null}};})};
+    const rowCount=Number(count.rows[0]!.count);
+    const classified=new Map(columns.map(column=>{const declared=column.comment?.match(/sensitivity:([a-z_]+)/g)?.map(tag=>tag.slice('sensitivity:'.length))??[];return [column.column_name,classifyColumn({name:column.column_name,declaredTags:declared,sample:sampled.get(column.column_name)??[]})] as const;}));
+    // Null rate, distinct count and average text length on untagged scalar columns, in one aggregate query per table.
+    const measurable=rowCount>0&&rowCount<=COLUMN_STATISTICS_ROW_LIMIT?columns.filter(column=>!classified.get(column.column_name)!.tags.length&&POSTGRES_MEASURABLE.has(column.data_type)):[];
+    const statistics=new Map<string,ColumnStatistics>();
+    if(measurable.length){
+      const parts=measurable.flatMap((column,index)=>{const ref=quoteIdentifier(column.column_name);return [`count(${ref}) AS n${index}`,`count(DISTINCT ${ref}) AS d${index}`,POSTGRES_TEXT.has(column.data_type)?`avg(length(${ref}))::float8 AS l${index}`:`NULL::float8 AS l${index}`];});
+      const measured=(await this.pool.query<Record<string,string|number|null>>(`SELECT ${parts.join(',')} FROM ${quoteIdentifier(table.schema_name)}.${quoteIdentifier(table.table_name)}`)).rows[0]!;
+      measurable.forEach((column,index)=>statistics.set(column.column_name,{nullRate:1-Number(measured[`n${index}`])/rowCount,distinctCount:Number(measured[`d${index}`]),averageLength:measured[`l${index}`]===null?null:Number(measured[`l${index}`])}));
+    }
+    return {assetKey:key,qualifiedName,version:createHash('sha256').update(JSON.stringify(structural)).digest('hex'),rowCount,columns:columns.map(column=>{const found=classified.get(column.column_name)!;return {name:column.column_name,dataType:column.data_type,isNullable:column.is_nullable==='YES',sensitivityTags:found.tags,sensitivityEvidence:found.evidence,statistics:statistics.get(column.column_name)??UNMEASURED};})};
   }
 
   async structuralReferences():Promise<PostgresStructuralReference[]>{

@@ -2,7 +2,12 @@ import { QueryIntentSchema, type QueryIntent } from '@scaleinsyght/contracts';
 
 type Column = {name: string; label?: string; sensitivity_tags?: string[]};
 export type PlannerCatalog = Array<{name?: string; assets: Array<{qualified_name: string; columns: Column[]}>}>;
-export type PlannerJoin = {source_index: number; from_name: string; to_name: string};
+export type PlannerJoin = {source_index: number; from_name: string; to_name: string; evidence_method?: string; confidence_score?: number | string};
+/** Profile facts code uses to check and shape plans. Never part of the model's input (they stay out of plannerSchema). */
+export type ColumnFacts = {distinctCount: number | null; nullRate: number | null; averageLength: number | null};
+export type PlannerFacts = Array<Record<string, {rowCount: number | null; columns: Record<string, ColumnFacts>}>>;
+/** The display-label rule's outcome for a grouped step, recorded with the plan (decision 45). */
+export type DisplayLabel = {key: string; label: string; via: string};
 type Schema = Record<string, unknown>;
 
 const literal = (values: string[], description?: string): Schema => ({
@@ -76,7 +81,8 @@ export function plannerSchema(catalog: PlannerCatalog, joins: PlannerJoin[]): Sc
 }
 
 export type PlanDeclaration = {subject: string; grouping: string | null; conditions: string[]; comparison: boolean; answerable: boolean};
-type DecodedStep = {index: number; intent: QueryIntent};
+/** intent is what runs; planned is the model's plan before the display-label rule, which is what verification checks. */
+type DecodedStep = {index: number; intent: QueryIntent; planned?: QueryIntent; display?: DisplayLabel | null};
 
 function field(ref: unknown): [string,string] {
   if (typeof ref !== 'string' || !ref.includes('.')) throw new Error('required_qualified_column');
@@ -87,7 +93,7 @@ const sameSet = (left: string[], right: string[]) => new Set(left).size === new 
 
 /** Decodes the structured response into typed intents and checks the executable plan against the declared intent.
  * No pattern matching over the user's question: the declaration is the contract the plan must meet. */
-export function decodePlannerOutput(text: string, catalog: PlannerCatalog, joins: PlannerJoin[]): {declaration: PlanDeclaration; steps: DecodedStep[]} {
+export function decodePlannerOutput(text: string, catalog: PlannerCatalog, joins: PlannerJoin[], facts: PlannerFacts = []): {declaration: PlanDeclaration; steps: DecodedStep[]} {
   const parsed = JSON.parse(text) as {declaration?: PlanDeclaration; intents?: Array<Record<string, unknown>>};
   const declaration = parsed.declaration;
   if (!declaration || typeof declaration.answerable !== 'boolean' || typeof declaration.comparison !== 'boolean') throw new Error('missing_declaration');
@@ -127,10 +133,11 @@ export function decodePlannerOutput(text: string, catalog: PlannerCatalog, joins
     if (declared.grouping_column != null && item.groupBy == null && GROUPED_KINDS.includes(kind)) item.groupBy = declared.grouping_column;
     // Grouping returns the group column's values. Never group by a tagged column: identifiers are stored only as keyed
     // fingerprints (non-negotiable 6) and tagged values never leave the source (contract 7).
-    if (item.groupBy != null) {
-      const [groupTable, groupColumn] = field(item.groupBy);
+    for (const shown of [item.groupBy, item.groupKey]) {
+      if (shown == null) continue;
+      const [groupTable, groupColumn] = field(shown);
       const tags = source.assets.find(asset => asset.qualified_name === groupTable)?.columns.find(col => col.name === groupColumn)?.sensitivity_tags ?? [];
-      if (tags.length) throw new Error(`grouping_by_a_sensitive_column_is_not_allowed: ${String(item.groupBy)} is tagged ${tags.join(', ')}`);
+      if (tags.length) throw new Error(`grouping_by_a_sensitive_column_is_not_allowed: ${String(shown)} is tagged ${tags.join(', ')}`);
     }
     // The executable plan must match what the step declares.
     if ((isJoinIntent ? leftTable : table) !== declared.subject_table) throw new Error(`plan_subject_differs_from_declared_subject: declared ${String(declared.subject_table)}, plan uses ${isJoinIntent ? leftTable : table}`);
@@ -186,17 +193,91 @@ export function decodePlannerOutput(text: string, catalog: PlannerCatalog, joins
     }
     const validated = QueryIntentSchema.safeParse(intent);
     if (!validated.success) throw new Error('typed_intent_fields: ' + validated.error.issues.map(issue => issue.path.join('.') + ' ' + issue.code).join(', ').slice(0,180));
-    return {index,intent:validated.data as QueryIntent};
+    const typed = validated.data as QueryIntent;
+    rejectSingleRecordGroups(typed, facts[index]);
+    const display = displayLabelFor(typed, index, source, joins, facts[index]);
+    const shown = display ? applyDisplayLabel(typed, display) : typed;
+    checkDisplayLabel(shown, display);
+    return {index,intent:shown,planned:typed,display};
   });
   return {declaration, steps};
+}
+
+const TRUSTED_COVERAGE = 0.999;
+
+/** Grouping a table by a column that is unique in it makes every group one record: the answer would list single
+ * records (row-level data), and small-cell disclosure would withhold every cell. Plan over the table the records come
+ * from instead. Decided from the profiled distinct count and row count, never from names. */
+function rejectSingleRecordGroups(intent: QueryIntent, facts: PlannerFacts[number] | undefined) {
+  const plan = intent as unknown as Record<string, unknown>;
+  if (!['group_by','average_count_by','grouped_join'].includes(intent.kind) || (intent.kind === 'grouped_join' && plan.groupByTable !== 'left')) return;
+  const table = String(plan.leftTable ?? plan.table); const column = String(plan.groupBy);
+  const known = facts?.[table]; const stats = known?.columns[column];
+  if (known?.rowCount && stats?.distinctCount === known.rowCount && stats.nullRate === 0) {
+    throw new Error(`grouping_column_is_unique_in_its_table: every ${table} record has its own ${column}, so each group is a single record; plan over the table the counted records come from`);
+  }
+}
+
+/** The display-label rule (decision 45). When a step groups by a key column, the answer shows the related table's
+ * human label instead: the key must reference that table through an asserted relationship (declared, or inferred with
+ * full measured coverage) and have no nulls, so the join keeps every record. The label is the related table's
+ * untagged text column that is unique and complete there, preferring the longest values (a name over a code);
+ * ties go to the column name. Code decides from profile facts; the model is not asked. */
+function displayLabelFor(intent: QueryIntent, index: number, source: PlannerCatalog[number], joins: PlannerJoin[], facts: PlannerFacts[number] | undefined): DisplayLabel | null {
+  if (!facts) return null;
+  let keyTable: string; let keyColumn: string;
+  if (intent.kind === 'group_by') { keyTable = intent.table; keyColumn = intent.groupBy; }
+  else if (intent.kind === 'grouped_join') {
+    // Only the join's own key can be relabelled through the join that is already in the plan.
+    const onKey = (intent.groupByTable === 'left' && intent.groupBy === intent.leftColumn) || (intent.groupByTable === 'right' && intent.groupBy === intent.rightColumn);
+    if (!onKey) return null;
+    keyTable = intent.leftTable; keyColumn = intent.leftColumn;
+  } else return null;
+  const join = joins.find(candidate => candidate.source_index === index && candidate.from_name === keyTable + '.' + keyColumn
+    && (intent.kind !== 'grouped_join' || candidate.to_name === intent.rightTable + '.' + intent.rightColumn));
+  if (!join) return null;
+  const trusted = join.evidence_method === 'declared' || Number(join.confidence_score) >= TRUSTED_COVERAGE;
+  if (!trusted || facts[keyTable]?.columns[keyColumn]?.nullRate !== 0) return null;
+  const [target, targetKey] = field(join.to_name);
+  const related = facts[target]; const asset = source.assets.find(item => item.qualified_name === target);
+  if (!related?.rowCount || !asset || (asset.columns.find(column => column.name === targetKey)?.sensitivity_tags ?? []).length) return null;
+  const foreignKeys = new Set(joins.filter(candidate => candidate.source_index === index).map(candidate => candidate.from_name));
+  const candidates = asset.columns.filter(column => {
+    const stats = related.columns[column.name];
+    return column.name !== targetKey && !(column.sensitivity_tags ?? []).length && !foreignKeys.has(target + '.' + column.name)
+      && stats?.averageLength != null && stats.distinctCount === related.rowCount && stats.nullRate === 0;
+  }).sort((a, b) => (related.columns[b.name]!.averageLength! - related.columns[a.name]!.averageLength!) || a.name.localeCompare(b.name));
+  const chosen = candidates[0];
+  return chosen ? {key: keyTable + '.' + keyColumn, label: target + '.' + chosen.name, via: joinKey(join)} : null;
+}
+
+function applyDisplayLabel(intent: QueryIntent, display: DisplayLabel): QueryIntent {
+  const [keyTable, keyColumn] = field(display.key); const [labelTable, labelColumn] = field(display.label);
+  const rightColumn = field(display.via.split(' = ')[1])[1];
+  if (intent.kind === 'grouped_join') return {...intent, groupByTable:'right', groupBy:labelColumn, groupKey:rightColumn};
+  if (intent.kind !== 'group_by') return intent;
+  return QueryIntentSchema.parse({kind:'grouped_join', leftTable:keyTable, rightTable:labelTable, leftColumn:keyColumn, rightColumn,
+    groupByTable:'right', groupBy:labelColumn, groupKey:rightColumn, aggregate:intent.aggregate, filters:[],
+    order:intent.order ?? 'desc', limit:intent.limit ?? 100});
+}
+
+/** The executable plan must carry the recorded display label: grouped by the label, with the key as the group key. */
+function checkDisplayLabel(intent: QueryIntent, display: DisplayLabel | null) {
+  if (!display) return;
+  const [labelTable, labelColumn] = field(display.label);
+  if (intent.kind !== 'grouped_join' || intent.rightTable !== labelTable || intent.groupByTable !== 'right' || intent.groupBy !== labelColumn || !intent.groupKey) {
+    throw new Error(`plan_does_not_show_the_display_label: ${display.key} is shown as ${display.label}`);
+  }
 }
 
 /** A plain description of an accepted plan for the verification call. Uses display headers where the source has them. */
 export function describePlan(steps: DecodedStep[], catalog: PlannerCatalog): string {
   const label = (index: number, table: string, column: string) =>
     (catalog[index]?.assets.find(asset => asset.qualified_name === table)?.columns.find(item => item.name === column)?.label ?? column).toLowerCase();
-  return steps.map(({index, intent}) => {
-    const plan = intent as unknown as Record<string, unknown> & {aggregate?: {operation: string; column?: string}};
+  // The display label (decision 45) changes only how groups are shown, under conditions that keep every record, so the
+  // verifier checks the computation the model planned.
+  return steps.map(({index, intent, planned}) => {
+    const plan = (planned ?? intent) as unknown as Record<string, unknown> & {aggregate?: {operation: string; column?: string}};
     const source = catalog[index]?.name ?? `source ${index + 1}`;
     const subject = String(plan.leftTable ?? plan.table);
     const measure = plan.kind === 'average_count_by' ? `the average number of ${subject} records per ${label(index, subject, String(plan.entityColumn))}`

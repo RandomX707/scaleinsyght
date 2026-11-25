@@ -32,7 +32,7 @@ export function validateFirstUserPassword(value: string): void {
   if (value.length < 12 || value.length > 1024) throw new Error('password_too_short');
 }
 
-function hashPassword(value: string): string {
+export function hashPassword(value: string): string {
   const salt = randomBytes(16).toString('hex');
   return `${salt}:${scryptSync(value, salt, 64).toString('hex')}`;
 }
@@ -56,10 +56,10 @@ export async function createTenant(pool: Pool, input: CreateTenantInput): Promis
   });
 }
 
-async function askHiddenPassword(): Promise<string> {
-  if (!stdin.isTTY) throw new Error('first_user_password_requires_interactive_terminal');
+export async function askHiddenPassword(prompt = 'First user password (hidden): '): Promise<string> {
+  if (!stdin.isTTY) throw new Error('password_requires_interactive_terminal');
   const silentOutput = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
-  stdout.write('First user password (hidden): ');
+  stdout.write(prompt);
   const hidden = createInterface({ input: stdin, output: silentOutput, terminal: true });
   try {
     return await hidden.question('');

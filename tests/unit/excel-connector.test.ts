@@ -34,7 +34,7 @@ describe('Excel workbook connector', () => {
         const key = `${object.qualifiedName}.${column.name}`;
         expect(column.sensitivityTags).toEqual(truth.sensitiveColumns[key] ?? []);
         // Statistics on tagged columns are withheld; untagged columns match the file.
-        if (column.sensitivityTags.length) expect(column.statistics).toEqual({ nullRate: null, distinctCount: null });
+        if (column.sensitivityTags.length) expect(column.statistics).toEqual({ nullRate: null, distinctCount: null, averageLength: null });
         else expect(column.statistics.nullRate).toBeCloseTo(truth.nullRates[key]!, 10);
       }
     }
@@ -49,7 +49,7 @@ describe('Excel workbook connector', () => {
       const column = registrations.columns.find((item) => `Registrations.${item.name}` === key)!;
       expect(column.sensitivityTags).toEqual(tags);
       expect(column.sensitivityEvidence?.every((item) => item.detection === 'inferred' && item.reason.length > 0)).toBe(true);
-      expect(column.statistics).toEqual({ nullRate: null, distinctCount: null });
+      expect(column.statistics).toEqual({ nullRate: null, distinctCount: null, averageLength: null });
     }
     const patients = await connector.profile(discovered.objects.find((object) => object.qualifiedName === 'Patients')!.assetKey);
     expect(patients.columns.find((item) => item.name === 'mrn')!.sensitivityEvidence?.[0]).toMatchObject({ tag: 'identifier', detection: 'declared' });

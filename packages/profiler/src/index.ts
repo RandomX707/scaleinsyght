@@ -127,12 +127,12 @@ export async function runProfile(
         const fieldVersion = await ensureAssetVersion(client, input.tenantId, fieldAssetId, fieldStructural, {});
         if (fieldVersion.created) createdVersions += 1;
         await client.query(
-          `INSERT INTO profiler.field_profiles(tenant_id,asset_id,profile_version,field_name,data_type,is_nullable,sensitivity_tags,null_rate,distinct_count,display_name,sensitivity_evidence)
-           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)
+          `INSERT INTO profiler.field_profiles(tenant_id,asset_id,profile_version,field_name,data_type,is_nullable,sensitivity_tags,null_rate,distinct_count,display_name,sensitivity_evidence,average_length)
+           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12)
            ON CONFLICT(tenant_id,asset_id,profile_version,field_name) DO NOTHING`,
           [input.tenantId, fieldAssetId, fieldVersion.version, column.name, column.dataType, column.isNullable,
             column.sensitivityTags, column.statistics.nullRate, column.statistics.distinctCount,
-            column.label && column.label !== column.name ? column.label : null, JSON.stringify(column.sensitivityEvidence ?? column.sensitivityTags.map((tag) => ({ tag, detection: 'declared', reason: 'declared by the source' })))],
+            column.label && column.label !== column.name ? column.label : null, JSON.stringify(column.sensitivityEvidence ?? column.sensitivityTags.map((tag) => ({ tag, detection: 'declared', reason: 'declared by the source' }))), column.statistics.averageLength ?? null],
         );
         await client.query(
           `INSERT INTO graph.relationships(tenant_id,family,relationship_type,from_asset_id,to_asset_id,granularity)
