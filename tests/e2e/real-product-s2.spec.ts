@@ -206,6 +206,19 @@ test('s2_empty_tenant_adds_real_sql_server_profiles_and_relationships', async ({
   for(const captured of [comparison,phone])for(const name of ['SQL Server hospital','PostgreSQL testbed'])expect(captured.answer.claims[0]!.statement).toContain(name);
   writeFileSync('docs/acceptance/s2/answer-evidence.json',JSON.stringify([...evidence,chosen,comparison,phone].map(({question,answer,provenance})=>({question,answer:answer.claims[0]!.statement,sql:answer.evidence.map(item=>item.locator),results:answer.bySource.map(result=>({connectorType:result.connectorType,value:result.value,rows:result.rows})),provenance})),null,2)+'\n');
 
+  await page.getByRole('button',{name:'New chat'}).click();
+  await page.getByLabel('Ask a question').fill('List the encounters per patient ID');
+  const refusalPost = page.waitForResponse(response => new URL(response.url()).pathname === '/api/runs' && response.request().method() === 'POST');
+  await page.getByRole('button',{name:'Send question'}).click();
+  const {runId: refusalId} = await (await refusalPost).json() as {runId:string};
+  await expect(page.getByRole('heading',{name:'Protected information'})).toBeVisible({timeout:90_000});
+  await expect(page.locator('.privacy-refusal')).toContainText('sensitive identifier');
+  await expect(page.locator('.privacy-refusal')).toContainText('distribution');
+  const refused = await (await page.request.get(`/api/runs/${refusalId}`)).json();
+  expect(refused.terminal.reason).toBe('analytic_sensitive_column');
+  expect(refused.modelProvenance).toHaveLength(1);
+  expect(refused.modelProvenance[0].purpose).toBe('plan');
+
 });
 
 test.afterAll(async () => { await adminPool.end(); });
