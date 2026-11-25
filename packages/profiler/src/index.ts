@@ -124,7 +124,11 @@ export async function runProfile(
         const fieldAssetId = await ensureAsset(client, input.tenantId, input.connectionId, fieldFingerprint, 'field', fieldName);
         fieldAssets.set(fieldName, fieldAssetId);
         const fieldStructural = { object_type: 'field', data_type: column.dataType, nullable: column.isNullable };
-        const fieldVersion = await ensureAssetVersion(client, input.tenantId, fieldAssetId, fieldStructural, {});
+        // Measured statistics are part of the field version: a changed measurement writes a new version and profile row,
+        // never overwriting history. Unmeasured and tagged columns keep an empty statistics object.
+        const measured = column.statistics.distinctCount === null && column.statistics.nullRate === null ? {}
+          : { null_rate: column.statistics.nullRate, distinct_count: column.statistics.distinctCount, average_length: column.statistics.averageLength ?? null };
+        const fieldVersion = await ensureAssetVersion(client, input.tenantId, fieldAssetId, fieldStructural, measured);
         if (fieldVersion.created) createdVersions += 1;
         await client.query(
           `INSERT INTO profiler.field_profiles(tenant_id,asset_id,profile_version,field_name,data_type,is_nullable,sensitivity_tags,null_rate,distinct_count,display_name,sensitivity_evidence,average_length)

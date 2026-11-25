@@ -59,6 +59,32 @@ describe('contract 6 profiler persistence and graph', () => {
     expect(persisted.rows[0]).toEqual({ jobs: 1, datasets: 499, inaccessible: 1 });
   });
 
+  it('c6_changed_column_statistics_write_a_new_field_version_without_overwriting_history', async () => {
+    // A connection profiled before statistics were measured gains them on its next profile run (decision 45).
+    const tenantId = `profile-stats-${crypto.randomUUID()}`;
+    const userId = await createTenant(tenantId);
+    const connectionId = await connectionFor(tenantId, userId);
+    const withStatistics = (distinctCount: number | null) => {
+      const connector = createGoldenConnector('golden-postgres');
+      const profile = connector.profile.bind(connector);
+      connector.profile = async (...args: Parameters<typeof profile>) => {
+        const result = await profile(...args);
+        return { ...result, columns: result.columns.map((column) => column.name === 'display_name'
+          ? { ...column, statistics: distinctCount === null ? { nullRate: null, distinctCount: null } : { nullRate: 0, distinctCount, averageLength: 9.5 } } : column) };
+      };
+      return connector;
+    };
+    for (const measured of [null, 87, 87, 90]) await runProfile(app, { tenantId, connectionId, connector: withStatistics(measured), jobType: 'profile' });
+    const rows = await withTenant(migrate, tenantId, async (client) => client.query<{ profile_version: number; distinct_count: string | null; average_length: number | null }>(
+      `SELECT p.profile_version,p.distinct_count::text,p.average_length FROM profiler.field_profiles p JOIN graph.assets a ON a.tenant_id=p.tenant_id AND a.asset_id=p.asset_id
+       WHERE p.tenant_id=$1 AND a.qualified_name='X_Golden.Table_001.display_name' ORDER BY p.profile_version`, [tenantId]));
+    expect(rows.rows).toEqual([
+      { profile_version: 1, distinct_count: null, average_length: null },
+      { profile_version: 2, distinct_count: '87', average_length: 9.5 },
+      { profile_version: 3, distinct_count: '90', average_length: 9.5 },
+    ]);
+  });
+
   it('c6_identical_source_profiles_produce_identical_versions_and_foreign_keys_never_become_lineage', async () => {
     const tenantId = `profile-repeat-${crypto.randomUUID()}`;
     const userId = await createTenant(tenantId);
