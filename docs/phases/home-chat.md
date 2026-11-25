@@ -1,6 +1,6 @@
 # Home chat rework: spec
 
-Status: **draft for approval** (Claude Code, 25 Nov 2026). Requirements: Yashaswi's brief (moved from Codex to Claude Code on 25 Nov 2026) and CLAUDE.md 10.2 "Home (chat)". Reference: `docs/prototype/index.html` route `#home` (`answerHtml`, `linAnswerBody`). Contracts touched: 4 (claims and evidence), 5 (runs and events), 7 (what is shown and withheld). No new contract fields; one new table (section 5).
+Status: **approved 25 Nov 2026 as decision 56**, with the two additions marked *Approved addition* below. Requirements: Yashaswi's brief (moved from Codex to Claude Code on 25 Nov 2026) and CLAUDE.md 10.2 "Home (chat)". Reference: `docs/prototype/index.html` route `#home` (`answerHtml`, `linAnswerBody`). Contracts touched: 4 (claims and evidence), 5 (runs and events), 7 (what is shown and withheld). No new contract fields; one new table (section 5).
 
 ## 1. What exists today
 
@@ -43,14 +43,16 @@ The form is chosen by code from the result's shape. The model's prose is the ans
 
 ## 5. Follow-ups that change the form without rerunning
 
-- A follow-up that only asks for a different form of the previous answer is recognised **by code, not the model**, from a fixed list of phrasings: "as a table", "show all", "as a chart", "just the number", "top N" / "bottom N" (when the previous result already holds those rows), "sorted by name" / "sorted by value".
+- A follow-up that only asks for a different form of the previous answer is recognised **by code, not the model**: "as a table", "show all", "as a chart", "just the number", "top N" / "bottom N" (when the previous result already holds those rows), "sorted by name" / "sorted by value".
+- *Approved addition (b):* the recogniser accepts natural variants ("can you put that in a table", "table please", "just give me the number"). It is tested with at least 20 phrasings, including ones it must reject (anything that adds a condition, names a new measure or source, or asks a new question). When unsure, it runs the question normally.
 - It adds a turn to the conversation that **reuses the previous turn's stored result** (`result_ref`) with the new form: no plan, no source query, no model call. The turn shows "Same answer, shown as a table" and links to the run it reuses.
 - Anything else, including "top N" beyond the rows held, starts a new run as today.
 - Storage: migration 040 adds `runs.conversation_display_turns` (tenant, conversation, turn id, the run it reuses, the form, the phrase's normalised kind, created at), with row-level security. Conversation history lists runs and display turns in order. Result rows still travel by reference only (non-negotiable 9): the display turn holds no rows.
 
 ## 6. Layout
 
-- Conversational: question bubbles on the right, answers on the left with the assistant mark, the composer fixed at the bottom ("All sources" selector, attach, voice, "Analytic mode · read-only").
+- Conversational: question bubbles on the right, answers on the left with the assistant mark, the composer fixed at the bottom ("All sources" selector and "Analytic mode · read-only").
+- *Approved addition (a):* the attach and voice buttons appear only if they work end to end; otherwise they are left out, and the difference from the prototype is listed.
 - After an answer arrives, the thread scrolls so the newest answer's sentence is in view. With the displays above, a typical answer fits the viewport, so "scrolled to the newest" and "summary in view" both hold (K7).
 
 ## 7. Tests
@@ -72,6 +74,6 @@ The form is chosen by code from the result's shape. The model's prose is the ans
 
 ## 8. Decision needed
 
-**Decision 56 (proposed): the display table in section 2, and recognising form-only follow-ups by a fixed list of phrasings in code.**
+**Decision 56 (approved 25 Nov 2026): the display table in section 2, and recognising form-only follow-ups in code, with the two additions above.**
 
 - *Alternative:* let the model choose the form. Rejected: the form would vary between runs of the same question, and it would cost a model call for a display change.
