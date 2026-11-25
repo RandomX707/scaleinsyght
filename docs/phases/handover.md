@@ -28,7 +28,9 @@ So **#17 and #18 are both merged.**
 - Rebased `s7-saved-exports` on main through PR #29. Restored the merged review and Tableau UI while retaining S7 additions.
 - Reports now submits a saved question for review. The S7 walkthrough uses Reports and Approval matrix to submit, approve, save, run, export and schedule.
 - Failed count queries produce an unavailable count and cannot trigger a row-count change. Added a PostgreSQL slow-view regression.
+- The slow-view regression passed on si_test. The browser walkthrough initially lacked a declared JSZip dependency. Added the already locked version and restarted the walkthrough.
 - Verification, merge and 4284 redeployment are pending.
+- After S7 merges, add tests and fixes for Approval matrix tab counts and default selection, snapshot-based change totals, separate warning and neutral counts, field-specific ID evidence checked against S5 truth, and deduplicated evidence sentences.
 
 ## Open problems and known issues
 

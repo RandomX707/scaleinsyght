@@ -272,6 +272,9 @@ importers:
       globals:
         specifier: ^16.5.0
         version: 16.5.0
+      jszip:
+        specifier: 3.10.2
+        version: 3.10.2
       node-pg-migrate:
         specifier: ^9.0.0
         version: 9.0.0(@types/pg@8.23.1)(pg@8.23.1)
