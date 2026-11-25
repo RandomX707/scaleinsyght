@@ -191,7 +191,7 @@ try {
     for (const test of cases) {
       const item = await evaluate(test);
       set.items.push(item);
-      if (set.name !== 'heldout') console.log(set.name, item.id, item.status, item.latencyMs + 'ms', '$' + item.costUsd);
+      if (set.name === 'questions') console.log(set.name, item.id, item.status, item.latencyMs + 'ms', '$' + item.costUsd);
       await save();
     }
     console.log(set.name, summary(set.items));
