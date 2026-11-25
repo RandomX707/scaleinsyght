@@ -28,7 +28,9 @@ const truth = JSON.parse(readFileSync('testbed/scale/truth.json', 'utf8')) as Re
 
 let cookie = '';
 /** HTTP without client timeouts: activation profiles the whole catalog inside one request. */
-function call(path: string, method = 'GET', body?: unknown): Promise<{ status: number; body: any; ms: number }> {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- API responses are read as untyped JSON in this local script
+type Json = any;
+function call(path: string, method = 'GET', body?: unknown): Promise<{ status: number; body: Json; ms: number }> {
   const started = performance.now();
   return new Promise((done, fail) => {
     const payload = body === undefined ? undefined : JSON.stringify(body);
@@ -37,7 +39,7 @@ function call(path: string, method = 'GET', body?: unknown): Promise<{ status: n
       res.on('end', () => {
         const text = Buffer.concat(chunks).toString('utf8');
         if (path === '/api/auth/login') cookie = String(res.headers['set-cookie']?.[0] ?? '').split(';')[0]!;
-        let parsed: any = text; try { parsed = JSON.parse(text); } catch { /* not JSON */ }
+        let parsed: Json = text; try { parsed = JSON.parse(text); } catch { /* not JSON */ }
         done({ status: res.statusCode ?? 0, body: parsed, ms: Math.round(performance.now() - started) });
       });
     });
@@ -115,7 +117,7 @@ if (!skipPlanner) for (const item of questions) {
   const submitted = await call('/api/runs', 'POST', { question: item.question, sourceIds: [connectionId] });
   let status = 'failed'; let detail: unknown = submitted.body?.error ?? null; let sql: string[] = [];
   if (submitted.status === 201) {
-    const runId = submitted.body.runId as string; let run: any = null;
+    const runId = submitted.body.runId as string; let run: Json = null;
     for (const deadline = Date.now() + 180_000; Date.now() < deadline;) {
       run = (await call(`/api/runs/${runId}`)).body;
       if (['COMPLETED', 'PARTIAL', 'FAILED', 'POLICY_BLOCKED', 'CANCELLED'].includes(run?.state)) break;
