@@ -31,6 +31,10 @@ describe('contract 1 saved question ownership and revalidation', () => {
     });
     const source = await activateConnection(app, { tenantId, principalId: ownerId, connectorType: 'postgres' });
     await withTenant(migrate, tenantId, async (db) => db.query("INSERT INTO core.entitlements(tenant_id,principal_id,capability_id,resource_id) VALUES($1,$2,'analytic.read',$3)", [tenantId, ownerId, source.connectionId]));
+    await withTenant(migrate, tenantId, db => db.query(
+      "INSERT INTO graph.assets(tenant_id,source_id,asset_type,qualified_name,fingerprint) VALUES($1,$2,'dataset','public.catalogue',$3)",
+      [tenantId,source.connectionId,Buffer.alloc(32,1)],
+    ));
     const plan = await createAnalyticPlan({ question: 'How many catalog objects are listed?', queryIntents: [{kind:'count',table:'public.catalogue'}], runId: crypto.randomUUID(), sources: [{ sourceId: source.connectionId, agentId: source.agentId, groupId: source.sourceGroupId, groupVersion: 1 }] });
     await startAnalyticRun(app, { tenantId, principalId: ownerId, plan });
     const step = plan.steps[0]!;
