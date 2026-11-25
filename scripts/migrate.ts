@@ -10,7 +10,7 @@ if (!databaseUrl) {
 }
 if (process.argv.includes('--test')) {
   const testUrl = new URL(databaseUrl);
-  testUrl.pathname = '/si_test';
+  testUrl.pathname = `/${process.env.SI_TEST_DATABASE??'si_test'}`;
   await migrate(testUrl.toString());
 } else {
   await migrate(databaseUrl);

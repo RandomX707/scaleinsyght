@@ -10,7 +10,7 @@ import { hashPassword } from '../../apps/api/src/server.js';
 config({path:'.env'});
 const password='golden-local-only';
 const migrateUrl=new URL(process.env.DATABASE_URL_MIGRATE??'');
-if(process.argv.includes('--test'))migrateUrl.pathname='/si_test';
+if(process.argv.includes('--test'))migrateUrl.pathname=`/${process.env.SI_TEST_DATABASE??'si_test'}`;
 const pool=new Pool({connectionString:migrateUrl.toString()});
 try{
  for(const tenant of [...golden.tenants,...phase3E2e.tenants,phase4.tenant,...phase4E2e.tenants]){

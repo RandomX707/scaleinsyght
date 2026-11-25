@@ -12,10 +12,11 @@ function databaseUrl(key: 'DATABASE_URL' | 'DATABASE_URL_MIGRATE', database: str
   return url.toString();
 }
 
+const testDatabase = process.env.SI_TEST_DATABASE ?? 'si_test';
 const tenantA = 'contract-tenant-a';
 const tenantB = 'contract-tenant-b';
-const app = new Pool({ connectionString: databaseUrl('DATABASE_URL', 'si_test'), max: 4 });
-const migrate = new Pool({ connectionString: databaseUrl('DATABASE_URL_MIGRATE', 'si_test'), max: 1 });
+const app = new Pool({ connectionString: databaseUrl('DATABASE_URL', testDatabase), max: 4 });
+const migrate = new Pool({ connectionString: databaseUrl('DATABASE_URL_MIGRATE', testDatabase), max: 1 });
 
 async function insertTenant(tenantId: string): Promise<void> {
   const client = await migrate.connect();
@@ -35,8 +36,8 @@ async function insertTenant(tenantId: string): Promise<void> {
 describe('contract 1 tenant isolation against real PostgreSQL 16', () => {
   beforeAll(async () => {
     const check = await app.query<{ current_database: string }>('SELECT current_database()');
-    if (check.rows[0]?.current_database !== 'si_test') {
-      throw new Error('Contract tests must use the resettable si_test database, never DATABASE_URL');
+    if (check.rows[0]?.current_database !== testDatabase) {
+      throw new Error(`Contract tests must use the resettable test database (${testDatabase}), never DATABASE_URL`);
     }
     await insertTenant(tenantA);
     await insertTenant(tenantB);

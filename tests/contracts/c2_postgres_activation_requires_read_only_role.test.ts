@@ -9,7 +9,7 @@ function adminConnection(): string {
   const configured = process.env.DATABASE_URL_ADMIN;
   const url = configured ? new URL(configured) : new URL('postgresql://127.0.0.1:5432/postgres');
   if (!configured) { url.username = process.env.USER ?? process.env.LOGNAME ?? ''; url.password = ''; }
-  url.pathname = '/si_test';
+  url.pathname = `/${process.env.SI_TEST_DATABASE??'si_test'}`;
   return url.toString();
 }
 const admin = new Client({ connectionString: adminConnection() });
@@ -22,7 +22,7 @@ const password = randomUUID();
 const quoted = (value: string) => `"${value.replaceAll('"', '""')}"`;
 const literal = (value: string) => `'${value.replaceAll("'", "''")}'`;
 const hostUrl = new URL(adminConnection());
-hostUrl.pathname = '/si_test';
+hostUrl.pathname = `/${process.env.SI_TEST_DATABASE??'si_test'}`;
 const urlFor = (role: string) => {
   const url = new URL(hostUrl.toString()); url.username = role; url.password = password; return url.toString();
 };
@@ -52,7 +52,7 @@ describe('contract 2 PostgreSQL activation safety', () => {
     await admin.query(`CREATE TABLE ${quoted(schema)}.source_rows (id integer PRIMARY KEY, parent_id integer NOT NULL REFERENCES ${quoted(schema)}.parent_rows(id), label text NOT NULL)`);
     await admin.query(`INSERT INTO ${quoted(schema)}.parent_rows VALUES (1)`);
     await admin.query(`INSERT INTO ${quoted(schema)}.source_rows VALUES (1, 1, 'fictional')`);
-    await admin.query(`GRANT CONNECT ON DATABASE si_test TO ${quoted(reader)}, ${quoted(writer)}, ${quoted(elevated)}`);
+    await admin.query(`GRANT CONNECT ON DATABASE ${quoted(process.env.SI_TEST_DATABASE ?? "si_test")} TO ${quoted(reader)}, ${quoted(writer)}, ${quoted(elevated)}`);
     await admin.query(`GRANT USAGE ON SCHEMA ${quoted(schema)} TO ${quoted(reader)}, ${quoted(writer)}, ${quoted(elevated)}`);
     await admin.query(`GRANT SELECT ON ALL TABLES IN SCHEMA ${quoted(schema)} TO ${quoted(reader)}, ${quoted(writer)}, ${quoted(elevated)}`);
     await admin.query(`GRANT INSERT ON ALL TABLES IN SCHEMA ${quoted(schema)} TO ${quoted(writer)}`);

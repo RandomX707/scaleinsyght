@@ -13,7 +13,7 @@ import { startSqlParser } from '../support/sqlparse-server.js';
 // finds each change, and the Approval matrix decisions are recorded. Uses its own scratch database, never the shared
 // testbed.
 config({ path: '.env' });
-const testUrl = (key: 'DATABASE_URL' | 'DATABASE_URL_MIGRATE' | 'DATABASE_URL_WORKER') => { const value = process.env[key]; if (!value) throw new Error(`${key} is required; nightly contracts are never skipped`); const url = new URL(value); url.pathname = '/si_test'; return url.toString(); };
+const testUrl = (key: 'DATABASE_URL' | 'DATABASE_URL_MIGRATE' | 'DATABASE_URL_WORKER') => { const value = process.env[key]; if (!value) throw new Error(`${key} is required; nightly contracts are never skipped`); const url = new URL(value); url.pathname = `/${process.env.SI_TEST_DATABASE??'si_test'}`; return url.toString(); };
 const appPool = new Pool({ connectionString: testUrl('DATABASE_URL') }); const adminPool = new Pool({ connectionString: testUrl('DATABASE_URL_MIGRATE') }); const workerPool = new Pool({ connectionString: testUrl('DATABASE_URL_WORKER') });
 const admin = (() => { const configured = process.env.DATABASE_URL_ADMIN; const url = configured ? new URL(configured) : new URL('postgresql://127.0.0.1:5432/postgres'); if (!configured) { url.username = userInfo().username; url.password = ''; } return url; })();
 const database = 'si_test_nightly_source'; const reader = 'si_nightly_reader'; const readerPassword = randomBytes(18).toString('base64url');

@@ -9,7 +9,7 @@ import { hashPassword } from '@scaleinsyght/api/server';
 import { withTenant } from '@scaleinsyght/db';
 
 config({path:'.env'});
-function testUrl(key:'DATABASE_URL'|'DATABASE_URL_MIGRATE'){const value=process.env[key];if(!value)throw new Error(`${key} is required; enterprise connector contract tests are never skipped`);const url=new URL(value);url.pathname='/si_test';return url.toString();}
+function testUrl(key:'DATABASE_URL'|'DATABASE_URL_MIGRATE'){const value=process.env[key];if(!value)throw new Error(`${key} is required; enterprise connector contract tests are never skipped`);const url=new URL(value);url.pathname=`/${process.env.SI_TEST_DATABASE??'si_test'}`;return url.toString();}
 const appPool=new Pool({connectionString:testUrl('DATABASE_URL')});const adminPool=new Pool({connectionString:testUrl('DATABASE_URL_MIGRATE')});
 const tenantId=`enterprise-read-${randomUUID()}`;const email=`admin@${tenantId}.synthetic.invalid`;
 let server:Awaited<ReturnType<typeof buildServer>>;let cookie='';

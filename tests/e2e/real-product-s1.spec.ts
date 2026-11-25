@@ -6,7 +6,7 @@ import { Pool } from 'pg';
 import { createTenant } from '../../scripts/tenant-create.js';
 
 config({path:'.env'});
-const tenantUrl=(key:'DATABASE_URL_MIGRATE')=>{const value=process.env[key];if(!value)throw new Error(`${key} is required for local testbed acceptance.`);const url=new URL(value);url.pathname='/si_test';return url.toString();};
+const tenantUrl=(key:'DATABASE_URL_MIGRATE')=>{const value=process.env[key];if(!value)throw new Error(`${key} is required for local testbed acceptance.`);const url=new URL(value);url.pathname=`/${process.env.SI_TEST_DATABASE??'si_test'}`;return url.toString();};
 const adminPool=new Pool({connectionString:tenantUrl('DATABASE_URL_MIGRATE')});
 const databaseUrl=new URL(process.env.DATABASE_URL_TESTBED??'');if(!databaseUrl.hostname)throw new Error('Run pnpm testbed:up before the real-product walkthrough.');
 const credentials={host:databaseUrl.hostname,port:Number(databaseUrl.port||5432),database:decodeURIComponent(databaseUrl.pathname.slice(1)),username:decodeURIComponent(databaseUrl.username),password:decodeURIComponent(databaseUrl.password)};

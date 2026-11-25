@@ -10,7 +10,7 @@ config({ path: '.env' });
 function testUrl(key: 'DATABASE_URL' | 'DATABASE_URL_MIGRATE') {
   const value = process.env[key];
   if (!value) throw new Error(`${key} is required; OIDC contract tests are never skipped`);
-  const url = new URL(value); url.pathname = '/si_test'; return url.toString();
+  const url = new URL(value); url.pathname = `/${process.env.SI_TEST_DATABASE??'si_test'}`; return url.toString();
 }
 
 const tenantId = `phase6-oidc-${randomUUID()}`;

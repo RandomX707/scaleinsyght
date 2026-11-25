@@ -7,7 +7,7 @@ import { signInToTestWorkspace } from '../support/e2e-auth.js';
 
 config({ path: '.env' });
 const migrate = new URL(process.env.DATABASE_URL_MIGRATE ?? '');
-migrate.pathname = '/si_test';
+migrate.pathname = `/${process.env.SI_TEST_DATABASE??'si_test'}`;
 const setupPool = new Pool({ connectionString: migrate.toString() });
 test.afterAll(async () => setupPool.end());
 

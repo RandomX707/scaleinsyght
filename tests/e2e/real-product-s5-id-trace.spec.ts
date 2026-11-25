@@ -7,7 +7,7 @@ import { createTenant } from '../../scripts/tenant-create.js';
 
 // S5: ID trace across PostgreSQL, SQL Server and the workbook, checked against testbed/id-truth.json.
 config({ path: '.env' });
-const migrateUrl = () => { const value = process.env.DATABASE_URL_MIGRATE; if (!value) throw new Error('DATABASE_URL_MIGRATE is required for the ID trace walkthrough.'); const url = new URL(value); url.pathname = '/si_test'; return url.toString(); };
+const migrateUrl = () => { const value = process.env.DATABASE_URL_MIGRATE; if (!value) throw new Error('DATABASE_URL_MIGRATE is required for the ID trace walkthrough.'); const url = new URL(value); url.pathname = `/${process.env.SI_TEST_DATABASE??'si_test'}`; return url.toString(); };
 const adminPool = new Pool({ connectionString: migrateUrl() });
 const postgres = new URL(process.env.DATABASE_URL_TESTBED ?? '');
 if (!postgres.hostname || !process.env.SQLSERVER_TESTBED_PASSWORD) throw new Error('The local SQL Server and PostgreSQL testbeds are required.');

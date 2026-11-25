@@ -9,7 +9,7 @@ import { createTenant } from '../../scripts/tenant-create.js';
 // S6: a source changes after it is profiled; a refresh from the Approval matrix finds each change by name and count,
 // and an inferred sensitive column is dismissed with the decision recorded. Uses its own scratch database.
 config({ path: '.env' });
-const migrateUrl = () => { const value = process.env.DATABASE_URL_MIGRATE; if (!value) throw new Error('DATABASE_URL_MIGRATE is required for the nightly walkthrough.'); const url = new URL(value); url.pathname = '/si_test'; return url.toString(); };
+const migrateUrl = () => { const value = process.env.DATABASE_URL_MIGRATE; if (!value) throw new Error('DATABASE_URL_MIGRATE is required for the nightly walkthrough.'); const url = new URL(value); url.pathname = `/${process.env.SI_TEST_DATABASE??'si_test'}`; return url.toString(); };
 const adminPool = new Pool({ connectionString: migrateUrl() });
 const admin = (() => { const configured = process.env.DATABASE_URL_ADMIN; const url = configured ? new URL(configured) : new URL('postgresql://127.0.0.1:5432/postgres'); if (!configured) { url.username = userInfo().username; url.password = ''; } return url; })();
 const database = 'si_test_nightly_walkthrough'; const reader = 'si_nightly_walkthrough_reader'; const readerPassword = randomBytes(18).toString('base64url');

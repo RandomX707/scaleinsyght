@@ -7,7 +7,7 @@ import { claimNextStep, completeStep } from '@scaleinsyght/runner';
 config({path:fileURLToPath(new URL('../../.env',import.meta.url))});
 const mode=process.argv[2];const workerId=process.argv[3];
 if(!workerId||!['crash','crash-after-boundary','recover'].includes(mode??''))throw new Error('usage: crash-worker.ts <crash|crash-after-boundary|recover> <worker-id>');
-const url=new URL(process.env.DATABASE_URL_WORKER??'');url.pathname='/si_test';
+const url=new URL(process.env.DATABASE_URL_WORKER??'');url.pathname=`/${process.env.SI_TEST_DATABASE??'si_test'}`;
 const pool=new Pool({connectionString:url.toString(),max:1});
 async function resultRef(claim:NonNullable<Awaited<ReturnType<typeof claimNextStep>>>):Promise<string>{
  const order=await withRunTenant(pool,claim.runId,async(client)=>{

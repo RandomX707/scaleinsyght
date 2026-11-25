@@ -9,7 +9,7 @@ import { queryLineage } from '@scaleinsyght/graph';
 config({ path: '.env' });
 function testUrl(key:'DATABASE_URL'|'DATABASE_URL_MIGRATE'):string{
   const value=process.env[key];if(!value)throw new Error(`${key} is required; graph benchmarks require real PostgreSQL`);
-  const url=new URL(value);url.pathname='/si_test';return url.toString();
+  const url=new URL(value);url.pathname=`/${process.env.SI_TEST_DATABASE??'si_test'}`;return url.toString();
 }
 const app=new Pool({connectionString:testUrl('DATABASE_URL'),max:2,options:'-c statement_timeout=10000 -c application_name=phase3-graph-benchmark'});
 const migrate=new Pool({connectionString:testUrl('DATABASE_URL_MIGRATE'),max:2});

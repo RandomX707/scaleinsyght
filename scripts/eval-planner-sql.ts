@@ -23,7 +23,7 @@ if (process.argv[1]?.endsWith('/eval-planner-sql.ts')) {
   const result = JSON.parse(await readFile(file, 'utf8'));
   const database = new URL(process.env.DATABASE_URL_MIGRATE ?? '');
   if (!['localhost', '127.0.0.1'].includes(database.hostname)) throw new Error('Evaluation requires local si_test');
-  database.pathname = '/si_test';
+  database.pathname = `/${process.env.SI_TEST_DATABASE??'si_test'}`;
   const pool = new Pool({connectionString: database.toString()});
   try {
     for (const set of result.sets) for (const item of set.results) for (const turn of item.turns) {
