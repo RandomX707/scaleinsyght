@@ -4,6 +4,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { dailyBudgetCaps } from '@scaleinsyght/model-gateway';
 import type { Pool } from 'pg';
 import { withTenant, getUsage } from '@scaleinsyght/db';
+import { recordAgentRun, tenantAgent } from '@scaleinsyght/registry';
 import { activateConnection, approveGovernedVersion, createConnectionDraft, createGovernedDraft, deletePersonalMemory, getApprovedGovernedVersion, getPersonalMemory, moveConnectionToGroup, putPersonalMemory, type ConnectorType, type PersonalMemoryData } from '@scaleinsyght/registry';
 import { decryptConnectionSecret, encryptConnectionSecret, createExcelConnector, createPostgresConnector, createSqlServerConnector, type ReadOnlyConnector, type SourceConnectorType } from '@scaleinsyght/connectors';
 import { EncryptedArtifactStore } from '@scaleinsyght/artifacts';
@@ -449,16 +450,22 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     if(!assetId||!['upstream','downstream','both'].includes(direction)|| (asOf!==undefined&&!Number.isFinite(Date.parse(asOf))))return reply.code(400).send({error:'invalid_lineage_query'});
     return reply.send(await queryLineage(options.pool,{tenantId:current.tenantId,assetId,direction,...(asOf?{asOf:new Date(asOf)}:{})}));
   });
+  // Every ID trace is a run of the tenant's ID trace agent (decision 52), logged with counts only, never values.
+  const logIdTrace=(tenantId:string,payload:Record<string,string|number>)=>withTenant(options.pool,tenantId,async client=>recordAgentRun(client,{tenantId,agentId:await tenantAgent(client,tenantId,'id_trace'),payload}));
   app.get('/api/ids/entities',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
-    return reply.send({entities:await listIdEntities(options.pool,current.tenantId)});
+    const entities=await listIdEntities(options.pool,current.tenantId);
+    await logIdTrace(current.tenantId,{action:'list',entities:entities.length});
+    return reply.send({entities});
   });
   app.post<{Body:{value?:string}}>('/api/ids/lookup',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const value=request.body?.value;if(typeof value!=='string'||!value.trim()||value.length>256)return reply.code(400).send({error:'invalid_identifier_request'});
     const key=process.env.ARTIFACT_MASTER_KEY;if(!key)return reply.code(503).send({error:'identifier_trace_unavailable'});
     // The value only becomes a keyed fingerprint here; it is not logged, stored or returned.
-    return reply.send({matches:await lookupIdentifierValue(options.pool,{tenantId:current.tenantId,value,masterKey:Buffer.from(key,'base64')})});
+    const matches=await lookupIdentifierValue(options.pool,{tenantId:current.tenantId,value,masterKey:Buffer.from(key,'base64')});
+    await logIdTrace(current.tenantId,{action:'lookup',matches:matches.length});
+    return reply.send({matches});
   });
   app.get('/api/ids',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
@@ -498,7 +505,9 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
   app.get<{Params:{assetId:string}}>('/api/ids/:assetId/path',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     if(!/^[0-9a-f-]{36}$/i.test(request.params.assetId))return reply.code(400).send({error:'invalid_asset_id'});
-    return reply.send(await getIdentifierPath(options.pool,{tenantId:current.tenantId,assetId:request.params.assetId}));
+    const path=await getIdentifierPath(options.pool,{tenantId:current.tenantId,assetId:request.params.assetId});
+    await logIdTrace(current.tenantId,{action:'trace',steps:path.steps.length});
+    return reply.send(path);
   });
   app.post<{Params:{assetId:string};Body:{value?:string}}>('/api/ids/:assetId/trace',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});

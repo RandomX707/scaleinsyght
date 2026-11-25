@@ -29,6 +29,8 @@ export async function authorise(
   pool: Pool,
   request: AuthzRequest,
   runId: string | null = null,
+  /** The agent the decision is for (decision 52); recorded with the decision. */
+  agentId: string | null = null,
 ): Promise<ReturnType<typeof AuthzDecisionSchema.parse>> {
   const decisionId = randomUUID();
   return withTenant(pool, request.principal.tenant_id, async (client) => {
@@ -61,10 +63,10 @@ export async function authorise(
     });
     await client.query(
       `INSERT INTO runs.authz_decisions
-       (tenant_id, decision_id, run_id, principal_id, capability_id, outcome, policy_version, reasons)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)`,
+       (tenant_id, decision_id, run_id, principal_id, capability_id, outcome, policy_version, reasons, agent_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)`,
       [request.principal.tenant_id, decision.decision_id, runId, request.principal.principal_id,
-        request.capability_id, decision.outcome, decision.policy_version, JSON.stringify(decision.reasons)],
+        request.capability_id, decision.outcome, decision.policy_version, JSON.stringify(decision.reasons), agentId],
     );
     return decision;
   });

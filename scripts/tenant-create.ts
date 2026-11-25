@@ -7,6 +7,7 @@ import { resolve } from 'node:path';
 import { config } from 'dotenv';
 import { Pool } from 'pg';
 import { withTenant } from '@scaleinsyght/db';
+import { tenantAgent } from '@scaleinsyght/registry';
 
 export interface CreateTenantInput {
   tenantId: string;
@@ -52,6 +53,8 @@ export async function createTenant(pool: Pool, input: CreateTenantInput): Promis
     const userId = user.rows[0]!.user_id;
     await db.query(`INSERT INTO core.entitlements(tenant_id,principal_id,capability_id,allowed)
       VALUES ($1,$2,'tenant.member',true),($1,$2,'tenant.admin',true),($1,$2,'tenant.gateway.manage',true),($1,$2,'tenant.sso.configure',true)`, [tenantId, userId]);
+    // Each tenant has one ID agent and one ID trace agent from the start (decision 52).
+    await tenantAgent(db, tenantId, 'id'); await tenantAgent(db, tenantId, 'id_trace');
     return { tenantId, userId };
   });
 }
