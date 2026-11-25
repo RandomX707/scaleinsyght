@@ -66,9 +66,9 @@ Not started:
 
 ### Additional review-feedback acceptance cases
 
-- Approval matrix cross-system findings show each field with its own connection name. Manual refreshes show “Latest refresh” with the actual timestamp. Scheduled overnight runs retain the overnight label.
+- Commit `fba874c` joins both ID match endpoints to their connections and records the scheduled refresh flag in migration 033. Source formatting unit test passed. The updated manual refresh walkthrough and local database migration still need execution.
 - Commit `8f0fbad` aligns both counts and moves the review note above the rows. Finding wording has a passing unit test. Browser coverage is pending.
 - Commit `8f0fbad` adds Changes and Suggestions tabs and Approve all for the visible group. The classification unit test passed. Verify group scoping and audit records through the browser.
 - Commit `7943de2` shows “Origin unclear” because matching values do not establish direction. Names have dot breakpoints and tooltips. A render test for equal coverage passed. Browser layout verification is pending.
-- Lineage badges reserve space separate from names. Route edges around intervening cards. Include regression tests for all nine cases before merging review-feedback.
+- Commit `8b6945f` reserves separate space for badges and routes edges through lane gutters. Both path tests passed. Browser coverage for badge clipping and the full merge gates are pending.
 - Connectors feedback: review-feedback commit `79ecdb8` shows specific connector type labels and hides gateway controls. Typecheck passed and the S4 walkthrough has regression assertions awaiting execution. The Riverside dbt import already belongs to an active dbt connection linked to PostgreSQL. Preserve that connection and its asset IDs when adding the dbt card with warehouse, import timestamp, models and tests, re-upload, lineage and removal. Show no Profile, Dictionary or ER actions on dbt. Follow this pattern for Tableau and Power BI in S8.
