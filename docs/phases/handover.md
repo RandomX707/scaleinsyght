@@ -1,6 +1,6 @@
 # Handover, 25 Nov 2026 (evening IST)
 
-Updated by Claude Code after #35. S7 (Codex) and S8 (Claude Code) are merged. The review app on 4284 runs `main` at `de5daa6`.
+Updated by Claude Code after #41. Controls (#42), Home chat (#43) and K6 (#41) are merged. The review app on 4284 runs `main` at `c008f02`.
 
 ## Merged to `main` today
 
@@ -27,10 +27,12 @@ Updated by Claude Code after #35. S7 (Codex) and S8 (Claude Code) are merged. Th
 | #35 | de5daa6 | heldout2 retired; heldout3 added (first runs 9/0/0/1 with and without warehouse marts); K2 closed |
 | #36 | c765e00 | Handover update |
 | #37, #38 | 63584bd | Dictionary spec (decision 53) and the Dictionary rebuild: stored scrubbed definitions (migration 037), lazy Dictionary API and page, HTML export, ER neighbourhood; `docs/phases/dictionary-rebuild.md` section 5 |
+| #43 | 88c6d34 | Home chat (decision 56): code picks sentence, small table, chart, compact table or flow diagram; refusals with a safe alternative; one "SQL, sources and lineage" drawer; plan collapsed to one line; form-only follow-ups reuse the answer without a run (migration 040, display turns) |
+| #41 | c008f02 | K6: several conditions on one table, proven-zero answers for absent categories, entity key for unique names (decision 54); original S7 and S2b questions restored; compact answer card fixes K7; K8 ("each provider") fixed |
 
 ## Review app on 4284 and riverside-health
 
-- **4284 runs `main` at `63584bd`** (redeployed 25 Nov, about 22:00 IST) from `../scaleinsyght-review` (detached): API 3000, worker 3001, web 4284, sqlparse 8011, started with `nohup` by Claude Code (logs in its scratchpad). `scale_insyght` is migrated to 037; backups were taken before the 035, 036 and 037 migrations (Claude Code's scratchpad). Riverside-health's procedure and view SQL appears in the Dictionary after its next profile or nightly refresh, which captures definitions. Riverside-health now has its ID and ID trace agents. Its workbook refresh and ID trace (3 systems) were checked by running the same code; a browser check needs the riverside-health password.
+- **4284 runs `main` at `c008f02`** (redeployed 26 Nov) from `../scaleinsyght-review` (detached): API 3000, worker 3001, web 4284, sqlparse 8011, started with `nohup` by Claude Code (logs in its scratchpad). `scale_insyght` is migrated to 040; backups were taken before the 035, 036, 037, 039 and 040 migrations and before K6 (Claude Code's scratchpad). Riverside-health's procedure and view SQL appears in the Dictionary after its next profile or nightly refresh, which captures definitions. Riverside-health now has its ID and ID trace agents. Its workbook refresh and ID trace (3 systems) were checked by running the same code; a browser check needs the riverside-health password.
 - **riverside-health password:** Yashaswi's password (`yashaswi@riverside-health.test`) was reset with `pnpm tenant:reset-password` at about 06:40 IST and given to Yashaswi once in the chat at handover. It is not in the repo. If it is lost, reset it again with the same command.
 - **riverside-health sources:** PostgreSQL (`pgs`) and SQL Server (`sql`) were already connected by Yashaswi; the Operations workbook was added through Add connector, and PostgreSQL and SQL Server were re-profiled so display labels work. No dbt project, no Tableau and no nightly refresh have been run there yet (`profiler.nightly_schedules` is backfilled by migration 032 when 4284 is migrated). Drafts Yashaswi created were left alone.
 - `../scaleinsyght/.env` was changed: `MODEL_DAILY_COST_CAP_USD=5`, `MODEL_DAILY_USER_COST_CAP_USD=1`, token cap removed (backup in my scratchpad as `main-env-backup`).
@@ -57,12 +59,10 @@ Updated by Claude Code after #35. S7 (Codex) and S8 (Claude Code) are merged. Th
 
 ## Claude Code queue (in the user's order; Codex is out of limits, so Claude Code holds all work)
 
-1. **K6** and the restored test questions: draft PR #41. Development set 55/55. Blocked only by K7 (S2b's correct answer is taller than the viewport), which the Home chat rework fixes; the test is not changed.
-2. **Controls**: built on `controls-finish` (this PR).
-3. **Home chat rework**: spec, then build (conversational layout; code picks sentence, small table, chart, compact table or flow diagram; refusals with a safe alternative; one collapsed "SQL, sources and lineage" drawer; plan collapsed after completion; follow-ups change the form without rerunning; screenshots and a walkthrough per rule).
-4. **Agents, My agent, Usage and BI reports** matched to the prototype, one PR each.
-5. **Remaining Dictionary items**: keys and indexes, Back buttons, encrypted procedure dependencies, agent schedules ("Run by"), ER grid.
-6. Then, from the earlier queue: migration backfill safety, a model-spend ledger that test resets don't wipe, per-table profiling time, planner pre-model catalog reads.
+1. **Agents, My agent, Usage and BI reports** matched to the prototype, one PR each. Agents is built on `agents-screen` (worktree `../scaleinsyght-cc-controls`, rebased on main): tiers from real source groups, working Adjust groups (moves a connector agent between groups), ID agent counts, governed agents table. Screenshots, gates and testbed runs next.
+2. **Remaining Dictionary items**: keys and indexes, Back buttons, encrypted procedure dependencies, agent schedules ("Run by"), ER grid.
+3. **Cross-source row joins** (the design's collate step): spec first, for the user's approval.
+4. Then: migration backfill safety, a model-spend ledger that test resets don't wipe, per-table profiling time, planner pre-model catalog reads.
 
 ## Codex continuation
 
