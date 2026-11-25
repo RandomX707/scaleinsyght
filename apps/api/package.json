@@ -4,7 +4,8 @@
   "type": "module",
   "exports": {
     "./server": "./src/server.ts",
-    "./source-selection": "./src/source-selection.ts"
+    "./source-selection": "./src/source-selection.ts",
+    "./live-planner": "./src/live-planner.ts"
   },
   "scripts": {
     "start": "tsx src/main.ts",

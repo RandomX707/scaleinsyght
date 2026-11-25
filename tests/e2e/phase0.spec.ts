@@ -23,6 +23,8 @@ test('phase0_golden_login_reaches_empty_home_and_tenant_usage',async({page})=>{
  await page.getByRole('menuitem',{name:'Usage'}).click();
  await expect(page.getByRole('heading',{name:'Usage',exact:true})).toBeVisible();
  await expect(page.getByText('Active users')).toBeVisible();
+ // Daily model budget: USD caps per workspace and per person (decision 43).
+ for(const label of ['Workspace spend today · daily cap','Your spend today · daily cap per person'])await expect(page.locator('.usage-model .usage-summary > div').filter({hasText:label}).locator('strong')).toHaveText(/^USD \d+\.\d{2} of \d+\.\d{2}$/);
  await expect(page.getByRole('menuitem',{name:'Sign out'})).toBeVisible();
 });
 

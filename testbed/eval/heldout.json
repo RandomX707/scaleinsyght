@@ -1,0 +1,95 @@
+[
+  {
+    "id": "H01",
+    "turns": [
+      "Pull a headcount of records in the providers table on the SQL Server testbed."
+    ],
+    "sources": [
+      "s"
+    ]
+  },
+  {
+    "id": "H02",
+    "turns": [
+      "Among orders on the PostgreSQL testbed, tally those priced strictly above 250."
+    ],
+    "sources": [
+      "p"
+    ]
+  },
+  {
+    "id": "H03",
+    "turns": [
+      "On the Operations workbook, tally charges dated before April 2025."
+    ],
+    "sources": [
+      "x"
+    ]
+  },
+  {
+    "id": "H04",
+    "turns": [
+      "For the SQL Server testbed, tabulate order volume for every order status."
+    ],
+    "sources": [
+      "s"
+    ]
+  },
+  {
+    "id": "H05",
+    "turns": [
+      "Return the three least busy department IDs by encounter volume on the PostgreSQL testbed; include the volumes."
+    ],
+    "sources": [
+      "p"
+    ]
+  },
+  {
+    "id": "H06",
+    "turns": [
+      "Restrict orders on the SQL Server testbed to the department named Imaging by joining to departments. What is the tally?"
+    ],
+    "sources": [
+      "s"
+    ]
+  },
+  {
+    "id": "H07",
+    "turns": [
+      "Side by side, report SQL Server testbed encounter volume and Operations workbook Visits volume."
+    ],
+    "sources": [
+      "s",
+      "x"
+    ]
+  },
+  {
+    "id": "H08",
+    "turns": [
+      "First tally every entry on the Charges sheet of the Operations workbook.",
+      "Narrow that pile to the ones marked completed. How big is it now?"
+    ],
+    "sources": [
+      "x"
+    ]
+  },
+  {
+    "id": "H09",
+    "turns": [
+      "Start with the overall number of orders in the SQL Server testbed.",
+      "And restrict that figure to amounts below 25."
+    ],
+    "sources": [
+      "s"
+    ]
+  },
+  {
+    "id": "H10",
+    "turns": [
+      "From the PostgreSQL testbed, give total minutes that operating theatres were unoccupied."
+    ],
+    "sources": [
+      "p"
+    ]
+  }
+]

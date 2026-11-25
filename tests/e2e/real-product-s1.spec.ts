@@ -26,8 +26,13 @@ test('s1_empty_tenant_adds_real_postgres_profiles_metadata_and_answers_with_evid
   await page.getByRole('button',{name:'Explore relationships'}).click();await expect(page.locator('.er-node').filter({hasText:'public.encounters'})).toBeVisible();await expect(page.locator('.er-link--inferred')).not.toHaveCount(0);await page.screenshot({path:'docs/acceptance/s1/er.png',fullPage:true});
   await page.goto(`/dictionary?connection=${connectionId}`);await page.locator('input[type=file][accept=".csv,.xlsx"]').setInputFiles('testbed/dictionary.csv');await expect(page.getByRole('status')).toContainText('4 descriptions imported.');await expect(page.getByText('4 / 31')).toBeVisible();await page.screenshot({path:'docs/acceptance/s1/dictionary.png',fullPage:true});
   await page.getByRole('tab',{name:/Procedures/}).click();await expect(page.locator('summary').filter({hasText:/count_patient_encounters/})).toBeVisible();
-  await page.goto('/');await page.getByLabel('Ask a question').fill('How many patients are in Testbed hospital?');await page.getByRole('button',{name:'Send question'}).click();
-  await expect(page.getByText('Source result: 500',{exact:true})).toBeVisible({timeout:120_000});await expect(page.getByText(/Executed on Testbed hospital; returned 1 aggregate row/)).toBeVisible();await expect(page.getByText(/SELECT count\(\*\)::text AS value,count\(\*\) AS cell_size FROM "public"\."patients"/)).toBeVisible();await page.screenshot({path:'docs/acceptance/s1/home-answer.png',fullPage:true});
+  await page.goto('/');await page.getByLabel('Ask a question').fill('How many patients are in Testbed hospital?');
+  // Planning runs on the durable runner: the POST returns as soon as the run is queued, and the card shows live status.
+  const submitted=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/runs'&&response.request().method()==='POST',{timeout:15_000});const sentAt=Date.now();
+  await page.getByRole('button',{name:'Send question'}).click();const posted=await submitted;expect(posted.status()).toBe(201);expect(Date.now()-sentAt).toBeLessThan(3_000);
+  const observed:string[]=[];page.on('response',response=>{if(/^\/api\/runs\/[0-9a-f-]+$/.test(new URL(response.url()).pathname)&&response.request().method()==='GET')void response.json().then((body:{state?:string})=>{if(body.state&&observed.at(-1)!==body.state)observed.push(body.state);}).catch(()=>undefined);});
+  await expect(page.locator('.plan-card').last()).toContainText('Planning',{timeout:5_000});
+  await expect(page.getByText('Source result: 500',{exact:true})).toBeVisible({timeout:120_000});expect(observed[0]).toBe('PLANNING');expect(observed.at(-1)).toBe('COMPLETED');await expect(page.getByText(/Executed on Testbed hospital; returned 1 aggregate row/)).toBeVisible();await expect(page.getByText(/SELECT count\(\*\)::text AS value,count\(\*\) AS cell_size FROM "public"\."patients"/)).toBeVisible();await page.screenshot({path:'docs/acceptance/s1/home-answer.png',fullPage:true});
 });
 
 test.afterAll(async()=>{await adminPool.end();});

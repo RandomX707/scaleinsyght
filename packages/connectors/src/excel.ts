@@ -220,6 +220,16 @@ export class ExcelConnector implements ReadOnlyConnector {
     return connection;
   }
 
+  async categoryValues(table: string, column: string): Promise<{sql: string; values: string[]} | undefined> {
+    const sheet = (await this.load()).find(item => item.qualifiedName === table.replace(/^main[.]/, ''));
+    if (!sheet || !sheet.columns.some(field => field.name === column && field.dataType === 'text')) return;
+    const quoted = (value: string) => '"' + value.replaceAll('"','""') + '"';
+    const key = quoted(column);
+    const sql = `SELECT DISTINCT ${key} AS value FROM ${quoted(sheet.qualifiedName)} WHERE ${key} IS NOT NULL ORDER BY value LIMIT 101`;
+    const result = await (await this.database()).runAndReadAll(sql);
+    return {sql, values: result.getRowObjectsJS().map(row => String(row.value))};
+  }
+
   async executeQueryIntent(raw: unknown, includeCellSize = false): Promise<{ sql: string; rows: Array<Record<string, unknown>> }> {
     const sheets = await this.load();
     const tables = new Map<string, { table: Table; columns: string[] }>(sheets.map((sheet) => [sheet.qualifiedName, { table: { schema_name: 'main', table_name: sheet.qualifiedName, table_type: 'BASE TABLE' }, columns: sheet.columns.map((column) => column.name) }]));

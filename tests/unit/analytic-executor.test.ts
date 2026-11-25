@@ -34,3 +34,28 @@ describe('phase 2 golden analytic execution', () => {
     expect(criticCheck(invalid, plan)).toEqual({ accepted: false, reasons: ['claim_missing_evidence'] });
   });
 });
+
+describe('decision 42 disclosure', () => {
+  it('withholds small cells and preserves the boundary value of 11', () => {
+    const source = {sourceId: 'source', connectorType: 'postgres', groupId: 'group', metric: 'count', claims: [], evidence: []};
+    for (const value of [1, 10]) {
+      expect(collateGroupResults([{...source, value, minimumCellSize: value}]).bySource[0])
+        .toEqual({sourceId: 'source', connectorType: 'postgres', value: null, withheld: true});
+    }
+    expect(collateGroupResults([{...source, value: 0, minimumCellSize: 0}]).bySource[0]?.value).toBe(0);
+    expect(collateGroupResults([{...source, value: 11, minimumCellSize: 11}]).bySource[0])
+      .toEqual({sourceId: 'source', connectorType: 'postgres', value: 11});
+  });
+  it('redacts only small nonzero cells and omits inferable summaries', () => {
+    const result = collateGroupResults([{
+      sourceId: 'source', connectorType: 'postgres', groupId: 'group', metric: 'count', value: 8,
+      claims: [], evidence: [], minimumCellSize: 0, cellSizes: [8, 0, 11],
+      rows: [{group_value: 'a', value: 8}, {group_value: 'b', value: 0}, {group_value: 'c', value: 11}],
+    }]).bySource[0];
+    expect(result).toMatchObject({value: null, withheld: true, rows: [
+      {group_value: 'a', value: '<11'}, {group_value: 'b', value: 0}, {group_value: 'c', value: 11},
+    ]});
+    expect(result?.summary).toBeUndefined();
+  });
+
+});

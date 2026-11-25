@@ -56,6 +56,7 @@ export interface ReadOnlyConnector {
   routines?():Promise<Array<{qualifiedName:string;kind:'function'|'procedure';definition:string}>>;
   executeQueryIntent?(intent:unknown,includeCellSize?:boolean):Promise<{sql:string;rows:Array<Record<string,unknown>>}>;
   /** Original text of a column (for example a workbook header) when it differs from its SQL identifier. */
+  categoryValues?(table: string, column: string): Promise<{sql: string; values: string[]} | undefined>;
   columnLabels?(table:string):Promise<Record<string,string>>;
   close?(): Promise<void>;
 }

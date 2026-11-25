@@ -1,6 +1,6 @@
 {
   "source": "si_testbed_pg",
-  "generatedAt": "2026-11-24T17:33:19.426Z",
+  "generatedAt": "2026-11-24T18:55:18.786Z",
   "rowCounts": {
     "patients": 500,
     "encounters": 1291,
@@ -747,51 +747,63 @@
       "averageVisitsPerPatientByDepartment": [
         {
           "department": "Cardiology",
-          "average": 1.5142857142857142
+          "average": 1.5142857142857142,
+          "patients": 35
         },
         {
           "department": "Dermatology",
-          "average": 1
+          "average": 1,
+          "patients": 10
         },
         {
           "department": "Emergency",
-          "average": 1.5194805194805194
+          "average": 1.5194805194805194,
+          "patients": 154
         },
         {
           "department": "Imaging",
-          "average": 1.7058823529411764
+          "average": 1.7058823529411764,
+          "patients": 68
         },
         {
           "department": "Laboratory",
-          "average": 1.1914893617021276
+          "average": 1.1914893617021276,
+          "patients": 47
         },
         {
           "department": "Neurology",
-          "average": 2.142857142857143
+          "average": 2.142857142857143,
+          "patients": 7
         },
         {
           "department": "Oncology",
-          "average": 1.236842105263158
+          "average": 1.236842105263158,
+          "patients": 38
         },
         {
           "department": "Orthopedics",
-          "average": 1.4705882352941178
+          "average": 1.4705882352941178,
+          "patients": 17
         },
         {
           "department": "Pediatrics",
-          "average": 1.5
+          "average": 1.5,
+          "patients": 84
         },
         {
           "department": "Psychiatry",
-          "average": 1.5333333333333334
+          "average": 1.5333333333333334,
+          "patients": 15
         },
         {
           "department": "Rehabilitation",
-          "average": 1.3333333333333333
+          "average": 1.3333333333333333,
+          "patients": 6
         },
         {
           "department": "Surgery",
-          "average": 1.5277777777777777
+          "average": 1.5277777777777777,
+          "patients": 36
         }
       ],
       "patientCount": 391

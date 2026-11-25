@@ -1,0 +1,379 @@
+[
+  {
+    "id": "Q01",
+    "turns": [
+      "What is the total number of provider records in the PostgreSQL testbed?"
+    ],
+    "sources": [
+      "p"
+    ]
+  },
+  {
+    "id": "Q02",
+    "turns": [
+      "How many distinct department records are listed in the SQL Server testbed?"
+    ],
+    "sources": [
+      "s"
+    ]
+  },
+  {
+    "id": "Q03",
+    "turns": [
+      "Give the total number of rows of Charges in the Operations workbook."
+    ],
+    "sources": [
+      "x"
+    ]
+  },
+  {
+    "id": "Q04",
+    "turns": [
+      "How many orders have status placed in the PostgreSQL testbed?"
+    ],
+    "sources": [
+      "p"
+    ]
+  },
+  {
+    "id": "Q05",
+    "turns": [
+      "Count orders with status completed in the SQL Server testbed."
+    ],
+    "sources": [
+      "s"
+    ]
+  },
+  {
+    "id": "Q06",
+    "turns": [
+      "From the Operations workbook, count Charges whose status is completed."
+    ],
+    "sources": [
+      "x"
+    ]
+  },
+  {
+    "id": "Q07",
+    "turns": [
+      "Count encounters admitted from January 1 through June 30, 2025 in the PostgreSQL testbed."
+    ],
+    "sources": [
+      "p"
+    ]
+  },
+  {
+    "id": "Q08",
+    "turns": [
+      "How many orders were placed in calendar year 2025 in the SQL Server testbed?"
+    ],
+    "sources": [
+      "s"
+    ]
+  },
+  {
+    "id": "Q09",
+    "turns": [
+      "How many Visits in the Operations workbook were admitted on or after July 1, 2025?"
+    ],
+    "sources": [
+      "x"
+    ]
+  },
+  {
+    "id": "Q10",
+    "turns": [
+      "Break down order counts by order status in the PostgreSQL testbed."
+    ],
+    "sources": [
+      "p"
+    ]
+  },
+  {
+    "id": "Q11",
+    "turns": [
+      "Give counts by order type in the SQL Server testbed."
+    ],
+    "sources": [
+      "s"
+    ]
+  },
+  {
+    "id": "Q12",
+    "turns": [
+      "List the number of Charges for each Charge Type in the Operations workbook."
+    ],
+    "sources": [
+      "x"
+    ]
+  },
+  {
+    "id": "Q13",
+    "turns": [
+      "Which three department IDs have the most orders in the PostgreSQL testbed? Give counts."
+    ],
+    "sources": [
+      "p"
+    ]
+  },
+  {
+    "id": "Q14",
+    "turns": [
+      "Show the two department IDs with the fewest encounters in the SQL Server testbed, with their counts."
+    ],
+    "sources": [
+      "s"
+    ]
+  },
+  {
+    "id": "Q15",
+    "turns": [
+      "Which two Charge Types in the Operations workbook have the smallest counts? Include counts, breaking ties alphabetically."
+    ],
+    "sources": [
+      "x"
+    ]
+  },
+  {
+    "id": "Q16",
+    "turns": [
+      "How many orders belong to the Cardiology department in the PostgreSQL testbed?"
+    ],
+    "sources": [
+      "p"
+    ]
+  },
+  {
+    "id": "Q17",
+    "turns": [
+      "List the number of orders for each named department in the SQL Server testbed."
+    ],
+    "sources": [
+      "s"
+    ]
+  },
+  {
+    "id": "Q18",
+    "turns": [
+      "In the Operations workbook, how many Charges link to Visits admitted on or after January 1, 2025? Join on Visit ID."
+    ],
+    "sources": [
+      "x"
+    ]
+  },
+  {
+    "id": "Q19",
+    "turns": [
+      "Give separate order totals for the PostgreSQL testbed and the SQL Server testbed."
+    ],
+    "sources": [
+      "p",
+      "s"
+    ]
+  },
+  {
+    "id": "Q20",
+    "turns": [
+      "Compare the number of orders in the PostgreSQL testbed with the number of Charges in the Operations workbook. Give both totals."
+    ],
+    "sources": [
+      "p",
+      "x"
+    ]
+  },
+  {
+    "id": "Q21",
+    "turns": [
+      "Give me the total order count in the SQL Server testbed.",
+      "And how many had the status placed?"
+    ],
+    "sources": [
+      "s"
+    ]
+  },
+  {
+    "id": "Q22",
+    "turns": [
+      "Count all records on the Visits sheet of the Operations workbook.",
+      "Of those, how many were for Cardiology?"
+    ],
+    "sources": [
+      "x"
+    ]
+  },
+  {
+    "id": "Q23",
+    "turns": [
+      "How many total encounter records exist in the PostgreSQL testbed?",
+      "Now give me only those with a recorded discharge time."
+    ],
+    "sources": [
+      "p"
+    ]
+  },
+  {
+    "id": "Q24",
+    "turns": [
+      "How many orders cost at least 100 in the PostgreSQL testbed?"
+    ],
+    "sources": [
+      "p"
+    ]
+  },
+  {
+    "id": "Q25",
+    "turns": [
+      "How many Charges have an Amount below 50 in the Operations workbook?"
+    ],
+    "sources": [
+      "x"
+    ]
+  },
+  {
+    "id": "Q26",
+    "turns": [
+      "How many patients died within 30 days of surgery in the PostgreSQL testbed?"
+    ],
+    "sources": [
+      "p"
+    ]
+  },
+  {
+    "id": "Q27",
+    "turns": [
+      "What was median ambulance response time in the SQL Server testbed?"
+    ],
+    "sources": [
+      "s"
+    ]
+  },
+  {
+    "id": "Q28",
+    "turns": [
+      "How many insurance claims were denied in the Operations workbook?"
+    ],
+    "sources": [
+      "x"
+    ]
+  },
+  {
+    "id": "Q29",
+    "turns": [
+      "Compare the number of staff sick days in the PostgreSQL testbed and SQL Server testbed."
+    ],
+    "sources": [
+      "p",
+      "s"
+    ]
+  },
+  {
+    "id": "Q30",
+    "turns": [
+      "What was the average patient satisfaction score recorded in the Operations workbook?"
+    ],
+    "sources": [
+      "x"
+    ]
+  },
+  {
+    "id": "Q31",
+    "turns": [
+      "How many orders does each department have in the SQL Server testbed?"
+    ],
+    "sources": [
+      "s"
+    ],
+    "paraphraseOf": "Q17"
+  },
+  {
+    "id": "Q32",
+    "turns": [
+      "For every order status in the PostgreSQL testbed, what is the order count?"
+    ],
+    "sources": [
+      "p"
+    ],
+    "paraphraseOf": "Q10"
+  },
+  {
+    "id": "Q33",
+    "turns": [
+      "In the Operations workbook, how many Charges are there per Charge Type?"
+    ],
+    "sources": [
+      "x"
+    ],
+    "paraphraseOf": "Q12"
+  },
+  {
+    "id": "Q34",
+    "turns": [
+      "What is the number of Cardiology orders in the PostgreSQL testbed?"
+    ],
+    "sources": [
+      "p"
+    ],
+    "paraphraseOf": "Q16"
+  },
+  {
+    "id": "Q35",
+    "turns": [
+      "In the PostgreSQL testbed, how many orders are in placed status?"
+    ],
+    "sources": [
+      "p"
+    ],
+    "paraphraseOf": "Q04"
+  },
+  {
+    "id": "Q36",
+    "turns": [
+      "How many providers does the PostgreSQL testbed list?"
+    ],
+    "sources": [
+      "p"
+    ],
+    "paraphraseOf": "Q01"
+  },
+  {
+    "id": "Q37",
+    "turns": [
+      "Count the Operations workbook Visits with an admission date of July 1, 2025 or later."
+    ],
+    "sources": [
+      "x"
+    ],
+    "paraphraseOf": "Q09"
+  },
+  {
+    "id": "Q38",
+    "turns": [
+      "What are the order totals in the PostgreSQL testbed and in the SQL Server testbed?"
+    ],
+    "sources": [
+      "p",
+      "s"
+    ],
+    "paraphraseOf": "Q19"
+  },
+  {
+    "id": "Q39",
+    "turns": [
+      "Top three department IDs by number of orders in the PostgreSQL testbed, with their counts."
+    ],
+    "sources": [
+      "p"
+    ],
+    "paraphraseOf": "Q13"
+  },
+  {
+    "id": "Q40",
+    "turns": [
+      "How many denied insurance claims are recorded in the Operations workbook?"
+    ],
+    "sources": [
+      "x"
+    ],
+    "paraphraseOf": "Q28"
+  }
+]

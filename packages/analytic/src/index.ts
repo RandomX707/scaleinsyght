@@ -42,7 +42,7 @@ export async function createAnalyticPlan(input: { question: string; runId: strin
   return AnalyticPlanSchema.parse(parsed);
 }
 
-export { collateGroupResults, criticCheck, finalizeAnalyticRun, type StructuredAnswer, type StructuredResult } from './executor.js';
+export { MINIMUM_ANALYTIC_CELL_SIZE, collateGroupResults, criticCheck, finalizeAnalyticRun, type StructuredAnswer, type StructuredResult } from './executor.js';
 export { applyPersonalContext, type PersonalizedAnswer } from './personal-context.js';
 export { submitFeedback, type SafeCorrection } from './feedback.js';
 
@@ -120,7 +120,7 @@ export async function validateAnalyticPlan(pool: Pool, input: { tenantId: string
   return { tenantId: input.tenantId, principalId: input.principalId, plan };
 }
 
-export async function startAnalyticRun(pool: Pool, input: { tenantId: string; principalId: string; plan: unknown; governed?: { governedId: string; version: number }; conversationId?: string; plannerProvenance?: {model:string;inputTokens:number;outputTokens:number;typedPlan:unknown} }): Promise<{ runId: string }> {
+export async function startAnalyticRun(pool: Pool, input: { tenantId: string; principalId: string; plan: unknown; governed?: { governedId: string; version: number }; conversationId?: string; planningClaim?: {stepId:string;workerId:string;fencingToken:number}; plannerProvenance?: {model:string;inputTokens:number;outputTokens:number;typedPlan:unknown} }): Promise<{ runId: string }> {
   const validated = await validateAnalyticPlan(pool, input);
   const { plan } = validated; const planHash = plan.plan_hash;
   await withTenant(pool, input.tenantId, async (client) => {
@@ -162,7 +162,16 @@ export async function startAnalyticRun(pool: Pool, input: { tenantId: string; pr
         await client.query(`UPDATE runs.conversations SET title=CASE WHEN NOT EXISTS(SELECT 1 FROM runs.runs WHERE tenant_id=$1 AND conversation_id=$3) THEN $4 ELSE title END,updated_at=clock_timestamp() WHERE tenant_id=$1 AND principal_id=$2 AND conversation_id=$3`,[input.tenantId,input.principalId,input.conversationId,plan.question.slice(0,200)]);
       }
 
+      if (input.planningClaim) {
+        const claim = input.planningClaim;
+        const completed = await client.query(`UPDATE runs.steps SET state='SUCCEEDED',lease_owner=NULL,lease_expires_at=NULL,result_ref='validated-plan'
+          WHERE tenant_id=$1 AND run_id=$2 AND step_id=$3 AND fencing_token=$4 AND lease_owner=$5 AND lease_expires_at>clock_timestamp()`,
+          [input.tenantId,runId,claim.stepId,claim.fencingToken,claim.workerId]);
+        if (!completed.rowCount) throw new Error('stale_worker_claim');
+        await client.query(`UPDATE runs.runs SET plan_id=$3 WHERE tenant_id=$1 AND run_id=$2 AND state='PLANNING'`, [input.tenantId,runId,plan.plan_id]);
+      } else {
       await client.query(`INSERT INTO runs.runs(tenant_id,run_id,principal_id,state,plan_id,conversation_id) VALUES($1,$2,$3,'CREATED',$4,$5)`, [input.tenantId, runId, input.principalId, plan.plan_id,input.conversationId??null]);
+      }
       if(input.plannerProvenance){
         const call=input.plannerProvenance;
         await client.query("INSERT INTO runs.model_provenance(tenant_id,run_id,call_purpose,model_name,input_tokens,output_tokens,typed_plan) VALUES($1,$2,'plan',$3,$4,$5,$6::jsonb)",[input.tenantId,runId,call.model,call.inputTokens,call.outputTokens,JSON.stringify(call.typedPlan)]);
@@ -174,17 +183,26 @@ export async function startAnalyticRun(pool: Pool, input: { tenantId: string; pr
          VALUES($1,$2,$3,'analytic.read','allow','phase2-v1','["read_capability_entitled"]') RETURNING decision_id`,
         [input.tenantId, runId, input.principalId],
       );
-      let sequence = 0;
+      let sequence = input.planningClaim
+        ? Number((await client.query('SELECT coalesce(max(sequence),0) AS last FROM runs.events WHERE tenant_id=$1 AND run_id=$2',[input.tenantId,runId])).rows[0]!.last)
+        : 0;
       const event = async (type: string, payload: Record<string, unknown>) => {
         sequence += 1;
         await client.query('INSERT INTO runs.events(tenant_id,run_id,sequence,event_type,decision_id,safe_payload) VALUES($1,$2,$3,$4,$5,$6::jsonb)', [input.tenantId, runId, sequence, type, decision.rows[0]!.decision_id, JSON.stringify(payload)]);
       };
-      await event('run_created', { state: 'CREATED', state_version: 0 });
+      if (input.planningClaim) {
+        const claim=input.planningClaim;
+        await client.query(`INSERT INTO runs.events(tenant_id,run_id,sequence,event_type,step_id,fencing_token,safe_payload)
+          VALUES($1,$2,$3,'step_succeeded',$4,$5,$6::jsonb)`,[input.tenantId,runId,++sequence,claim.stepId,claim.fencingToken,
+          JSON.stringify({step_id:claim.stepId,result_ref:'validated-plan',fencing_token:claim.fencingToken})]);
+      } else await event('run_created', { state: 'CREATED', state_version: 0 });
       const setState = async (state: string) => client.query<{ state_version: number }>(
         'UPDATE runs.runs SET state=$3,state_version=state_version+1,updated_at=clock_timestamp() WHERE tenant_id=$1 AND run_id=$2 RETURNING state_version', [input.tenantId, runId, state],
       );
-      const planning = await setState('PLANNING');
-      await event('run_state_changed', { state: 'PLANNING', state_version: planning.rows[0]!.state_version });
+      if (!input.planningClaim) {
+        const planning = await setState('PLANNING');
+        await event('run_state_changed', { state: 'PLANNING', state_version: planning.rows[0]!.state_version });
+      }
       await event('plan_proposed', { count: plan.steps.length });
       const validatedState = await setState('PLAN_VALIDATED');
       await event('plan_validated', { state: 'PLAN_VALIDATED', state_version: validatedState.rows[0]!.state_version, count: plan.steps.length });

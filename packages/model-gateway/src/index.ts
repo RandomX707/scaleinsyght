@@ -3,12 +3,13 @@ import { prepareMetadataForModel, type ModelMetadataInput } from '@scaleinsyght/
 import { withTenant } from '@scaleinsyght/db';
 import type { Pool } from 'pg';
 
-export type ModelAlias='cheap'|'default';
+export type ModelAlias='cheap'|'default'|'planning';
 export type ModelPrice={inputPerMillionUsd:number;outputPerMillionUsd:number};
-export type GatewayConfig={baseUrl:string;apiKey:string;cheapModel:string;defaultModel:string;dailyCostCapUsd:number;dailyTokenCap:number;fingerprintKey:string;prices:Record<string,ModelPrice>};
-export type GatewayRequest={tenantId:string;alias:ModelAlias;question:string;metadata:ModelMetadataInput;identifierValues?:string[];maxOutputTokens?:number;purpose?:'answer'|'plan'};
+export type GatewayConfig={baseUrl:string;apiKey:string;cheapModel:string;defaultModel:string;planningModel:string;dailyCostCapUsd:number;dailyUserCostCapUsd:number;fingerprintKey:string;prices:Record<string,ModelPrice>};
+export type GatewayRequest={tenantId:string;/** The person the call is made for; their own daily USD cap applies. */principalId?:string;alias:ModelAlias;question:string;metadata:ModelMetadataInput;identifierValues?:string[];maxOutputTokens?:number;purpose?:'answer'|'plan'|'verify';responseSchema?:Record<string,unknown>};
 const SYSTEM_INSTRUCTIONS={
   answer:'Answer only from the disclosed metadata. Do not infer hidden row values. If metadata is insufficient, say so.',
+  verify:'You check whether a typed, read-only query plan answers a question exactly: the same subject, measure, grouping, conditions, ranking and sources. You never see row values. Respond with a single JSON object.',
   plan:'You write typed, read-only query plans from disclosed metadata. You never see row values, and you do not need to: a category, label or date named in the question is used as a filter value on the matching column, and is bound as a query parameter. Return an empty plan only when no table or column in the metadata can express the request. Never return SQL. Respond with a single JSON object.',
 } as const;
 export type GatewayResponse={text:string;requestId:string;model:string;inputTokens:number;outputTokens:number;costUsd:number};
@@ -24,11 +25,17 @@ export function assertLiveModelTestAllowed(env:NodeJS.ProcessEnv):void{
 }
 
 function nonEmpty(value:string|undefined,key:string):string{if(!value?.trim())throw new ModelGatewayError(`${key}_required`);return value.trim();}
+// Daily model budgets are USD caps (decision 43): per tenant, and per user within the tenant.
+export const DEFAULT_TENANT_DAILY_COST_CAP_USD=5;
+export const DEFAULT_USER_DAILY_COST_CAP_USD=1;
+export function dailyBudgetCaps(env:NodeJS.ProcessEnv=process.env):{tenantUsd:number;userUsd:number}{
+  return {tenantUsd:Number(env.MODEL_DAILY_COST_CAP_USD||DEFAULT_TENANT_DAILY_COST_CAP_USD),userUsd:Number(env.MODEL_DAILY_USER_COST_CAP_USD||DEFAULT_USER_DAILY_COST_CAP_USD)};
+}
 function readConfig(env:NodeJS.ProcessEnv):GatewayConfig{
   const baseUrl=(env.MODEL_BASE_URL||'https://api.openai.com/v1').replace(/\/+$/,'');
   let prices:Record<string,ModelPrice>={};
   if(env.MODEL_PRICING_JSON){try{prices=JSON.parse(env.MODEL_PRICING_JSON) as Record<string,ModelPrice>;}catch{throw new ModelGatewayError('invalid_model_pricing_config');}}
-  return {baseUrl,apiKey:nonEmpty(env.OPENAI_API_KEY,'OPENAI_API_KEY'),cheapModel:nonEmpty(env.MODEL_CHEAP,'MODEL_CHEAP'),defaultModel:nonEmpty(env.MODEL_DEFAULT,'MODEL_DEFAULT'),dailyCostCapUsd:Number(env.MODEL_DAILY_COST_CAP_USD??2),dailyTokenCap:Number(env.MODEL_DAILY_TOKEN_CAP??100_000),fingerprintKey:nonEmpty(env.IDENTIFIER_FINGERPRINT_KEY||env.ARTIFACT_MASTER_KEY,'IDENTIFIER_FINGERPRINT_KEY'),prices};
+  return {baseUrl,apiKey:nonEmpty(env.OPENAI_API_KEY,'OPENAI_API_KEY'),cheapModel:nonEmpty(env.MODEL_CHEAP,'MODEL_CHEAP'),defaultModel:nonEmpty(env.MODEL_DEFAULT,'MODEL_DEFAULT'),planningModel:env.MODEL_PLANNING||nonEmpty(env.MODEL_DEFAULT,'MODEL_DEFAULT'),dailyCostCapUsd:Number(env.MODEL_DAILY_COST_CAP_USD||DEFAULT_TENANT_DAILY_COST_CAP_USD),dailyUserCostCapUsd:Number(env.MODEL_DAILY_USER_COST_CAP_USD||DEFAULT_USER_DAILY_COST_CAP_USD),fingerprintKey:nonEmpty(env.IDENTIFIER_FINGERPRINT_KEY||env.ARTIFACT_MASTER_KEY,'IDENTIFIER_FINGERPRINT_KEY'),prices};
 }
 
 const sensitiveKey=/(?:raw_?values?|sample_?rows?|result_?rows?|patient_?name|email_?address|password|secret|credential)/i;
@@ -71,11 +78,11 @@ function priceTokens(price:ModelPrice,input:number,output:number):number{return 
 
 export class OpenAIModelGateway{
   private readonly config:GatewayConfig;
-  constructor(private readonly pool:Pool,env:NodeJS.ProcessEnv=process.env,private readonly fetcher:FetchLike=fetch){this.config=readConfig(env);if(!Number.isFinite(this.config.dailyCostCapUsd)||this.config.dailyCostCapUsd<=0||!Number.isInteger(this.config.dailyTokenCap)||this.config.dailyTokenCap<=0)throw new ModelGatewayError('invalid_model_budget_config');}
+  constructor(private readonly pool:Pool,env:NodeJS.ProcessEnv=process.env,private readonly fetcher:FetchLike=fetch){this.config=readConfig(env);if(!Number.isFinite(this.config.dailyCostCapUsd)||this.config.dailyCostCapUsd<=0||!Number.isFinite(this.config.dailyUserCostCapUsd)||this.config.dailyUserCostCapUsd<=0)throw new ModelGatewayError('invalid_model_budget_config');}
 
   async complete(input:GatewayRequest):Promise<GatewayResponse>{
     if(!input.tenantId||input.question.length>4000||!input.question.trim())throw new ModelGatewayError('invalid_model_request');
-    const model=input.alias==='cheap'?this.config.cheapModel:this.config.defaultModel;
+    const model=input.alias==='cheap'?this.config.cheapModel:input.alias==='planning'?this.config.planningModel:this.config.defaultModel;
     const price=priceFor(this.config,model);
     const rawIdentifiers=new Set(input.identifierValues??[]);
     const prepared=prepareMetadataForModel(input.metadata);
@@ -83,23 +90,25 @@ export class OpenAIModelGateway{
     const question=safeQuestion(input.question,rawIdentifiers);
     const fingerprints=[...rawIdentifiers].map(value=>fingerprint(this.config.fingerprintKey,input.tenantId,value));
     const maxOutputTokens=Math.min(2048,Math.max(64,input.maxOutputTokens??1000));
-    const payload={model,messages:[{role:'system',content:SYSTEM_INSTRUCTIONS[input.purpose??'answer']},{role:'user',content:JSON.stringify({question,metadata:safeMetadata,identifier_fingerprints:fingerprints})}],max_completion_tokens:maxOutputTokens,...(input.purpose==='plan'?{response_format:{type:'json_object'}}:{})};
+    const payload={model,messages:[{role:'system',content:SYSTEM_INSTRUCTIONS[input.purpose??'answer']},{role:'user',content:JSON.stringify({question,metadata:safeMetadata,identifier_fingerprints:fingerprints})}],max_completion_tokens:maxOutputTokens,...(input.purpose==='plan'||input.purpose==='verify'?{response_format:input.responseSchema ? {type:'json_schema',json_schema:{name:input.purpose==='verify'?'plan_verification':'typed_analytic_plan',strict:true,schema:input.responseSchema}} : {type:'json_object'}}:{})};
     const body=JSON.stringify(payload);const estimatedInput=estimateTokens(body);const estimatedTokens=estimatedInput+maxOutputTokens;
     const reservedCost=priceTokens(price,estimatedInput,maxOutputTokens);const id=requestId();
     const reservation=await withTenant(this.pool,input.tenantId,async(client)=>{
       const dayKey=`${input.tenantId}:${new Date().toISOString().slice(0,10)}`;
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[dayKey]);
       const [from,to]=utcBounds(new Date());
-      const totals=await client.query<{tokens:string;cost:string}>(`SELECT
-        (COALESCE((SELECT sum(input_tokens+output_tokens) FROM core.model_usage WHERE tenant_id=$1 AND created_at >= $2 AND created_at < $3),0)+COALESCE((SELECT sum(estimated_tokens) FROM core.model_budget_reservations WHERE tenant_id=$1 AND created_at >= $2 AND created_at < $3),0))::text AS tokens,
-        (COALESCE((SELECT sum(cost_usd) FROM core.model_usage WHERE tenant_id=$1 AND created_at >= $2 AND created_at < $3),0)+COALESCE((SELECT sum(reserved_cost_usd) FROM core.model_budget_reservations WHERE tenant_id=$1 AND created_at >= $2 AND created_at < $3),0))::text AS cost`,[input.tenantId,from,to]);
-      const tokens=Number(totals.rows[0]!.tokens),cost=Number(totals.rows[0]!.cost);
-      if(tokens+estimatedTokens>this.config.dailyTokenCap||cost+reservedCost>this.config.dailyCostCapUsd){
-        await client.query("INSERT INTO core.model_usage(tenant_id,request_id,model_alias,model_name,input_tokens,output_tokens,cost_usd,outcome,safe_error_code) VALUES($1,$2,$3,$4,0,0,0,'budget_rejected','model_budget_daily_cap_reached')",[input.tenantId,id,input.alias,model]);return false;
+      // Spend today = recorded cost plus open reservations, for the tenant and (when known) for this person.
+      const totals=await client.query<{tenant_cost:string;user_cost:string}>(`SELECT
+        (COALESCE((SELECT sum(cost_usd) FROM core.model_usage WHERE tenant_id=$1 AND created_at >= $2 AND created_at < $3),0)+COALESCE((SELECT sum(reserved_cost_usd) FROM core.model_budget_reservations WHERE tenant_id=$1 AND created_at >= $2 AND created_at < $3),0))::text AS tenant_cost,
+        (COALESCE((SELECT sum(cost_usd) FROM core.model_usage WHERE tenant_id=$1 AND principal_id=$4 AND created_at >= $2 AND created_at < $3),0)+COALESCE((SELECT sum(reserved_cost_usd) FROM core.model_budget_reservations WHERE tenant_id=$1 AND principal_id=$4 AND created_at >= $2 AND created_at < $3),0))::text AS user_cost`,[input.tenantId,from,to,input.principalId??null]);
+      const tenantCost=Number(totals.rows[0]!.tenant_cost),userCost=Number(totals.rows[0]!.user_cost);
+      const rejected=tenantCost+reservedCost>this.config.dailyCostCapUsd?'model_budget_daily_cap_reached':input.principalId&&userCost+reservedCost>this.config.dailyUserCostCapUsd?'model_budget_user_daily_cap_reached':null;
+      if(rejected){
+        await client.query("INSERT INTO core.model_usage(tenant_id,request_id,model_alias,model_name,input_tokens,output_tokens,cost_usd,outcome,safe_error_code,principal_id) VALUES($1,$2,$3,$4,0,0,0,'budget_rejected',$5,$6)",[input.tenantId,id,input.alias,model,rejected,input.principalId??null]);return rejected;
       }
-      await client.query('INSERT INTO core.model_budget_reservations(tenant_id,request_id,estimated_tokens,reserved_cost_usd) VALUES($1,$2,$3,$4)',[input.tenantId,id,estimatedTokens,reservedCost]);return true;
+      await client.query('INSERT INTO core.model_budget_reservations(tenant_id,request_id,estimated_tokens,reserved_cost_usd,principal_id) VALUES($1,$2,$3,$4,$5)',[input.tenantId,id,estimatedTokens,reservedCost,input.principalId??null]);return null;
     });
-    if(!reservation)throw new ModelGatewayError('model_budget_daily_cap_reached');
+    if(reservation)throw new ModelGatewayError(reservation);
     try{
       const response=await this.fetcher(`${this.config.baseUrl}/chat/completions`,{method:'POST',headers:{authorization:`Bearer ${this.config.apiKey}`,'content-type':'application/json'},body,signal:AbortSignal.timeout(60_000)});
       if(!response.ok)throw new ModelGatewayError('model_provider_request_failed');
@@ -109,14 +118,14 @@ export class OpenAIModelGateway{
       if(text===null||typeof inputTokens!=='number'||typeof outputTokens!=='number'||!Number.isInteger(inputTokens)||!Number.isInteger(outputTokens)||inputTokens<0||outputTokens<0)throw new ModelGatewayError('model_provider_response_invalid');
       const costUsd=priceTokens(price,inputTokens,outputTokens);
       await withTenant(this.pool,input.tenantId,async(client)=>{
-        await client.query('INSERT INTO core.model_usage(tenant_id,request_id,model_alias,model_name,input_tokens,output_tokens,cost_usd,outcome) VALUES($1,$2,$3,$4,$5,$6,$7,\'completed\')',[input.tenantId,id,input.alias,model,inputTokens,outputTokens,costUsd]);
+        await client.query('INSERT INTO core.model_usage(tenant_id,request_id,model_alias,model_name,input_tokens,output_tokens,cost_usd,outcome,principal_id) VALUES($1,$2,$3,$4,$5,$6,$7,\'completed\',$8)',[input.tenantId,id,input.alias,model,inputTokens,outputTokens,costUsd,input.principalId??null]);
         await client.query('DELETE FROM core.model_budget_reservations WHERE tenant_id=$1 AND request_id=$2',[input.tenantId,id]);
       });
       return {text,requestId:id,model,inputTokens,outputTokens,costUsd};
     }catch(error){
       const code=error instanceof ModelGatewayError?error.code:'model_provider_request_failed';
       await withTenant(this.pool,input.tenantId,async(client)=>{
-        await client.query('INSERT INTO core.model_usage(tenant_id,request_id,model_alias,model_name,input_tokens,output_tokens,cost_usd,outcome,safe_error_code) VALUES($1,$2,$3,$4,0,0,0,\'failed\',$5)',[input.tenantId,id,input.alias,model,code]);
+        await client.query('INSERT INTO core.model_usage(tenant_id,request_id,model_alias,model_name,input_tokens,output_tokens,cost_usd,outcome,safe_error_code,principal_id) VALUES($1,$2,$3,$4,0,0,0,\'failed\',$5,$6)',[input.tenantId,id,input.alias,model,code,input.principalId??null]);
         await client.query('DELETE FROM core.model_budget_reservations WHERE tenant_id=$1 AND request_id=$2',[input.tenantId,id]);
       });
       throw error instanceof ModelGatewayError?error:new ModelGatewayError(code);

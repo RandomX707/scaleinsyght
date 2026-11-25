@@ -5,7 +5,7 @@ import { config } from 'dotenv';
 import { Pool } from 'pg';
 import { withTenant } from '@scaleinsyght/db';
 import { createTenant } from '../../scripts/tenant-create.js';
-import { runSqlServerAdminQuery } from '../../testbed/sqlserver/admin-query.js';
+import { createDisposableSqlServerWriter } from '../support/sqlserver-writer.js';
 
 config({ path: '.env' });
 const tenantUrl = () => { const value = process.env.DATABASE_URL_MIGRATE; if (!value) throw new Error('DATABASE_URL_MIGRATE is required for local S2 acceptance.'); const url = new URL(value); url.pathname = '/si_test'; return url.toString(); };
@@ -25,14 +25,14 @@ test('s2_empty_tenant_adds_real_sql_server_profiles_and_relationships', async ({
   await expect(page.getByRole('heading', { name: 'Good afternoon, Test Analyst' })).toBeVisible();
   const remoteTrustOverride = await page.request.post('/api/connections', { data: { connectorType: 'sql_server', displayName: 'Remote certificate override', credential: { host: 'sql.example.invalid', port: Number(process.env.SQLSERVER_TESTBED_PORT), database: process.env.SQLSERVER_TESTBED_DATABASE, username: process.env.SQLSERVER_TESTBED_USERNAME, password: process.env.SQLSERVER_TESTBED_PASSWORD, trustServerCertificate: true } } });
   expect(remoteTrustOverride.status()).toBe(400); expect(await remoteTrustOverride.json()).toMatchObject({ error: 'sqlserver_certificate_override_local_only' });
-  runSqlServerAdminQuery('ALTER ROLE [db_datawriter] ADD MEMBER [si_testbed_reader];', 'si_testbed_sqlserver');
+  const writerCredential = createDisposableSqlServerWriter();
   try {
-    const draft = await page.request.post('/api/connections', { data: { connectorType: 'sql_server', displayName: 'Writable role must be refused', credential: { host: process.env.SQLSERVER_TESTBED_HOST, port: Number(process.env.SQLSERVER_TESTBED_PORT), database: process.env.SQLSERVER_TESTBED_DATABASE, username: process.env.SQLSERVER_TESTBED_USERNAME, password: process.env.SQLSERVER_TESTBED_PASSWORD, trustServerCertificate: true } } });
+    const draft = await page.request.post('/api/connections', { data: { connectorType: 'sql_server', displayName: 'Writable role must be refused', credential: { host: process.env.SQLSERVER_TESTBED_HOST, port: Number(process.env.SQLSERVER_TESTBED_PORT), database: process.env.SQLSERVER_TESTBED_DATABASE, username: writerCredential.username, password: writerCredential.password, trustServerCertificate: true } } });
     expect(draft.status()).toBe(201);
     const draftId = (await draft.json() as { connectionId: string }).connectionId;
     const refused = await page.request.post(`/api/connections/${draftId}/test`);
     expect(refused.status()).toBe(400); expect(await refused.json()).toMatchObject({ error: 'sqlserver_connector_role_not_read_only' });
-  } finally { runSqlServerAdminQuery('ALTER ROLE [db_datawriter] DROP MEMBER [si_testbed_reader];', 'si_testbed_sqlserver'); }
+  } finally { writerCredential.remove(); }
   await page.goto('/connectors'); await expect(page.getByText(/No sources connected/)).toBeVisible();
   await page.screenshot({ path: 'docs/acceptance/s2/empty-connectors.png', fullPage: true });
   await page.locator('.page-heading').getByRole('button', { name: /Add connector/ }).click();
@@ -78,7 +78,7 @@ test('s2_empty_tenant_adds_real_sql_server_profiles_and_relationships', async ({
   await page.getByText('Model and typed plan',{exact:true}).click();await expect(page.getByText(/Plan model:/)).toBeVisible();await expect(page.getByText(/Answer model:/)).toBeVisible();
   await expect(page.getByLabel('Ask a question')).toHaveValue('');await expect(page).toHaveURL(/\/conversations\//);
   const recent=page.locator('.recent-list button').filter({hasText:'How many patients are in SQL Server hospital?'});await expect(recent).toBeVisible();await recent.click();await expect(page.getByText('Source result: 500',{exact:true})).toBeVisible();
-  const followUpPost=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/runs'&&response.request().method()==='POST',{timeout:75_000});
+  const followUpPost=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/runs'&&response.request().method()==='POST',{timeout:15_000});
   await page.getByLabel('Ask a question').fill('and how many of them have a phone number?');
   await page.getByRole('button',{name:'Send question'}).click();
   const submitted=await followUpPost;expect(submitted.status(),JSON.stringify(await submitted.json())).toBe(201);
@@ -107,7 +107,7 @@ test('s2_empty_tenant_adds_real_sql_server_profiles_and_relationships', async ({
   await page.getByRole('button',{name:'Close dialog'}).click();
   type Captured={state:string;modelProvenance:Array<{purpose:string;model:string;inputTokens:number;outputTokens:number;typedPlan:unknown}>;answer:{answer:{claims:Array<{statement:string}>;evidence:Array<{locator:string}>;bySource:Array<{connectorType:string;value:number;rows?:Array<{group_value:string;value:number}>}>}}};
   async function askChecked(question:string,expectedSources:number,sql:RegExp,trigger?:()=>Promise<void>){
-    const responsePromise=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/runs'&&response.request().method()==='POST',{timeout:75_000});
+    const responsePromise=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/runs'&&response.request().method()==='POST',{timeout:15_000});
     if(trigger)await trigger();else{await page.getByLabel('Ask a question').fill(question);await page.getByRole('button',{name:'Send question'}).click();}
     const response=await responsePromise;
     expect(response.status(),`${question}: ${JSON.stringify(await response.json())}`).toBe(201);
@@ -179,9 +179,9 @@ test('s2_empty_tenant_adds_real_sql_server_profiles_and_relationships', async ({
   expect(round6(evidence[3]!.answer.bySource[0]!.rows?.map(row=>({providerId:Number(row.group_value),average:Number(row.value)}))??[])).toEqual(round6(truth.answerChecks.averageEncountersPerPatientByProvider.sqlServer));
   await page.getByRole('button',{name:'New chat'}).click();
   await page.getByLabel('Ask a question').fill('How many encounters were emergency visits in 2025?');
-  const choicePost=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/runs'&&response.request().method()==='POST',{timeout:75_000});
+  const choicePost=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/runs'&&response.request().method()==='POST',{timeout:15_000});
   await page.getByRole('button',{name:'Send question'}).click();
-  expect((await choicePost).status()).toBe(409);
+  expect((await choicePost).status()).toBe(201);
   await expect(page.getByRole('heading',{name:'Which source should I use?'})).toBeVisible();
   await expect(page.getByRole('button',{name:'Use PostgreSQL testbed'})).toBeVisible();
   await page.screenshot({path:'docs/acceptance/s2/home-source-choice.png',fullPage:true});
