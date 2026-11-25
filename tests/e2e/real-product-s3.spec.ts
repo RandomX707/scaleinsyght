@@ -69,8 +69,8 @@ test('s3_empty_tenant_uploads_workbook_profiles_and_answers_with_evidence', asyn
 
   const refresh = await page.request.post(`/api/connections/${connectionId}/discover`, { data: {jobType:'nightly'} });
   expect(refresh.ok(), await refresh.text()).toBeTruthy();
-  const { jobId, listed, findings } = await refresh.json() as {jobId:string;listed:number;findings:number};
-  expect(listed).toBe(truth.sheets.length);
+  const { jobId, listed: refreshedSheets, findings } = await refresh.json() as {jobId:string;listed:number;findings:number};
+  expect(refreshedSheets).toBe(truth.sheets.length);
   const { findings: recorded } = await (await page.request.get('/api/findings')).json() as {
     findings: Array<{jobId:string;connectionId:string;kind:string}>;
   };

@@ -234,10 +234,16 @@ while(!stopping){
      const counts=results.map(result=>result.rows?.length??1);
      const allowed=new Set([...values,...counts,...summaryNumbers,...numbers(plan.question)]);
      if(!numbers(statement).some(number=>values.includes(number))||numbers(statement).some(number=>!allowed.has(number)))throw new Error('model_answer_validation_failed');
+     const singleGroup = results.length === 1 && results[0]?.rows?.length === 1 ? results[0].rows[0] : undefined;
+     const groupLabel = typeof singleGroup?.group_value === 'string' ? singleGroup.group_value : '';
+     const ranking = plan.question.match(/\b(fewest|most|least) ([a-z][a-z -]{0,40}?)(?:[?.!]|$)/i);
+     const namedStatement = groupLabel && singleGroup && ranking
+       ? `${groupLabel} had the ${ranking[1]!.toLowerCase()} ${ranking[2]!.trim()}: ${Number(singleGroup.value).toLocaleString('en-US')}.`
+       : groupLabel ? `${groupLabel}: ${statement}` : statement;
      const sourceNames=sources.map(source=>String(source.source??''));
      const attributed=results.length>1&&sourceNames.some(name=>name&&!statement.includes(name))&&results.every(result=>!result.rows)
       ?`${statement.replace(/[.\s]+$/,'')} (${results.map((result,index)=>`${sourceNames[index]}: ${result.value.toLocaleString('en-US')}`).join('; ')}).`
-      :statement;
+      :namedStatement;
      return {statement:attributed,model:answer.model,inputTokens:answer.inputTokens,outputTokens:answer.outputTokens};
    });
    await persistReportSnapshot(pool,claim.runId);

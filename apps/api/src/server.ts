@@ -1,3 +1,4 @@
+import { publicPlannerDetails } from './planner-attempt-copy.js';
 import { createHash, createHmac, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { dailyBudgetCaps } from '@scaleinsyght/model-gateway';
@@ -890,7 +891,10 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
        WHERE r.tenant_id=$1 AND r.principal_id=$2 AND r.run_id=$3`,[current.tenantId,current.userId,request.params.runId]));
     if(!result.rowCount)return reply.code(404).send({error:'run_not_found'});
     const row=result.rows[0]!;const memory=await getPersonalMemory(options.pool,{tenantId:current.tenantId,principalId:current.userId});
-    return reply.send({runId:row.run_id,state:row.state,stateVersion:row.state_version,plan:row.plan,planHash:row.plan_hash,modelProvenance:row.model_provenance,terminal:row.terminal,answer:row.answer?applyPersonalContext(row.answer as unknown as StructuredAnswer,memory):null});
+    const admin = await withTenant(options.pool,current.tenantId,client=>client.query("SELECT 1 FROM core.entitlements WHERE tenant_id=$1 AND principal_id=$2 AND capability_id='tenant.admin' AND allowed AND resource_id IS NULL LIMIT 1",[current.tenantId,current.userId]));
+    const technicalDetailsAllowed=Boolean(admin.rowCount);
+    const modelProvenance=row.model_provenance.map(call=>call.purpose==='plan'?{...call,...publicPlannerDetails(call.typedPlan,technicalDetailsAllowed)}:call);
+    return reply.send({runId:row.run_id,state:row.state,stateVersion:row.state_version,plan:row.plan,planHash:row.plan_hash,modelProvenance,technicalDetailsAllowed,terminal:row.terminal,answer:row.answer?applyPersonalContext(row.answer as unknown as StructuredAnswer,memory):null});
   });
   app.post<{Params:{runId:string};Body:{format?:ExportFormat}}>('/api/runs/:runId/evidence-pack',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
