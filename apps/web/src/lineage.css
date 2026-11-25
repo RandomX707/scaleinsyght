@@ -53,3 +53,4 @@
 .id-path p { margin:0; font-size:12px; }
 .id-badges { display:flex; flex-wrap:wrap; gap:4px; }
 .id-found { margin:4px 0 0; padding-left:18px; }
+.id-path code { word-break:break-all; }

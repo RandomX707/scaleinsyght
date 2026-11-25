@@ -37,7 +37,7 @@ export function IdTrace(props: { entities: IdEntity[]; lookup: (value: string) =
     <div className="lineage-tiles id-tiles"><div><b>{count(entity.fields.length)}</b><span>fields hold this ID</span></div><div><b>{count(systems)}</b><span>systems</span></div><div><b>{count(home.distinct)}</b><span>values where it is created</span></div><div><b>{lowest.length ? `${Math.round(Math.min(...lowest) * 100)}%` : '—'}</b><span>lowest share found at its origin</span></div></div>
     <article className="lineage-detail"><h2>How {home.field.slice(home.field.lastIndexOf('.') + 1)} travels</h2>
       <ol className="id-path">{ordered.map((field) => <li key={field.assetId}><div className="faint">{field.sourceName}</div><code>{field.field}</code>
-        <p className="muted">{field.role === 'created' ? 'Where the ID is created' : field.evidence.map((item) => item.explanation ?? item.method).filter(Boolean).join('; ') || 'Joined to its origin'}</p>
+        <p className="muted">{field.role === 'created' ? 'Where the ID is created' : [...new Set(field.evidence.map((item) => item.explanation ?? item.method).filter(Boolean))].slice(0, 2).join('; ') || 'Joined to its origin'}</p>
         <span className="id-badges"><Badge tone={field.role === 'key changed' ? 'warn' : field.role === 'created' ? 'primary' : 'good'}>{roleText[field.role]}</Badge>{field.probable && <Badge tone="warn">Probable, unverified</Badge>}</span></li>)}</ol></article>
     <article className="lineage-detail"><h2>Every place it appears</h2>
       <Table caption={`Every field holding ${entity.label}`} headers={['System', 'Field', 'What happens to the ID', 'Distinct values', 'Found at its origin']} rows={ordered.map((field) => [field.sourceName, <code key="f">{field.field}</code>,

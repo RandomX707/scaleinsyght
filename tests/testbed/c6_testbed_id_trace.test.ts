@@ -40,7 +40,7 @@ describe('S5 ID agent and ID trace on the testbed', () => {
     ]) {
       const draft = await server.inject({ method: 'POST', url: '/api/connections', headers: { cookie }, payload }); expect(draft.statusCode).toBe(201);
       const id = draft.json<{ connectionId: string }>().connectionId;
-      if (payload.connectorType === 'excel') expect((await server.inject({ method: 'POST', url: `/api/connections/${id}/workbooks`, headers: { cookie, 'content-type': 'application/octet-stream' }, payload: readFileSync('testbed/excel/hospital-operations.xlsx') })).statusCode).toBe(200);
+      if (payload.connectorType === 'excel') expect((await server.inject({ method: 'POST', url: `/api/connections/${id}/workbooks`, headers: { cookie, 'content-type': 'application/octet-stream' }, payload: readFileSync('testbed/excel/hospital-operations.xlsx') })).statusCode).toBe(201);
       expect((await server.inject({ method: 'POST', url: `/api/connections/${id}/test`, headers: { cookie } })).statusCode).toBe(200);
       expect((await server.inject({ method: 'POST', url: `/api/connections/${id}/activate`, headers: { cookie }, payload: { scope: [] } })).statusCode).toBe(200);
     }

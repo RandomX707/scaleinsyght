@@ -49,7 +49,8 @@ export async function listIdEntities(pool: Pool, tenantId: string): Promise<IdEn
           return { assetId: row.asset_id, field: row.field_name, sourceId: row.source_id, sourceName: row.source_name, connectorType: row.connector_type, distinct: Number(row.distinct),
             tagged: Number(row.confidence) === 1, format: row.format_pattern,
             role: (row.asset_id === home.asset_id ? 'created' : column === homeColumn ? 'kept' : 'key changed') as IdRole,
-            probable: evidence.some((link) => link.relationship_type === 'SAME_AS') && row.source_id !== home.source_id,
+            // Inside a source fields are joined by trusted references; reaching another source always crosses a probable match.
+            probable: row.source_id !== home.source_id,
             sharedWithHome: row.format_pattern === 'too_many_values' ? null : sharedBy.get(row.asset_id) ?? 0,
             evidence: evidence.map((link) => ({ method: link.relationship_type === 'SAME_AS' ? `${link.method} SAME_AS` : `${link.method} reference`, explanation: link.explanation, confidence: link.confidence === null ? null : Number(link.confidence) })) };
         }).sort((a, b) => Number(b.role === 'created') - Number(a.role === 'created') || a.sourceName.localeCompare(b.sourceName) || a.field.localeCompare(b.field)) });
