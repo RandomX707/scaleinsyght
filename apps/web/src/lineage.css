@@ -59,3 +59,4 @@
 .ui-button.findings-tab { border-radius:999px; }
 .ui-button.findings-tab.on { background:var(--primary-tint); border-color:var(--primary); color:var(--primary-ink); }
 .findings-actions { display:flex; gap:6px; }
+.nightly-summary > .ui-button { justify-self:start; width:auto; grid-column:1 / -1; }

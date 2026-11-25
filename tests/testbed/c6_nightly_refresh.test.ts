@@ -56,7 +56,7 @@ describe('S6 nightly refresh, findings and review', () => {
 
   it('s6_first_profile_schedules_a_nightly_refresh_and_asks_to_confirm_an_inferred_sensitive_column', async () => {
     const first = await findings();
-    expect(first.findings.map((item) => [item.kind, item.subject])).toEqual([['sensitive_column', 'public.customers.contact_email']]);
+    expect(first.findings.map((item) => [item.kind, item.subject]).sort()).toEqual([['probable_relationship', 'public.shop_orders.customer_id → public.customers.customer_id'], ['sensitive_column', 'public.customers.contact_email']]);
     const schedule = await withTenant(adminPool, tenantId, async (db) => (await db.query<{ hours: number }>('SELECT extract(epoch FROM next_run_at-clock_timestamp())/3600 AS hours FROM profiler.nightly_schedules WHERE tenant_id=$1 AND connection_id=$2', [tenantId, connectionId])).rows[0]);
     expect(Number(schedule!.hours)).toBeGreaterThan(23); expect(Number(schedule!.hours)).toBeLessThanOrEqual(24);
   });
@@ -81,7 +81,9 @@ describe('S6 nightly refresh, findings and review', () => {
       { kind: 'data_anomaly', subject: 'public.customers', detail: { change: 'row_count', before: 30, after: 60 } },
       { kind: 'new_tables', subject: 'public.returns', detail: { columns: 2, rows: 5 } },
     ]));
-    expect(night).toHaveLength(4);
+    // The new table's order_id matches orders: proposed for review, not trusted.
+    expect(night.filter((item) => item.kind === 'probable_relationship').map((item) => item.subject)).toEqual(['public.returns.order_id → public.shop_orders.order_id']);
+    expect(night).toHaveLength(5);
     expect(result.lastNight.connections).toBe(1);
     expect(JSON.stringify(result)).not.toContain('@example.test');
   });

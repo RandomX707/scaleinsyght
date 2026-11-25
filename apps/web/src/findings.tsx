@@ -20,7 +20,7 @@ export function findingText(finding: Finding): string {
       return `${finding.subject} changed: ${[list(detail.added).length ? `added ${list(detail.added).join(', ')}` : '', list(detail.removed).length ? `removed ${list(detail.removed).join(', ')}` : '',
         ...(Array.isArray(detail.retyped) ? (detail.retyped as Array<{ column: string; from: string; to: string }>).map((item) => `${item.column} changed from ${item.from} to ${item.to}`) : [])].filter(Boolean).join('; ')}.`;
     case 'data_anomaly': return `${finding.subject} went from ${count(detail.before)} to ${count(detail.after)} rows.`;
-    case 'new_tables': return `New table ${finding.subject} with ${count(detail.columns)} columns${detail.rows === null || detail.rows === undefined ? '' : ` and ${count(detail.rows)} rows`}.`;
+    case 'new_tables': return `New table ${finding.subject} with ${count(detail.columns)} ${Number(detail.columns) === 1 ? 'column' : 'columns'}${detail.rows === null || detail.rows === undefined ? '' : ` and ${count(detail.rows)} ${Number(detail.rows) === 1 ? 'row' : 'rows'}`}.`;
     case 'sensitive_column': return `${finding.subject} looks ${String(detail.tag)}, inferred from its name or value format. Confirm to keep it protected, or dismiss.`;
     case 'probable_relationship': return `${finding.subject} looks like a relationship${detail.explanation ? `: ${String(detail.explanation)}` : ''}. Approving records review only; it stays unverified.`;
     case 'id_match': return `${finding.subject} look like the same ID${detail.explanation ? `: ${String(detail.explanation)}` : ''}. Approving records review only; it stays unverified.`;
