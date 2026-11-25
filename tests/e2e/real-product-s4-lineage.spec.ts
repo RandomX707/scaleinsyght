@@ -35,6 +35,8 @@ test('s4_dbt_upload_view_sql_and_lineage_graph_columns_gaps_and_chat_answers_mat
 
   // The dbt project is added through Add connector with its two artifacts.
   await page.goto('/connectors');
+  await expect(page.locator('.connector-card').getByText('PostgreSQL', {exact:true})).toBeVisible();
+  await expect(page.getByRole('heading', {name:'Private network gateways'})).toHaveCount(0);
   await page.locator('.page-heading').getByRole('button', { name: /Add connector/ }).click();
   await page.getByLabel('Source type').selectOption('dbt');
   await expect(page.getByRole('heading', { name: 'Add a dbt project' })).toBeVisible();
