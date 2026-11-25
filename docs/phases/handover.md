@@ -90,3 +90,10 @@ Updated by Claude Code after #35. S7 (Codex) and S8 (Claude Code) are merged. Th
 - Approval matrix scopes heading counts, tab counts and rows to the selected refresh period. Its default group is populated when possible, and empty groups offer no bulk approval.
 - ID trace shows each field's measured overlap and distinct count. Relationship sentences name the other endpoint without borrowing its counts. The walkthrough checks every card against the independently generated ID truth.
 - Focused S5 and S6 browser checks and both UI render tests passed. Full gates and the three testbed passes are running on si_test via ports 3340/3341/4290. Deployment awaits those gates and green CI.
+
+## Controls prototype
+
+- Branch `controls-prototype` in `/tmp/scaleinsyght-controls`, based on `1a2c405`. Controls is first in the five screen PRs. Design and acceptance cases are in `docs/phases/controls-prototype.md`.
+- Yashaswi confirmed that objects leaving scope keep their history and are marked out of scope.
+- PostgreSQL now applies table scope before column metadata or count queries. The worker checks the current scope before opening a data connector for queued queries and passes scope into discovery. The real PostgreSQL query-spy regression, typecheck and lint passed.
+- Pending: persistent Controls rules and approval flow, prototype UI, scheduled refresh behavior, complete browser walkthrough and screenshot comparison, full gates, merge and redeploy. Agents, My agent, Usage and BI reports follow in that order.

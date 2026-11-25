@@ -15,7 +15,7 @@ import { OpenAIModelGateway } from '@scaleinsyght/model-gateway';
 import { authorise } from '@scaleinsyght/policy';
 import { checkStepAgent } from '@scaleinsyght/registry';
 import { answerLineageRequest } from '@scaleinsyght/graph';
-import { claimDueNightly, connectorForConnection, runProfile } from '@scaleinsyght/profiler';
+import { claimDueNightly, connectorForConnection, readConnectionScope, runProfile, scopeForConnector } from '@scaleinsyght/profiler';
 import { claimDueSchedule, markScheduleSlotSkipped, markScheduleSlotStarted, persistReportSnapshot, startScheduledReportRun } from '@scaleinsyght/reports';
 
 config({path:fileURLToPath(new URL('../../../.env',import.meta.url))});
@@ -141,6 +141,10 @@ while(!stopping){
     }else{
     const intent=step.inputs.query_intent;
     if(!intent||!['postgres','sql_server','excel'].includes(task.connectorType))throw new Error('source_query_executor_unavailable');
+    const scope=scopeForConnector(await readConnectionScope(pool,claim.tenantId,step.source_id));
+    const query=intent as Record<string,unknown>;
+    const targets=[query.table,query.leftTable,query.rightTable].filter((value):value is string=>typeof value==='string');
+    if(targets.some(name=>scope?.exclude?.includes(name)||scope?.listOnly?.includes(name)||(scope?.profile?.length&&!scope.profile.includes(name))))throw new Error('policy_revoked');
     let connector: ReadOnlyConnector;
     if(task.connectorType==='excel'){
      // The workbook is decrypted for this step only and queried in an in-memory DuckDB copy that close() discards.
@@ -155,7 +159,7 @@ while(!stopping){
     else{const sourceUrl=new URL('postgresql://placeholder');sourceUrl.hostname=String(secret.host);sourceUrl.port=String(secret.port);sourceUrl.username=String(secret.username);sourceUrl.password=String(secret.password);sourceUrl.pathname=`/${String(secret.database)}`;sourceUrl.searchParams.set('sslmode',String(secret.sslMode));connector=createPostgresConnector({connectionString:sourceUrl.toString(),id:step.source_id,name:task.displayName||'PostgreSQL source',statementTimeoutMs:10_000,maxRows:1_000});}
     }
     try{
-      await connector.test();await connector.discover({mode:'profile'});
+      await connector.test();await connector.discover({mode:'profile',...(scope?{scope}:{})});
       const resolvedIntent = structuredClone(intent) as Record<string, unknown>;
       const filters = resolvedIntent.kind === 'filtered_count' ? [resolvedIntent]
         : Array.isArray(resolvedIntent.filters) ? resolvedIntent.filters as Array<Record<string, unknown>> : [];

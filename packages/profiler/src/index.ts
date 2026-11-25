@@ -65,7 +65,7 @@ export async function readConnectionScope(pool: Pool, tenantId: string, connecti
   });
 }
 
-function scopeForConnector(rules: ScopeRule[]): ConnectorScope | undefined {
+export function scopeForConnector(rules: ScopeRule[]): ConnectorScope | undefined {
   if (rules.length === 0) return undefined;
   const profile = rules.filter((rule) => rule.scopeMode === 'profile').map((rule) => rule.qualifiedName);
   const listOnly = rules.filter((rule) => rule.scopeMode === 'list_only').map((rule) => rule.qualifiedName);

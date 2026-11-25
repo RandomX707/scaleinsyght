@@ -85,6 +85,9 @@ export class PostgresConnector implements ReadOnlyConnector {
       const qualifiedName=`${table.schema_name}.${table.table_name}`;this.current.set(qualifiedName,table);result.coverage.listed++;
       // Listed but not readable by this login (no schema USAGE or no SELECT): recorded by name only, never profiled.
       if(table.readable===false){result.inaccessibleObjects.push({qualifiedName,type:table.table_type==='VIEW'?'view':'table'});result.coverage.inaccessible++;continue;}
+      if(input.scope?.exclude?.includes(qualifiedName)){result.excludedObjects.push({qualifiedName,type:table.table_type==='VIEW'?'view':'table'});continue;}
+      if(input.scope?.listOnly?.includes(qualifiedName)){result.listOnlyObjects.push({qualifiedName,type:table.table_type==='VIEW'?'view':'table'});continue;}
+      if(input.scope?.profile?.length&&!input.scope.profile.includes(qualifiedName)){result.excludedObjects.push({qualifiedName,type:table.table_type==='VIEW'?'view':'table'});continue;}
       // The change signature covers the columns and, for base tables, the row count, so a nightly run re-profiles a table
       // that only gained or lost rows (decision 48).
       const columns=await this.columns(table);
@@ -93,9 +96,6 @@ export class PostgresConnector implements ReadOnlyConnector {
       if(table.table_type==='BASE TABLE'){try{rows=(await this.pool.query<{n:string}>(`SELECT count(*)::text AS n FROM ${quoteIdentifier(table.schema_name)}.${quoteIdentifier(table.table_name)}`)).rows[0]!.n;}catch{rows=null;}}
       const signature=createHash('sha256').update(JSON.stringify({rows,columns:columns.map(({column_name,data_type,is_nullable,comment})=>({column_name,data_type,is_nullable,comment}))})).digest('hex');
       const key=assetKey(qualifiedName);profiles.set(qualifiedName,{table,columns,key,signature});result.coverage.accessible++;
-      if(input.scope?.exclude?.includes(qualifiedName)){result.excludedObjects.push({qualifiedName,type:table.table_type==='VIEW'?'view':'table'});continue;}
-      if(input.scope?.listOnly?.includes(qualifiedName)){result.listOnlyObjects.push({qualifiedName,type:table.table_type==='VIEW'?'view':'table'});continue;}
-      if(input.scope?.profile?.length&&!input.scope.profile.includes(qualifiedName)){result.excludedObjects.push({qualifiedName,type:table.table_type==='VIEW'?'view':'table'});continue;}
       const object={assetKey:key,qualifiedName,type:table.table_type==='VIEW'?'view' as const:'table' as const,scopeMode:'profile' as const};
       if(input.mode==='nightly'&&this.seen.get(qualifiedName)===signature&&rows!==null&&rows!=='view'){result.unchanged++;result.unchangedObjects.push(object);continue;}
       result.objects.push(object);
