@@ -29,7 +29,7 @@ So **#17 and #18 are both merged.**
 - Reports now submits a saved question for review. The S7 walkthrough uses Reports and Approval matrix to submit, approve, save, run, export and schedule.
 - Failed count queries produce an unavailable count and cannot trigger a row-count change. Added a PostgreSQL slow-view regression.
 - The slow-view regression passed on si_test. The browser walkthrough initially lacked a declared JSZip dependency. Added the already locked version and restarted the walkthrough.
-- PR #31 is open. S7 browser walkthrough passed, including second-person approval, PDF download and scheduler dispatch. Lint, typecheck, unit, SQL parser, golden eval, integration, 108 contracts and 12 E2E tests passed. The three testbed passes and capped live eval are running in session 56781. Merge and the 4284 redeployment remain gated on those results and CI.
+- PR #31 is open. S7 browser walkthrough passed, including second-person approval, PDF download and scheduler dispatch. Lint, typecheck, unit, SQL parser, golden eval, integration, 108 contracts and 12 E2E tests passed. All three consecutive testbed passes cleared 24 data tests and nine browser cases each. The capped live evaluation is running in session 56781 with aggregate-only held-out output in /tmp/s7-live-eval.log. Merge and the 4284 redeployment remain gated on the live results and CI.
 - After S7 merges, add tests and fixes for Approval matrix tab counts and default selection, snapshot-based change totals, separate warning and neutral counts, field-specific ID evidence checked against S5 truth, and deduplicated evidence sentences.
 
 ## Open problems and known issues
