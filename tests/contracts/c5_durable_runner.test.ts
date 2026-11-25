@@ -44,9 +44,12 @@ describe('contract 5 durable runner', () => {
     await transitionRun(migrate, { tenantId: tenant, runId: run.runId, to: 'PLAN_VALIDATED' });
     await transitionRun(migrate, { tenantId: tenant, runId: run.runId, to: 'RUNNING' });
 
+    // Both workers race for this tenant's single step. The claim is scoped to the tenant because the shared contract
+    // database also holds other suites' abandoned steps with expired leases, which an unscoped claim correctly takes
+    // first (oldest first); that made this test flaky without any race in the runner (K4).
     const claims = await Promise.all([
-      claimNextStep(worker, 'worker-a', 10_000),
-      claimNextStep(worker, 'worker-b', 10_000),
+      claimNextStep(worker, 'worker-a', 10_000, tenant),
+      claimNextStep(worker, 'worker-b', 10_000, tenant),
     ]);
     const claim = claims.find(Boolean)!;
     expect(claim?.stepId).toBe(stepId);
