@@ -67,7 +67,15 @@ result.profiling = { connectionTestMs: tested.ms, activateAndProfileMs: activate
 process.stdout.write(`profiled in ${(activated.ms / 1000).toFixed(1)} s: ${JSON.stringify(activated.body.profile)} ${JSON.stringify(graph)}\n`);
 
 // 2. Endpoint times (three calls each, median) and response sizes.
-const endpoints: Record<string, string> = { er: `/api/connections/${connectionId}/er`, dictionary: `/api/connections/${connectionId}/dictionary`, lineage: '/api/lineage/graph' };
+// The Dictionary loads lazily (spec 2.8): sources, summary and the first page of objects; details load when opened.
+// The ER explorer opens on one table's neighbourhood. The old whole-catalog routes are measured for comparison.
+const firstTable = (await withTenant(pool, tenantId, (db) => db.query<{ qualified_name: string }>(`SELECT qualified_name FROM graph.assets WHERE tenant_id=$1 AND asset_type='dataset' AND active ORDER BY qualified_name LIMIT 1`, [tenantId]))).rows[0]!.qualified_name;
+const endpoints: Record<string, string> = {
+  dictionarySources: '/api/dictionary/sources', dictionarySummary: `/api/connections/${connectionId}/dictionary/summary`, dictionaryObjects: `/api/connections/${connectionId}/dictionary/objects?tab=standard`,
+  dictionarySearch: `/api/connections/${connectionId}/dictionary/objects?tab=standard&q=status`, dictionaryObject: `/api/connections/${connectionId}/dictionary/object?name=${encodeURIComponent(firstTable)}`,
+  erNeighbourhood: `/api/connections/${connectionId}/er/neighbourhood`, erSearch: `/api/connections/${connectionId}/er/tables?q=order`,
+  erWholeCatalog: `/api/connections/${connectionId}/er`, dictionaryWholeCatalog: `/api/connections/${connectionId}/dictionary`, lineage: '/api/lineage/graph',
+};
 const endpointTimes: Record<string, { medianMs: number; bytes: number; status: number }> = {};
 for (const [name, path] of Object.entries(endpoints)) {
   const runs = []; for (let index = 0; index < 3; index++) runs.push(await call(path));
@@ -81,19 +89,33 @@ const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 await page.goto(`${web}/login?tenant=${tenantId}`); await page.getByLabel('Email').fill(email); await page.getByLabel('Password').fill(password);
 await page.getByRole('button', { name: 'Sign in', exact: true }).click(); await page.waitForURL((url) => !url.pathname.startsWith('/login'));
-const pages: Record<string, { ms: number; error: string | null }> = {};
+// First view: from navigation until the page's data has arrived and the network is idle. Bytes are the API data the
+// page downloaded for that view (response bodies under /api/), excluding the app's static assets.
+const TARGET = { ms: 1500, bytes: 300 * 1024 };
+const pages: Record<string, { ms: number; apiBytes: number; apiCalls: number; error: string | null; meetsTarget?: boolean }> = {};
 mkdirSync('testbed/scale/results', { recursive: true });
-for (const [name, path, endpoint] of [['er', `/er?connection=${connectionId}`, '/er'], ['dictionary', `/dictionary?connection=${connectionId}`, '/dictionary'], ['lineage', '/lineage', '/api/lineage/graph']] as const) {
+for (const [name, path, endpoint, ready] of [
+  ['er', `/er?connection=${connectionId}`, '/er/neighbourhood', '.er-node'],
+  ['dictionary', `/dictionary?connection=${connectionId}`, '/dictionary/objects', '.dict-group li'],
+  ['lineage', '/lineage', '/api/lineage/graph', null],
+] as const) {
+  await page.goto(`${web}/connectors`); await page.waitForLoadState('networkidle');
+  let apiBytes = 0; let apiCalls = 0; const sizes: Array<Promise<void>> = [];
+  const listener = (res: import('@playwright/test').Response) => { if (new URL(res.url()).pathname.startsWith('/api/')) { apiCalls++; sizes.push(res.body().then((body) => { apiBytes += body.length; }).catch(() => undefined)); } };
+  page.on('response', listener);
   const started = performance.now();
   const response = page.waitForResponse((res) => res.url().includes(endpoint) && res.request().method() === 'GET', { timeout: 300_000 });
   await page.goto(web + path);
-  await response; await page.waitForLoadState('networkidle', { timeout: 300_000 });
+  await response; if (ready) await page.locator(ready).first().waitFor({ timeout: 300_000 });
+  await page.waitForLoadState('networkidle', { timeout: 300_000 });
+  const ms = Math.round(performance.now() - started);
+  page.off('response', listener); await Promise.all(sizes);
   const alert = await page.getByRole('alert').first().textContent({ timeout: 500 }).catch(() => null);
-  pages[name] = { ms: Math.round(performance.now() - started), error: alert };
+  pages[name] = { ms, apiBytes, apiCalls, error: alert, ...(name === 'lineage' ? {} : { meetsTarget: ms < TARGET.ms && apiBytes < TARGET.bytes }) };
   await page.screenshot({ path: `testbed/scale/results/${name}.png` });
 }
 await browser.close();
-result.pages = pages;
+result.pages = pages; result.targets = { firstViewMs: TARGET.ms, firstViewBytes: TARGET.bytes };
 process.stdout.write(`pages: ${JSON.stringify(pages)}\n`);
 
 // 4. What the planner would have been sent without narrowing (estimated, not sent): every table and column.

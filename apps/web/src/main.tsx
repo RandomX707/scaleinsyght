@@ -79,7 +79,10 @@ function LineageWorkspace(props: { path: string; navigate: (path: string) => voi
     if(!fromSnapshot&&snapshotData.snapshots[0])setFromSnapshot(snapshotData.snapshots[0].snapshot_id);
     if(!toSnapshot&&snapshotData.snapshots.at(-1))setToSnapshot(snapshotData.snapshots.at(-1)!.snapshot_id);
   }
-  useEffect(()=>{void reload().catch(reason=>setError(reason instanceof Error?reason.message:'Lineage could not be loaded.'));},[]);
+  // Assets, reports and snapshots are only used by the impact, compare and BI reports views; the ER explorer and the
+  // lineage graph load their own data, so a 5,000-table catalog is not downloaded for them (spec 2.8).
+  const needsCatalog=view==='impact'||view==='compare'||view==='reports';
+  useEffect(()=>{if(!needsCatalog)return;void reload().catch(reason=>setError(reason instanceof Error?reason.message:'Lineage could not be loaded.'));},[needsCatalog]);
   const erConnection=new URLSearchParams(location.search).get('connection')??'';
   useEffect(()=>{if(view!=='er'||!erConnection)return;const query=new URLSearchParams({depth:String(erDepth),...(erFocus?{focus:erFocus}:{}),...(showPossible?{possible:'true'}:{})});void api<{focus:string;hiddenTables:number;relationships:ErRelationship[];tables:ErTable[]}>(`/api/connections/${encodeURIComponent(erConnection)}/er/neighbourhood?${query}`).then(result=>{setErRelationships(result.relationships);setErTables([...result.tables].sort((a,b)=>Number(b.qualified_name===result.focus)-Number(a.qualified_name===result.focus)||a.qualified_name.localeCompare(b.qualified_name)));setErHidden(result.hiddenTables);if(!erFocus)setErFocus(result.focus);}).catch(reason=>setError(reason instanceof Error?reason.message:'Entity relationships could not be loaded.'));},[view,erConnection,showPossible,erFocus,erDepth]);
   useEffect(()=>{if(view!=='er'||!erConnection||!erQuery.trim()){setErMatches([]);return;}const timer=setTimeout(()=>{void api<{tables:Array<{name:string;links:number}>}>(`/api/connections/${encodeURIComponent(erConnection)}/er/tables?q=${encodeURIComponent(erQuery.trim())}`).then(result=>setErMatches(result.tables)).catch(()=>setErMatches([]));},250);return()=>clearTimeout(timer);},[view,erConnection,erQuery]);

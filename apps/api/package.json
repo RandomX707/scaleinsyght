@@ -5,7 +5,9 @@
   "exports": {
     "./server": "./src/server.ts",
     "./source-selection": "./src/source-selection.ts",
-    "./live-planner": "./src/live-planner.ts"
+    "./live-planner": "./src/live-planner.ts",
+    "./dictionary": "./src/dictionary.ts",
+    "./dictionary-html": "./src/dictionary-html.ts"
   },
   "scripts": {
     "start": "tsx src/main.ts",

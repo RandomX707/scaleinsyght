@@ -402,7 +402,7 @@ export async function erNeighbourhood(client: PoolClient, input: { tenantId: str
   };
 }
 
-type ColumnRow = { name: string; label: string | null; data_type: string | null; is_nullable: boolean | null; tags: string[] | null; null_rate: string | null; distinct_count: string | null; description: string | null; used_by: number; field_id: string };
+type ColumnRow = { name: string; label: string | null; data_type: string | null; is_nullable: boolean | null; tags: string[] | null; tag_evidence: Array<{ tag: string; detection: string }> | null; null_rate: string | null; distinct_count: string | null; description: string | null; used_by: number; field_id: string };
 
 async function objectDetail(client: PoolClient, tenantId: string, connectionId: string, name: string) {
   const source = await sourceFor(client, tenantId, connectionId); if (!source) return null;
@@ -431,11 +431,11 @@ async function objectDetail(client: PoolClient, tenantId: string, connectionId: 
   let flowUsers: Array<{ name: string; source: string; type: string }> = []; let dependentReports = 0; let lastProfiled: Date | null = null;
   if (dataset) {
     const columnRows = (await client.query<ColumnRow>(
-      `SELECT f.qualified_name AS name,p.display_name AS label,p.data_type,p.is_nullable,p.sensitivity_tags AS tags,p.null_rate::text,p.distinct_count::text,f.asset_id AS field_id,
+      `SELECT f.qualified_name AS name,p.display_name AS label,p.data_type,p.is_nullable,p.sensitivity_tags AS tags,p.sensitivity_evidence AS tag_evidence,p.null_rate::text,p.distinct_count::text,f.asset_id AS field_id,
          (SELECT description FROM graph.dictionary_descriptions dd WHERE dd.tenant_id=f.tenant_id AND dd.source_id=$3 AND dd.table_name=$4 AND dd.column_name=split_part(f.qualified_name,'.',array_length(string_to_array(f.qualified_name,'.'),1))) AS description,
          (SELECT count(*) FROM graph.relationships u WHERE u.tenant_id=f.tenant_id AND u.family='data_flow' AND u.from_asset_id=f.asset_id)::int AS used_by
        FROM graph.relationships c JOIN graph.assets f ON f.tenant_id=c.tenant_id AND f.asset_id=c.to_asset_id AND f.active
-       LEFT JOIN LATERAL(SELECT display_name,data_type,is_nullable,sensitivity_tags,null_rate,distinct_count,captured_at FROM profiler.field_profiles WHERE tenant_id=f.tenant_id AND asset_id=f.asset_id ORDER BY profile_version DESC LIMIT 1)p ON true
+       LEFT JOIN LATERAL(SELECT display_name,data_type,is_nullable,sensitivity_tags,sensitivity_evidence,null_rate,distinct_count,captured_at FROM profiler.field_profiles WHERE tenant_id=f.tenant_id AND asset_id=f.asset_id ORDER BY profile_version DESC LIMIT 1)p ON true
        WHERE c.tenant_id=$1 AND c.family='structural' AND c.relationship_type='CONTAINS' AND c.from_asset_id=$2`, [tenantId, dataset.asset_id, connectionId, name])).rows;
     // Columns in the order the source declares them; fields without a recorded order follow by name.
     const order = new Map((dataset.structural?.columns ?? []).map((column, index) => [column.name, index]));
@@ -454,7 +454,7 @@ async function objectDetail(client: PoolClient, tenantId: string, connectionId: 
     const withheldReason = 'Withheld: this column is tagged sensitive, so its statistics are never collected (contract 7).';
     columns = columnRows.map((row) => {
       const tags = row.tags ?? []; const withheld = tags.length > 0;
-      return { name: own(row.name) || row.name, label: row.label, dataType: row.data_type, nullable: row.is_nullable, tags, key: keyed.has(row.name),
+      return { name: own(row.name) || row.name, label: row.label, dataType: row.data_type, nullable: row.is_nullable, tags, inferredTags: (row.tag_evidence ?? []).filter((item) => item.detection === 'inferred').map((item) => item.tag), key: keyed.has(row.name),
         statsWithheld: withheld, ...(withheld ? { withheldReason } : {}), nullRate: withheld || row.null_rate === null ? null : Number(row.null_rate), distinctCount: withheld || row.distinct_count === null ? null : Number(row.distinct_count),
         description: row.description, usedBy: row.used_by };
     });
@@ -562,9 +562,11 @@ async function exportSource(client: PoolClient, tenantId: string, connectionId: 
   for (const row of columnRows) byTable.set(row.table_name, [...(byTable.get(row.table_name) ?? []), row]);
   const byDefinition = new Map(definitions.map((row) => [row.qualified_name, row]));
   const byDescription = new Map(descriptions.map((row) => [row.table_name, row.text]));
+  const excluded = new Set(outOfScope.map((row) => row.qualified_name));
   return {
     name: source.name, type: source.connector_type,
-    objects: objects.map((object) => {
+    // Out-of-scope objects appear only in the name-and-type list (non-negotiable 11).
+    objects: objects.filter((object) => !excluded.has(object.name)).map((object) => {
       const definition = byDefinition.get(object.name);
       return { name: object.name, kind: object.kind, custom: object.custom, group: groupFor(object).label, description: byDescription.get(object.name) ?? null,
         columns: (byTable.get(object.name) ?? []).map((row) => {

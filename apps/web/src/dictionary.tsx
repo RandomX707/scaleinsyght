@@ -19,7 +19,7 @@ type Summary = {
 type ListItem = { name: string; kind: string; columns: number | null; matchedColumns?: number };
 type Group = { key: string; label: string; total: number; items: ListItem[]; nextOffset: number | null };
 type ObjectList = { tab: 'standard' | 'custom'; hasVendorDictionary: boolean; counts: { standard: number; custom: number }; groups: Group[]; sqlHits: Array<{ name: string; kind: string; matches: number; lines: Array<{ line: number; text: string }> }> };
-type Column = { name: string; label: string | null; dataType: string | null; nullable: boolean | null; tags: string[]; key: boolean; statsWithheld: boolean; withheldReason?: string; nullRate: number | null; distinctCount: number | null; description: string | null; usedBy: number };
+type Column = { name: string; label: string | null; dataType: string | null; nullable: boolean | null; tags: string[]; inferredTags?: string[]; key: boolean; statsWithheld: boolean; withheldReason?: string; nullRate: number | null; distinctCount: number | null; description: string | null; usedBy: number };
 type Detail = {
   source: { connectionId: string; name: string; type: string };
   name: string; kind: string; custom: boolean; procedureKind: string | null;
@@ -128,9 +128,18 @@ export function DictionaryPage(props: { connectionId: string; navigate: (path: s
     const response = await fetch(`${base}/dictionary/import`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ format, filename: file.name, contentBase64: btoa(binary) }) });
     const body = await response.json().catch(() => ({})) as { imported?: number; error?: string };
     if (!response.ok) { setError(`The dictionary could not be imported: ${(body.error ?? 'unknown error').replaceAll('_', ' ')}.`); return; }
-    setMessage(`${number(body.imported ?? 0)} descriptions imported from ${file.name}.`);
+    setMessage(`${number(body.imported ?? 0)} descriptions imported.`);
     setSummary(await get<Summary>(`${base}/dictionary/summary`)); setDetails({});
     setList(await get<ObjectList>(`${base}/dictionary/objects?tab=${tab}`));
+  }
+  /** Markdown and Word for the whole source (S7), and Copy as Markdown. */
+  async function exportSource(format: 'markdown' | 'docx' | 'copy') {
+    const response = await fetch(`${base}/dictionary/export?format=${format === 'copy' ? 'markdown' : format}`);
+    if (!response.ok) { setError('The dictionary could not be exported.'); return; }
+    if (format === 'copy') { await navigator.clipboard.writeText(await response.text()); setMessage('Dictionary copied as Markdown.'); return; }
+    const name = /filename="([^"]+)"/.exec(response.headers.get('content-disposition') ?? '')?.[1] ?? `dictionary.${format === 'markdown' ? 'md' : 'docx'}`;
+    const link = document.createElement('a'); link.href = URL.createObjectURL(await response.blob()); link.download = name; link.click(); URL.revokeObjectURL(link.href);
+    setMessage(`Exported ${name}.`);
   }
   async function reloadDetail(name: string) {
     const detail = await get<Detail>(`${base}/dictionary/object?name=${encodeURIComponent(name)}`); setDetails((current) => ({ ...current, [name]: detail }));
@@ -194,7 +203,7 @@ export function DictionaryPage(props: { connectionId: string; navigate: (path: s
           </div>
           <div className="dict-tabs-actions"><Button size="small" onClick={() => setAll(false)}>Collapse all</Button><Button size="small" onClick={() => setAll(true)}>Expand all</Button></div>
         </div>
-        {!active && summary && <Landing summary={summary} isOpen={isOpen} toggle={toggle} onExport={() => setExporting(true)} onImport={(file) => void importDictionary(file)} />}
+        {!active && summary && <Landing summary={summary} isOpen={isOpen} toggle={toggle} onExport={() => setExporting(true)} onImport={(file) => void importDictionary(file)} onSourceExport={(format) => void exportSource(format)} />}
         {active && !details[active] && <p role="status">Loading {shortName(active)}…</p>}
         {active && details[active] && <ObjectView key={active} detail={details[active]!} base={base} isOpen={isOpen} toggle={toggle} navigate={props.navigate} onOpen={(name) => void openObject(name)} onChanged={() => void reloadDetail(active)} setMessage={setMessage} />}
       </div>
@@ -203,7 +212,7 @@ export function DictionaryPage(props: { connectionId: string; navigate: (path: s
   </section>;
 }
 
-function Landing(props: { summary: Summary; isOpen: (id: string) => boolean; toggle: (id: string, open: boolean) => void; onExport: () => void; onImport: (file?: File) => void }) {
+function Landing(props: { summary: Summary; isOpen: (id: string) => boolean; toggle: (id: string, open: boolean) => void; onExport: () => void; onImport: (file?: File) => void; onSourceExport: (format: 'markdown' | 'docx' | 'copy') => void }) {
   const { summary } = props; const imported = summary.importedDictionary;
   const percent = (part: number, total: number) => total ? `${Math.round(part / total * 100)}%` : '0%';
   const type = summary.source.type;
@@ -224,9 +233,10 @@ function Landing(props: { summary: Summary; isOpen: (id: string) => boolean; tog
       {imported && summary.newerThanDictionary && summary.newerThanDictionary.count > 0 && <p>{number(summary.newerThanDictionary.count)} {summary.newerThanDictionary.count === 1 ? 'table was' : 'tables were'} first seen after this dictionary was imported, so {summary.newerThanDictionary.count === 1 ? 'it has' : 'they have'} no entry in it yet: <span className="mono">{summary.newerThanDictionary.names.slice(0, 5).map(shortName).join(', ')}{summary.newerThanDictionary.count > 5 ? '…' : ''}</span></p>}
       {!imported && !['excel', 'dbt', 'tableau'].includes(type) && <p className="dict-note">No vendor dictionary imported. Descriptions are drafted by Scale Insyght from names, keys and parsed SQL, and count as documented once someone approves them.</p>}
       <div className="dict-actions">
-        {!['excel', 'dbt', 'tableau'].includes(type) && <FileInput label={imported ? 'Upload a newer dictionary' : 'Upload a dictionary (CSV or Excel)'} accept=".csv,.xlsx" onChange={(event) => props.onImport(event.target.files?.[0])} />}
+        {!['excel', 'dbt', 'tableau'].includes(type) && <FileInput label={imported ? 'Upload a newer dictionary' : 'Import dictionary file'} accept=".csv,.xlsx" onChange={(event) => props.onImport(event.target.files?.[0])} />}
         <Button variant="primary" size="small" onClick={props.onExport}>Export as interactive HTML</Button>
       </div>
+      <div className="dict-actions dict-export"><span>Whole source</span><Button size="small" onClick={() => props.onSourceExport('markdown')}>Export Markdown</Button><Button size="small" onClick={() => props.onSourceExport('docx')}>Export Word (.docx)</Button><Button size="small" onClick={() => props.onSourceExport('copy')}>Copy</Button></div>
     </Section>
     <Section id="dict-agents" title="How the agents use it" open={props.isOpen('dict-agents')} onToggle={props.toggle}>
       <p><strong>Writing SQL.</strong> Descriptions and keys tell the agents which table and join to use.</p>
@@ -268,7 +278,7 @@ function ObjectView(props: { detail: Detail; base: string; isOpen: (id: string) 
   const isTableLike = !definition || ['view', 'materialized_view'].includes(definition.kind);
   const stats: Array<[string, string]> = definition && !['view', 'materialized_view', 'calculated_field'].includes(definition.kind)
     ? [[definition.encrypted ? 'Unknown' : number(definition.reads.length), definition.reads.length === 1 ? 'table it reads' : 'tables it reads'], [definition.encrypted ? 'Unknown' : number(definition.writes.length), definition.writes.length === 1 ? 'table it writes' : 'tables it writes'], [number(definition.calledBy.length), 'called by'], [detail.custom ? 'Your team' : 'Vendor', 'built by']]
-    : detail.stats ? [[detail.stats.rows === null ? '—' : number(detail.stats.rows), 'rows'], [detail.stats.lastProfiled ? new Date(detail.stats.lastProfiled).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—', 'last profiled'],
+    : detail.stats && !['calculated_field', 'worksheet'].includes(detail.kind) ? [[detail.stats.rows === null ? '—' : number(detail.stats.rows), 'rows'], [detail.stats.lastProfiled ? new Date(detail.stats.lastProfiled).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—', 'last profiled'],
       [number(detail.stats.dependentReports), detail.stats.dependentReports === 1 ? 'report depends on it' : 'reports depend on it'], [detail.stats.builtBy.length ? detail.stats.builtBy.map(shortName).join(', ') : detail.custom ? 'Your team' : detail.source.type === 'dbt' ? 'dbt' : 'Source', 'built by']] : [];
   const defTabs = definition && definition.kind !== 'calculated_field' ? [
     { id: 'overview', label: 'Overview' }, { id: 'parameters', label: `Parameters ${definition.parameters.length}` }, { id: 'tables', label: `Tables and columns ${definition.tablesAndColumns.length}` }, { id: 'calls', label: 'Calls' }, { id: 'sql', label: 'SQL' },
@@ -277,7 +287,7 @@ function ObjectView(props: { detail: Detail; base: string; isOpen: (id: string) 
     <article className="dict-header">
       <div className="dict-header-top">
         <div><p className="dict-eyebrow">{detail.source.name}</p><h2 className="mono">{shortName(detail.name)}</h2></div>
-        <div className="dict-chips"><Badge tone={detail.custom ? 'warn' : 'primary'}>{detail.custom ? KIND_LABEL[detail.kind] : `${detail.source.type === 'dbt' || detail.source.type === 'tableau' || detail.source.type === 'excel' ? '' : 'Standard '}${(KIND_LABEL[detail.kind] ?? detail.kind).toLowerCase()}`}</Badge>
+        <div className="dict-chips"><Badge tone={detail.custom ? 'warn' : 'primary'}>{detail.custom || ['dbt', 'tableau', 'excel'].includes(detail.source.type) ? KIND_LABEL[detail.kind] ?? detail.kind : `Standard ${(KIND_LABEL[detail.kind] ?? detail.kind).toLowerCase()}`}</Badge>
           {detail.procedureKind && detail.custom && <Badge tone="muted">{PROCEDURE_KIND[detail.procedureKind]}</Badge>}
           <Button size="small" aria-expanded={!hidden} onClick={() => setHidden(!hidden)}>{hidden ? 'Show details' : 'Hide details'}</Button></div>
       </div>
@@ -357,10 +367,10 @@ function ObjectView(props: { detail: Detail; base: string; isOpen: (id: string) 
             {detail.tests.filter((test) => test.column === column.name).map((test) => <Badge key={test.test} tone="muted">{test.test}</Badge>)}</td>
           <td className="mono">{column.dataType ?? '—'}{column.nullable === false ? ' not null' : ''}</td>
           {detail.columns.some((item) => item.label && item.label !== item.name) && <td>{column.label && column.label !== column.name ? column.label : ''}</td>}
-          <td>{column.statsWithheld ? <span title={column.withheldReason}>Withheld</span> : column.nullRate === null ? '—' : `${(column.nullRate * 100).toFixed(column.nullRate < 0.01 && column.nullRate > 0 ? 2 : 1)}%`}</td>
+          <td>{column.statsWithheld ? <span title={column.withheldReason}>Withheld</span> : column.nullRate === null ? '—' : `${(column.nullRate * 100).toLocaleString('en-US', { maximumFractionDigits: column.nullRate < 0.01 && column.nullRate > 0 ? 2 : 1 })}%`}</td>
           <td>{column.statsWithheld ? <span title={column.withheldReason}>Withheld</span> : column.distinctCount === null ? '—' : number(column.distinctCount)}</td>
           <td>{column.usedBy ? `${number(column.usedBy)}` : '—'}</td>
-          <td className="dict-cell-actions">{column.tags.map((tag) => <Badge key={tag} tone="bad">{tag === 'personal' ? 'Personal' : tag.toUpperCase()}</Badge>)}<Button size="small" onClick={() => props.navigate('/lineage/columns')}>Lineage</Button></td>
+          <td className="dict-cell-actions">{column.tags.map((tag) => <Badge key={tag} tone="bad">{tag.charAt(0).toUpperCase() + tag.slice(1).replaceAll('_', ' ')}{column.inferredTags?.includes(tag) ? ' · inferred' : ''}</Badge>)}<Button size="small" onClick={() => props.navigate('/lineage/columns')}>Lineage</Button></td>
         </tr>)}</tbody></table> : <p>No columns recorded.</p>}
       {detail.columns.some((column) => column.statsWithheld) && <p className="dict-note">Withheld: tagged columns are never sampled, so their statistics are not collected.</p>}
     </Section>}

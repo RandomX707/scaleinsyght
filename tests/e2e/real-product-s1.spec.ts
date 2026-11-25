@@ -26,8 +26,9 @@ test('s1_empty_tenant_adds_real_postgres_profiles_metadata_and_answers_with_evid
   await page.getByRole('button',{name:'Explore relationships'}).click();await expect(page.locator('.er-node').filter({hasText:'public.encounters'})).toBeVisible();await expect(page.locator('.er-link--inferred')).not.toHaveCount(0);await page.screenshot({path:'docs/acceptance/s1/er.png',fullPage:true});
   await page.goto(`/dictionary?connection=${connectionId}`);await page.locator('input[type=file][accept=".csv,.xlsx"]').setInputFiles('testbed/dictionary.csv');await expect(page.getByRole('status')).toContainText('4 descriptions imported.');// Every column the read-only login can see, counted directly in the testbed (public plus the dbt analytics schema).
   const reader=new Pool({connectionString:databaseUrl.toString()});const visibleColumns=Number((await reader.query<{n:string}>("SELECT count(*)::text AS n FROM information_schema.columns WHERE table_schema NOT IN ('pg_catalog','information_schema')")).rows[0]!.n);await reader.end();
-  await expect(page.getByText(`4 / ${visibleColumns}`)).toBeVisible();await page.screenshot({path:'docs/acceptance/s1/dictionary.png',fullPage:true});
-  await page.getByRole('tab',{name:/Procedures/}).click();await expect(page.locator('summary').filter({hasText:/count_patient_encounters/})).toBeVisible();
+  await expect(page.locator('.dict-kv').filter({hasText:'Documented columns'})).toContainText(`4 of ${visibleColumns.toLocaleString('en-US')}`);await page.screenshot({path:'docs/acceptance/s1/dictionary.png',fullPage:true});
+  // Functions are listed from their stored definitions (decision 53).
+  await expect(page.getByRole('navigation',{name:'Objects'}).getByRole('button',{name:/^count_patient_encounters/})).toBeVisible();
   await page.goto('/');await page.getByLabel('Ask a question').fill('How many patients are in Testbed hospital?');
   // Planning runs on the durable runner: the POST returns as soon as the run is queued, and the card shows live status.
   const submitted=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/runs'&&response.request().method()==='POST',{timeout:15_000});const sentAt=Date.now();
