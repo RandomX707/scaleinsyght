@@ -32,10 +32,16 @@ export interface ObjectProfile {
     sensitivityTags: string[];
     /** Why each tag applies: declared by the source or inferred by the detector (decision 41). */
     sensitivityEvidence?: Array<{ tag: string; detection: 'declared' | 'inferred'; reason: string }>;
-    statistics: { nullRate: number | null; distinctCount: number | null };
+    /** Measured on untagged columns only; tagged columns and unsupported types keep null (contract 7). averageLength is for text. */
+    statistics: ColumnStatistics;
   }>;
   rowCount: number;
 }
+
+export type ColumnStatistics = { nullRate: number | null; distinctCount: number | null; averageLength?: number | null };
+/** Tables above this row count are profiled for structure and row count only; their column statistics stay unmeasured. */
+export const COLUMN_STATISTICS_ROW_LIMIT = 10_000_000;
+export const UNMEASURED: ColumnStatistics = { nullRate: null, distinctCount: null, averageLength: null };
 
 export interface ConnectorScope {
   profile?: string[];

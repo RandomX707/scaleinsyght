@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodePlannerOutput, describePlan, normalizeCatalogMentions, plannerSchema } from '../../apps/api/src/structured-planner.js';
+import { decodePlannerOutput, describePlan, normalizeCatalogMentions, plannerSchema, type PlannerFacts } from '../../apps/api/src/structured-planner.js';
 
 const catalog = [{name:'Operations workbook',assets: [{qualified_name:'Charges',columns:[{name:'charge_type',label:'Charge Type'},{name:'charged_on'},{name:'amount',label:'Amount'}]}]}];
 const declaration = {subject:'charges',grouping:null,conditions:[],comparison:false,answerable:true};
@@ -89,5 +89,56 @@ describe('structured planner with declared intent (decision 44)', () => {
   it('describes an accepted plan in plain words for verification', () => {
     const decoded = decodePlannerOutput(wrap(grouped, {...declaration,grouping:'charge type'}), catalog, []);
     expect(describePlan(decoded.steps, catalog)).toBe('Operations workbook: the number of Charges records, for each charge type, keeping the lowest 2 (ties broken alphabetically by group)');
+  });
+});
+
+describe('display labels for key columns (decision 45)', () => {
+  const catalog = [{name:'SQL Server hospital',assets:[
+    {qualified_name:'dbo.orders',columns:[{name:'order_id'},{name:'department_id'},{name:'encounter_id'}]},
+    {qualified_name:'dbo.departments',columns:[{name:'department_id'},{name:'department_code'},{name:'department_name'}]},
+    {qualified_name:'dbo.department_order_summary',columns:[{name:'department_id'},{name:'order_count'}]},
+  ]}];
+  const joins = [{source_index:0,from_name:'dbo.orders.department_id',to_name:'dbo.departments.department_id',evidence_method:'declared',confidence_score:1}];
+  const stat = (distinctCount: number, averageLength: number | null = null, nullRate = 0) => ({distinctCount,nullRate,averageLength});
+  const facts = (): PlannerFacts => [{
+    'dbo.orders': {rowCount:1500,columns:{order_id:stat(1500),department_id:stat(12),encounter_id:stat(900)}},
+    'dbo.departments': {rowCount:12,columns:{department_id:stat(12),department_code:stat(12,5),department_name:stat(12,9.4)}},
+    'dbo.department_order_summary': {rowCount:12,columns:{department_id:stat(12),order_count:stat(12)}},
+  }];
+  const perDepartment = {...step,kind:'group_by',table:'dbo.orders',groupBy:'dbo.orders.department_id',
+    declared:{...declared,subject_table:'dbo.orders',grouping_column:'dbo.orders.department_id'}};
+  const decode = (item: Record<string, unknown>, known: PlannerFacts = facts(), relations = joins) => decodePlannerOutput(wrap(item,{...declaration,grouping:'department'}), catalog, relations, known).steps[0]!;
+
+  it('shows the related name, chosen from profile facts, when a plan groups by a key column', () => {
+    const decoded = decode(perDepartment);
+    expect(decoded.display).toEqual({key:'dbo.orders.department_id',label:'dbo.departments.department_name',via:'dbo.orders.department_id = dbo.departments.department_id'});
+    expect(decoded.intent).toEqual({kind:'grouped_join',leftTable:'dbo.orders',rightTable:'dbo.departments',leftColumn:'department_id',rightColumn:'department_id',
+      groupByTable:'right',groupBy:'department_name',groupKey:'department_id',aggregate:{operation:'count'},filters:[],order:'desc',limit:100});
+    // Verification checks the computation the model planned; the label changes only how each group is shown.
+    expect(describePlan([decoded], catalog)).toBe('SQL Server hospital: the number of dbo.orders records, for each department_id');
+  });
+  it('relabels a grouped join that groups by its own join key', () => {
+    const byKey = {...perDepartment,kind:'grouped_join',join:'dbo.orders.department_id = dbo.departments.department_id',groupBy:'dbo.departments.department_id',
+      declared:{...perDepartment.declared,grouping_column:'dbo.departments.department_id'}};
+    expect(decode(byKey).intent).toMatchObject({kind:'grouped_join',groupByTable:'right',groupBy:'department_name',groupKey:'department_id'});
+  });
+  it('keeps the key when the relationship or the label cannot be trusted', () => {
+    const keep = (known: PlannerFacts, relations = joins) => decode(perDepartment, known, relations);
+    const withNulls = facts(); withNulls[0]!['dbo.orders']!.columns.department_id = stat(12, null, 0.02);
+    expect(keep(withNulls).display).toBeNull();
+    expect(keep(facts(), [{...joins[0]!,evidence_method:'inferred',confidence_score:0.97}]).display).toBeNull();
+    const repeated = facts(); repeated[0]!['dbo.departments']!.columns = {department_id:stat(12),department_code:stat(11,5),department_name:stat(11,9)};
+    expect(keep(repeated).display).toBeNull();
+    expect(keep([]).intent).toMatchObject({kind:'group_by',groupBy:'department_id'});
+    const tagged = [{...catalog[0]!,assets:catalog[0]!.assets.map(asset => asset.qualified_name !== 'dbo.departments' ? asset
+      : {...asset,columns:asset.columns.map(column => ({...column,sensitivity_tags:column.name === 'department_id' ? [] : ['personal']}))})}];
+    expect(decodePlannerOutput(wrap(perDepartment,{...declaration,grouping:'department'}), tagged, joins, facts()).steps[0]!.display).toBeNull();
+  });
+  it('rejects grouping a table by a column that is unique in it', () => {
+    // Q31 seen once: orders per department read from a one-row-per-department summary, so every cell was withheld.
+    const summary = {...step,kind:'group_by',table:'dbo.department_order_summary',groupBy:'dbo.department_order_summary.department_id',operation:'sum',
+      aggregateColumn:'dbo.department_order_summary.order_count',declared:{...declared,subject_table:'dbo.department_order_summary',measure:'sum',
+        measure_column:'dbo.department_order_summary.order_count',grouping_column:'dbo.department_order_summary.department_id'}};
+    expect(() => decode(summary)).toThrow('grouping_column_is_unique_in_its_table');
   });
 });

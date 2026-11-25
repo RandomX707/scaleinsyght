@@ -1,7 +1,10 @@
 import { createHash } from 'node:crypto';
 import sql from 'mssql';
 import { classifyColumn } from '@scaleinsyght/classification';
-import type { ConnectorScope, DiscoveryResult, ObjectProfile, ReadOnlyConnector } from './index.js';
+import { COLUMN_STATISTICS_ROW_LIMIT, UNMEASURED, type ColumnStatistics, type ConnectorScope, type DiscoveryResult, type ObjectProfile, type ReadOnlyConnector } from './index.js';
+
+const SQL_SERVER_TEXT = new Set(['nvarchar', 'varchar', 'nchar', 'char']);
+const SQL_SERVER_MEASURABLE = new Set([...SQL_SERVER_TEXT, 'tinyint', 'smallint', 'int', 'bigint', 'decimal', 'numeric', 'float', 'real', 'bit', 'date', 'datetime', 'datetime2', 'uniqueidentifier']);
 
 type CatalogObject = { schema_name: string; object_name: string; object_type: 'U' | 'V' };
 type CatalogColumn = { column_name: string; data_type: string; is_nullable: boolean; sensitivity: string | null };
@@ -100,7 +103,17 @@ export class SqlServerConnector implements ReadOnlyConnector {
     // Bounded text samples feed the sensitivity detector only; they are discarded here and never stored or sent to a model (decision 41).
     const sampled = new Map<string, string[]>();
     for (const column of columns) if (['nvarchar', 'varchar', 'nchar', 'char'].includes(column.data_type)) { const rows = await (await this.request()).query<{ v: string }>(`SELECT TOP (200) CAST(${quote(column.column_name)} AS nvarchar(400)) AS v FROM ${fullName} WHERE ${quote(column.column_name)} IS NOT NULL`); sampled.set(column.column_name, rows.recordset.map((row) => row.v)); }
-    return { assetKey, qualifiedName, version: createHash('sha256').update(JSON.stringify(columns)).digest('hex'), rowCount: Number(counted.recordset[0]?.row_count ?? 0), columns: columns.map((column) => { const classified = classifyColumn({ name: column.column_name, declaredTags: column.sensitivity ? [column.sensitivity.replace(/^sensitivity:/, '')] : [], sample: sampled.get(column.column_name) ?? [] }); return { name: column.column_name, dataType: column.data_type, isNullable: column.is_nullable, sensitivityTags: classified.tags, sensitivityEvidence: classified.evidence, statistics: { nullRate: null, distinctCount: null } }; }) };
+    const rowCount = Number(counted.recordset[0]?.row_count ?? 0);
+    const classified = new Map(columns.map((column) => [column.column_name, classifyColumn({ name: column.column_name, declaredTags: column.sensitivity ? [column.sensitivity.replace(/^sensitivity:/, '')] : [], sample: sampled.get(column.column_name) ?? [] })] as const));
+    // Null rate, distinct count and average text length on untagged scalar columns, in one aggregate query per table.
+    const measurable = rowCount > 0 && rowCount <= COLUMN_STATISTICS_ROW_LIMIT ? columns.filter((column) => !classified.get(column.column_name)!.tags.length && SQL_SERVER_MEASURABLE.has(column.data_type)) : [];
+    const statistics = new Map<string, ColumnStatistics>();
+    if (measurable.length) {
+      const parts = measurable.flatMap((column, index) => { const ref = quote(column.column_name); return [`COUNT_BIG(${ref}) AS n${index}`, `COUNT_BIG(DISTINCT ${ref}) AS d${index}`, SQL_SERVER_TEXT.has(column.data_type) ? `AVG(CAST(LEN(${ref}) AS float)) AS l${index}` : `CAST(NULL AS float) AS l${index}`]; });
+      const measured = (await (await this.request()).query<Record<string, string | number | null>>(`SELECT ${parts.join(',')} FROM ${fullName}`)).recordset[0]!;
+      measurable.forEach((column, index) => statistics.set(column.column_name, { nullRate: 1 - Number(measured[`n${index}`]) / rowCount, distinctCount: Number(measured[`d${index}`]), averageLength: measured[`l${index}`] === null ? null : Number(measured[`l${index}`]) }));
+    }
+    return { assetKey, qualifiedName, version: createHash('sha256').update(JSON.stringify(columns)).digest('hex'), rowCount, columns: columns.map((column) => { const found = classified.get(column.column_name)!; return { name: column.column_name, dataType: column.data_type, isNullable: column.is_nullable, sensitivityTags: found.tags, sensitivityEvidence: found.evidence, statistics: statistics.get(column.column_name) ?? UNMEASURED }; }) };
   }
 
   async structuralReferences() {

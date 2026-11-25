@@ -10,6 +10,7 @@
     "db:setup": "tsx scripts/db-setup.ts",
     "tenant:create": "tsx scripts/tenant-create.ts",
     "tenant:create:test": "tsx scripts/tenant-create.ts --test",
+    "tenant:reset-password": "tsx scripts/tenant-reset-password.ts",
     "demo:s1": "pnpm testbed:up && pnpm db:test:reset && pnpm db:migrate:test && pnpm exec concurrently -k -n api,worker,web \"pnpm exec tsx scripts/testbed-api-main.ts\" \"pnpm exec tsx scripts/testbed-worker-main.ts\" \"API_PROXY_TARGET=http://127.0.0.1:3310 pnpm --filter @scaleinsyght/web dev --host 127.0.0.1 --port 4184\"",
     "db:setup:sample": "tsx scripts/setup-sample-source.ts",
     "testbed:sqlserver:up": "tsx testbed/sqlserver/up.ts",

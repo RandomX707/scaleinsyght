@@ -83,14 +83,15 @@ async function connect() {
     await checked(path + '/discover', 'POST', {jobType: 'profile'});
   }
 }
-type Actual = {connectorType: string; value?: number | null; withheld?: true; categoryNotFound?: true; rows?: Array<{group_value: string; value: number | string}>};
+type Actual = {connectorType: string; value?: number | null; withheld?: true; categoryNotFound?: true; rows?: Array<{group_value: string; group_key?: string; value: number | string}>};
 function same(expected: Result, actual: Actual) {
   if (actual.categoryNotFound) return false;
   if (actual.withheld && typeof expected === 'number') return expected > 0 && expected < 11 && actual.value == null && !actual.rows?.length;
   if (typeof expected === 'number') return actual.value != null && Number(actual.value) === expected && !actual.rows?.length;
   const rows = actual.rows;
   return rows?.length === expected.length && expected.every(group => rows.some(row =>
-    String(row.group_value) === group.label && (row.value === '<11' ? group.value > 0 && group.value < 11 : Number(row.value) === group.value)));
+    // A key shown by its related label lists both (decision 45); the expected group may name either one.
+    (String(row.group_value) === group.label || (row.group_key != null && String(row.group_key) === group.label)) && (row.value === '<11' ? group.value > 0 && group.value < 11 : Number(row.value) === group.value)));
 }
 async function evaluate(test: Case): Promise<Item> {
   const start = performance.now();

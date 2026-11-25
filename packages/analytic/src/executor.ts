@@ -11,6 +11,7 @@ export interface StructuredResult {
   value: number;
   rows?: Array<Record<string,unknown>>;
   groupLabel?: string;
+  groupKeyLabel?: string;
   columnLabels?: Record<string,string>;
   minimumCellSize?: number;
   cellSizes?: number[];
@@ -23,7 +24,7 @@ const isSmall = (size: number | undefined) => size !== undefined && size > 0 && 
 
 export interface StructuredAnswer {
   metric: string;
-  bySource: Array<{ sourceId: string; connectorType: string; value: number | null; withheld?: true; categoryNotFound?: true; rows?: Array<Record<string,unknown>>; summary?: GroupSummary; groupLabel?: string }>;
+  bySource: Array<{ sourceId: string; connectorType: string; value: number | null; withheld?: true; categoryNotFound?: true; rows?: Array<Record<string,unknown>>; summary?: GroupSummary; groupLabel?: string; groupKeyLabel?: string }>;
   claims: Claim[];
   evidence: EvidenceRef[];
   trust: { groupCount: number; sourceCount: number; joins: Array<'group' | 'cross_group'> };
@@ -44,18 +45,19 @@ export function collateGroupResults(results: StructuredResult[]): StructuredAnsw
   }
   return {
     metric: results[0]!.metric,
-    bySource: results.map(({ sourceId, connectorType, value, rows, groupLabel, minimumCellSize, cellSizes, missingCategory }) => {
+    bySource: results.map(({ sourceId, connectorType, value, rows, groupLabel, groupKeyLabel, minimumCellSize, cellSizes, missingCategory }) => {
+      const labels = { ...(groupLabel ? { groupLabel } : {}), ...(groupKeyLabel ? { groupKeyLabel } : {}) };
       if (missingCategory) return {sourceId, connectorType, value: null, categoryNotFound: true};
       if (!rows && isSmall(minimumCellSize)) {
         return { sourceId, connectorType, value: null, withheld: true };
       }
       if (rows && cellSizes?.some(isSmall)) {
         const visibleRows = rows.map((row, index) => isSmall(cellSizes[index])
-          ? {group_value: row.group_value, value: '<11'} : row);
-        return {sourceId, connectorType, value: null, withheld: true, rows: visibleRows, ...(groupLabel ? {groupLabel} : {})};
+          ? {group_value: row.group_value, ...('group_key' in row ? {group_key: row.group_key} : {}), value: '<11'} : row);
+        return {sourceId, connectorType, value: null, withheld: true, rows: visibleRows, ...labels};
       }
       const summary = rows ? summarizeGroups(rows) : undefined;
-      return { sourceId, connectorType, value, ...(rows ? { rows } : {}), ...(summary ? { summary } : {}), ...(groupLabel ? { groupLabel } : {}) };
+      return { sourceId, connectorType, value, ...(rows ? { rows } : {}), ...(summary ? { summary } : {}), ...labels };
     }),
     claims, evidence,
     trust: { groupCount: groups.size, sourceCount: results.length, joins: groups.size > 1 ? ['group', 'cross_group'] : ['group'] },
