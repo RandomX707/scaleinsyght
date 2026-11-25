@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Badge, Button, Input, Table } from '@scaleinsyght/ui';
+import { Badge, Button, Input, Select, Table } from '@scaleinsyght/ui';
 import './agents.css';
 
 /**
@@ -31,7 +31,7 @@ export function governedRows(rows: AgentData['governed']) {
 export function AgentsScreen(props: { connections: Connection[]; request: Request }) {
   const [data, setData] = useState<AgentData | null>(null);
   const [error, setError] = useState(''); const [message, setMessage] = useState('');
-  const [draftName, setDraftName] = useState(''); const [question, setQuestion] = useState('');
+  const [draftName, setDraftName] = useState(''); const [question, setQuestion] = useState(''); const [adjusting, setAdjusting] = useState(false);
   const reload = () => props.request<AgentData>('/api/agents').then(setData);
   useEffect(() => { void reload().catch(() => setError('Agents could not be loaded.')); }, []);
   const active = props.connections.filter((item) => item.status === 'active');
@@ -46,13 +46,19 @@ export function AgentsScreen(props: { connections: Connection[]; request: Reques
       setMessage(`Draft version ${result.version} saved. A different member must approve it in the Approval matrix.`); setDraftName(''); setQuestion(''); await reload();
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'The draft could not be saved.'); }
   }
+  /** Adjust groups: move a connector agent to another source group (a new group version; plans pin versions). */
+  async function move(connectionId: string, groupId: string) {
+    try { await props.request(`/api/groups/${groupId}/members/${connectionId}`, { method: 'POST' }); setMessage('Group updated. New plans use the new group version.'); await reload(); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : 'The group could not be changed.'); }
+  }
   async function run(governedId: string, version: number) {
     try { await props.request(`/api/governed-agents/${governedId}/runs`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ version }) }); setMessage(`Governed run of version ${version} started.`); await reload(); }
     catch (reason) { setError(reason instanceof Error ? reason.message : 'The governed run could not be started.'); }
   }
   const agent = (title: string, detail: string, className = '') => <div className={`agent-node ${className}`.trim()}><b>{title}</b><span>{detail}</span></div>;
   return <section className="agents-page">
-    <div className="page-heading"><div><h1>Agents</h1><p>One agent per connector, collating agents per group of related sources, one orchestrator, and your own agent in front.</p></div></div>
+    <div className="page-heading"><div><h1>Agents</h1><p>One agent per connector, collating agents per group of related sources, one orchestrator, and your own agent in front.</p></div>
+      {groups.length > 1 && <Button aria-pressed={adjusting} onClick={() => setAdjusting(!adjusting)}>{adjusting ? 'Done adjusting' : 'Adjust groups'}</Button>}</div>
     {error && <p role="alert" className="error">{error}</p>}{message && <p role="status">{message}</p>}
     <article className="agent-tiers" aria-label="How the agents are arranged">
       {agent('Your agent', 'Learns your preferences', 'is-personal')}
@@ -61,7 +67,9 @@ export function AgentsScreen(props: { connections: Connection[]; request: Reques
       <span className="agent-down" aria-hidden="true">↓</span>
       {groups.length ? <div className="agent-groups">{groups.map((group) => <section className="agent-group" key={group.groupId} aria-label={`Collating agent for ${list(group.members.map(name))}`}>
         <div className="agent-group-head"><b>Collating agent · {list(group.members.map(name))}</b><Badge tone="muted">Proposed by profiler</Badge></div>
-        <div className="agent-row">{group.members.map((member) => <div key={member.connectionId}>{agent(name(member), `${TYPE[member.connectorType] ?? member.connectorType} agent`)}</div>)}</div>
+        <div className="agent-row">{group.members.map((member) => <div key={member.connectionId} className="agent-member">{agent(name(member), `${TYPE[member.connectorType] ?? member.connectorType} agent`)}
+          {adjusting && <Select aria-label={`Move ${name(member)} to`} value="" onChange={(event) => { if (event.target.value) void move(member.connectionId, event.target.value); }}>
+            <option value="">Move to…</option>{groups.filter((other) => other.groupId !== group.groupId).map((other) => <option key={other.groupId} value={other.groupId}>{list(other.members.map(name))}</option>)}</Select>}</div>)}</div>
       </section>)}</div> : <p className="agent-empty">No connector agents yet. Add a connector and its agent is created when the connection test passes.</p>}
       <div className="agent-row agent-ids">
         {agent('ID agent', data?.idAgent ? `${data.idAgent.fields.toLocaleString('en-US')} ID ${data.idAgent.fields === 1 ? 'field' : 'fields'} · ${data.idAgent.matches.toLocaleString('en-US')} ${data.idAgent.matches === 1 ? 'match' : 'matches'} across sources` : 'Finds identifier fields', 'is-id')}

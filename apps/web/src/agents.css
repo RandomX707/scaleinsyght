@@ -21,3 +21,5 @@
 .agents-new > summary { cursor: pointer; color: var(--muted); }
 .agents-new-form { display: grid; gap: 10px; max-width: 520px; margin-top: 10px; }
 .agents-new-form p { color: var(--faint); font-size: 12.5px; }
+.agent-member { display: grid; gap: 6px; }
+.agent-member .ui-select { min-height: 30px; padding: 4px 8px; font-size: 13px; }
