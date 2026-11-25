@@ -31,13 +31,13 @@
               "model": "gpt-6.2-sol",
               "purpose": "plan",
               "inputTokens": 4214,
-              "outputTokens": 203
+              "outputTokens": 202
             },
             {
               "model": "gpt-6.2-sol",
               "purpose": "verify",
               "inputTokens": 929,
-              "outputTokens": 31
+              "outputTokens": 30
             }
           ],
           "source_selection": {
@@ -45,14 +45,14 @@
               {
                 "name": "Operations workbook",
                 "reason": "named in your question",
-                "sourceId": "281eae25-84c8-4063-9458-41bb7849fdc4"
+                "sourceId": "11ddcc3f-0ffe-4e8c-b0ad-64edfc2bd0b5"
               }
             ],
             "unused": []
           }
         },
         "inputTokens": 4214,
-        "outputTokens": 203,
+        "outputTokens": 202,
         "summaries": [
           "Plan accepted."
         ]
@@ -106,7 +106,7 @@
               "model": "gpt-6.2-sol",
               "purpose": "verify",
               "inputTokens": 958,
-              "outputTokens": 33
+              "outputTokens": 31
             }
           ],
           "source_selection": {
@@ -114,7 +114,7 @@
               {
                 "name": "Operations workbook",
                 "reason": "used earlier in this conversation",
-                "sourceId": "281eae25-84c8-4063-9458-41bb7849fdc4"
+                "sourceId": "11ddcc3f-0ffe-4e8c-b0ad-64edfc2bd0b5"
               }
             ],
             "unused": []
@@ -137,7 +137,7 @@
   },
   {
     "question": "How many charges in the workbook were cancelled?",
-    "answer": "147 charges in the workbook were cancelled.",
+    "answer": "147 charges in the Operations workbook were cancelled.",
     "sql": [
       "Operations workbook · SELECT count(*)::text AS value,count(*) AS cell_size FROM \"main\".\"Charges\" WHERE \"status\" = $1"
     ],
@@ -184,7 +184,7 @@
               {
                 "name": "Operations workbook",
                 "reason": "named in your question",
-                "sourceId": "281eae25-84c8-4063-9458-41bb7849fdc4"
+                "sourceId": "11ddcc3f-0ffe-4e8c-b0ad-64edfc2bd0b5"
               }
             ],
             "unused": []
@@ -201,13 +201,13 @@
         "purpose": "answer",
         "typedPlan": null,
         "inputTokens": 319,
-        "outputTokens": 11
+        "outputTokens": 12
       }
     ]
   },
   {
     "question": "Total charge amount by department in the workbook, top 5",
-    "answer": "In the Operations workbook, total charges for the top five departments ranged from 11,459.65 to 41,486.17, a spread of 30,026.52.",
+    "answer": "In the Operations workbook, the top five departments’ total charges ranged from 11,459.65 to 41,486.17, a spread of 30,026.52.",
     "sql": [
       "Operations workbook · SELECT \"department\"::text AS group_value,coalesce(sum(\"amount\"),0)::text AS value,count(*) AS cell_size FROM \"main\".\"Charges\" GROUP BY \"department\" ORDER BY (coalesce(sum(\"amount\"),0)::text)::numeric DESC,\"department\" ASC LIMIT 5"
     ],
@@ -267,7 +267,7 @@
               "model": "gpt-6.2-sol",
               "purpose": "plan",
               "inputTokens": 4217,
-              "outputTokens": 247
+              "outputTokens": 225
             },
             {
               "model": "gpt-6.2-sol",
@@ -281,14 +281,14 @@
               {
                 "name": "Operations workbook",
                 "reason": "named in your question",
-                "sourceId": "281eae25-84c8-4063-9458-41bb7849fdc4"
+                "sourceId": "11ddcc3f-0ffe-4e8c-b0ad-64edfc2bd0b5"
               }
             ],
             "unused": []
           }
         },
         "inputTokens": 4217,
-        "outputTokens": 247,
+        "outputTokens": 225,
         "summaries": [
           "Plan accepted."
         ]
@@ -387,13 +387,13 @@
               "model": "gpt-6.2-sol",
               "purpose": "plan",
               "inputTokens": 4216,
-              "outputTokens": 289
+              "outputTokens": 291
             },
             {
               "model": "gpt-6.2-sol",
               "purpose": "verify",
               "inputTokens": 939,
-              "outputTokens": 34
+              "outputTokens": 35
             }
           ],
           "source_selection": {
@@ -401,14 +401,14 @@
               {
                 "name": "Operations workbook",
                 "reason": "named in your question",
-                "sourceId": "281eae25-84c8-4063-9458-41bb7849fdc4"
+                "sourceId": "11ddcc3f-0ffe-4e8c-b0ad-64edfc2bd0b5"
               }
             ],
             "unused": []
           }
         },
         "inputTokens": 4216,
-        "outputTokens": 289,
+        "outputTokens": 291,
         "summaries": [
           "Plan accepted."
         ]
@@ -417,7 +417,7 @@
   },
   {
     "question": "Does the workbook's Patients sheet have the same number of patients as the PostgreSQL testbed?",
-    "answer": "No—the workbook’s Patients sheet has 391 rows, while the PostgreSQL testbed has 500, a difference of 109 (Operations workbook: 391; PostgreSQL testbed: 500).",
+    "answer": "No—the workbook’s Patients sheet has 391 patient records, while the PostgreSQL testbed has 500, a difference of 109 (Operations workbook: 391; PostgreSQL testbed: 500).",
     "sql": [
       "Operations workbook · SELECT count(*)::text AS value,count(*) AS cell_size FROM \"main\".\"Patients\"",
       "PostgreSQL testbed · SELECT count(*)::text AS value,count(*) AS cell_size FROM \"public\".\"patients\""
@@ -447,7 +447,7 @@
                 }
               },
               "source_name": "Operations workbook",
-              "source_index": 1
+              "source_index": 0
             },
             {
               "intent": {
@@ -458,7 +458,7 @@
                 }
               },
               "source_name": "PostgreSQL testbed",
-              "source_index": 0
+              "source_index": 1
             }
           ],
           "attempts": [
@@ -466,7 +466,7 @@
               "model": "gpt-6.2-sol",
               "purpose": "plan",
               "inputTokens": 7527,
-              "outputTokens": 343
+              "outputTokens": 344
             },
             {
               "model": "gpt-6.2-sol",
@@ -480,19 +480,19 @@
               {
                 "name": "Operations workbook",
                 "reason": "named in your question",
-                "sourceId": "281eae25-84c8-4063-9458-41bb7849fdc4"
+                "sourceId": "11ddcc3f-0ffe-4e8c-b0ad-64edfc2bd0b5"
               },
               {
                 "name": "PostgreSQL testbed",
                 "reason": "named in your question",
-                "sourceId": "d75b8377-ff28-4079-ab22-6d720ea774f7"
+                "sourceId": "0fbe8136-f360-492e-a0ac-7d397726313f"
               }
             ],
             "unused": []
           }
         },
         "inputTokens": 7527,
-        "outputTokens": 343,
+        "outputTokens": 344,
         "summaries": [
           "Plan accepted."
         ]
@@ -502,7 +502,7 @@
         "purpose": "answer",
         "typedPlan": null,
         "inputTokens": 355,
-        "outputTokens": 30
+        "outputTokens": 31
       }
     ]
   }
