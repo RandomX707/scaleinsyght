@@ -116,20 +116,23 @@ export async function listObjects(client: PoolClient, tenantId: string, source: 
 }
 
 /** A plain description drafted by code from metadata only: names, types, keys and parsed SQL. Never data values. */
-export function draftDescription(input: { kind: ObjectKind; name: string; columns?: number; references?: string[]; builtBy?: Array<{ name: string; mode: string }>; readBy?: number;
+export function draftDescription(input: { kind: ObjectKind; name: string; encrypted?: boolean; columns?: number; references?: string[]; builtBy?: Array<{ name: string; mode: string }>; readBy?: number;
   analysis?: { writes: Array<{ table: string; mode: string }>; reads: string[]; calls: string[] } }): string {
   const own = input.name.replace(/\(.*\)$/, '');
-  const list = (items: string[]) => items.length <= 2 ? items.join(' and ') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`;
+  // Names read better without the default schema (dbo, public); other schemas stay.
+  const short = (value: string) => value.replace(/^(?:dbo|public|PUBLIC)\.(?=[^.]+$)/, '');
+  const list = (raw: string[]) => { const items = raw.map(short); return items.length <= 2 ? items.join(' and ') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`; };
+  if (input.encrypted) return `${input.kind === 'procedure' ? 'Procedure' : 'Routine'} whose SQL the source encrypts, so what it reads and writes is not known.`;
   if (input.analysis && ['procedure', 'function', 'package'].includes(input.kind)) {
     const how: Record<string, string> = { 'truncate-insert': 'empties and reloads', merge: 'merges into', insert: 'inserts into', update: 'updates', delete: 'deletes from' };
-    const parts = input.analysis.writes.map((write) => `${how[write.mode] ?? 'writes'} ${write.table}`);
+    const parts = input.analysis.writes.map((write) => `${how[write.mode] ?? 'writes'} ${short(write.table)}`);
     let text = parts.length ? `${input.kind === 'procedure' ? 'Procedure' : 'Routine'} that ${list(parts)}` : `${input.kind === 'procedure' ? 'Procedure' : 'Function'} that returns a result and changes no tables`;
     if (input.analysis.reads.length) text += `, reading ${list(input.analysis.reads.slice(0, 4))}${input.analysis.reads.length > 4 ? ` and ${input.analysis.reads.length - 4} more` : ''}`;
     if (input.analysis.calls.length) text += `. It runs ${list(input.analysis.calls)}`;
     return `${text}.`;
   }
   if (input.kind === 'view' || input.kind === 'materialized_view') return `View over ${input.analysis?.reads.length ? list(input.analysis.reads.slice(0, 4)) : 'other tables'}${input.columns ? `, with ${input.columns} columns` : ''}.`;
-  let text = `${input.kind === 'sheet' ? 'Sheet' : 'Table'} ${own.split('.').at(-1)}${input.columns ? ` with ${input.columns} columns` : ''}`;
+  let text = `${input.kind === 'sheet' ? 'Sheet' : 'Table'} ${short(own).split('.').at(-1)}${input.columns ? ` with ${input.columns} columns` : ''}`;
   if (input.references?.length) text += `, linked by declared keys to ${list(input.references.slice(0, 3))}`;
   text += '.';
   if (input.builtBy?.length) text += ` Loaded by ${list(input.builtBy.map((item) => item.name))}.`;
@@ -238,13 +241,13 @@ export function registerDictionaryRoutes(app: FastifyInstance, deps: DictionaryD
             items: page.map((object) => ({ name: object.name, kind: object.kind, columns: object.columns, ...(columnHits.has(object.name) ? { matchedColumns: columnHits.get(object.name) } : {}) })),
             nextOffset: start + page.length < group.items.length ? start + page.length : null };
         });
-      let sqlHits: Array<{ name: string; kind: string; lines: Array<{ line: number; text: string }> }> = [];
+      let sqlHits: Array<{ name: string; kind: string; matches: number; lines: Array<{ line: number; text: string }> }> = [];
       if (search && !onlyGroup) {
         const rows = await client.query<{ qualified_name: string; kind: string; scrubbed_text: string }>(
           `SELECT qualified_name,kind,scrubbed_text FROM graph.definitions WHERE tenant_id=$1 AND source_id=$2 AND active AND scrubbed_text ILIKE '%'||$3||'%' ORDER BY qualified_name LIMIT ${SQL_HIT_LIMIT}`,
           [current.tenantId, source.connection_id, search.replace(/[\\%_]/g, (character) => `\\${character}`)]);
         // "In SQL code" covers both tabs, as in the prototype.
-        sqlHits = rows.rows.map((row) => ({ name: row.qualified_name, kind: row.kind, lines: sqlSnippets(row.scrubbed_text, search) }));
+        sqlHits = rows.rows.map((row) => ({ name: row.qualified_name, kind: row.kind, matches: row.scrubbed_text.toLowerCase().split(search.toLowerCase()).length - 1, lines: sqlSnippets(row.scrubbed_text, search) }));
       }
       return { tab, hasVendorDictionary, counts: { standard: objects.filter((object) => !object.custom).length, custom: objects.filter((object) => object.custom).length }, groups, sqlHits };
     });
@@ -481,8 +484,10 @@ async function objectDetail(client: PoolClient, tenantId: string, connectionId: 
   else {
     const analysis = definition?.analysis ? { writes: definition.analysis.writes ?? [], reads: definition.analysis.reads ?? [], calls: definition.analysis.calls ?? [] } : undefined;
     const drafted = listed.kind === 'calculated_field' || listed.kind === 'worksheet' || listed.kind === 'datasource' || listed.kind === 'model' || listed.kind === 'source' ? null
-      : draftDescription({ kind: listed.kind, name, columns: columns.length, references: [...new Set(keys.map((key) => String(key.references).split('.').slice(0, -1).join('.')))], builtBy, readBy: readBy.length, ...(analysis ? { analysis } : {}) });
-    if (drafted) await client.query(`INSERT INTO graph.description_reviews(tenant_id,source_id,qualified_name,field_name,drafted_text,drafted_by) VALUES($1,$2,$3,'',$4,'code') ON CONFLICT DO NOTHING`, [tenantId, connectionId, name, drafted]);
+      : draftDescription({ kind: listed.kind, name, encrypted: definition?.encrypted ?? false, columns: columns.length, references: [...new Set(keys.map((key) => String(key.references).split('.').slice(0, -1).join('.')))], builtBy, readBy: readBy.length, ...(analysis ? { analysis } : {}) });
+    if (drafted) await client.query(`INSERT INTO graph.description_reviews(tenant_id,source_id,qualified_name,field_name,drafted_text,drafted_by) VALUES($1,$2,$3,'',$4,'code')
+      ON CONFLICT(tenant_id,source_id,qualified_name,field_name) DO UPDATE SET drafted_text=EXCLUDED.drafted_text,drafted_at=clock_timestamp()
+      WHERE graph.description_reviews.status='draft' AND graph.description_reviews.drafted_text<>EXCLUDED.drafted_text`, [tenantId, connectionId, name, drafted]);
     const review = (await client.query<{ drafted_text: string; status: string; final_text: string | null; decided_at: Date | null; decided_by: string | null }>(
       `SELECT r.drafted_text,r.status,r.final_text,r.decided_at,u.display_name AS decided_by FROM graph.description_reviews r LEFT JOIN core.users u ON u.tenant_id=r.tenant_id AND u.user_id=r.decided_by
        WHERE r.tenant_id=$1 AND r.source_id=$2 AND r.qualified_name=$3 AND r.field_name=''`, [tenantId, connectionId, name])).rows[0];
