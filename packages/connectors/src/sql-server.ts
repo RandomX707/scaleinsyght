@@ -99,19 +99,22 @@ export class SqlServerConnector implements ReadOnlyConnector {
     const [qualifiedName, object] = found;
     const columns = await this.columns(object);
     const fullName = `${quote(object.schema_name)}.${quote(object.object_name)}`;
-    const counted = await (await this.request()).query<{ row_count: number }>(`SELECT COUNT_BIG(*) AS row_count FROM ${fullName}`);
+    let rowCount: number | null = null;
+    try {
+      const counted = await (await this.request()).query<{row_count:number}>(`SELECT COUNT_BIG(*) AS row_count FROM ${fullName}`);
+      rowCount = counted.recordset[0]?.row_count == null ? null : Number(counted.recordset[0].row_count);
+    } catch { /* Unavailable counts are excluded from change comparisons. */ }
     // Bounded text samples feed the sensitivity detector only; they are discarded here and never stored or sent to a model (decision 41).
     const sampled = new Map<string, string[]>();
-    for (const column of columns) if (['nvarchar', 'varchar', 'nchar', 'char'].includes(column.data_type)) { const rows = await (await this.request()).query<{ v: string }>(`SELECT TOP (200) CAST(${quote(column.column_name)} AS nvarchar(400)) AS v FROM ${fullName} WHERE ${quote(column.column_name)} IS NOT NULL`); sampled.set(column.column_name, rows.recordset.map((row) => row.v)); }
-    const rowCount = Number(counted.recordset[0]?.row_count ?? 0);
+    for (const column of columns) if (rowCount !== null && ['nvarchar', 'varchar', 'nchar', 'char'].includes(column.data_type)) { const rows = await (await this.request()).query<{ v: string }>(`SELECT TOP (200) CAST(${quote(column.column_name)} AS nvarchar(400)) AS v FROM ${fullName} WHERE ${quote(column.column_name)} IS NOT NULL`); sampled.set(column.column_name, rows.recordset.map((row) => row.v)); }
     const classified = new Map(columns.map((column) => [column.column_name, classifyColumn({ name: column.column_name, declaredTags: column.sensitivity ? [column.sensitivity.replace(/^sensitivity:/, '')] : [], sample: sampled.get(column.column_name) ?? [] })] as const));
     // Null rate, distinct count and average text length on untagged scalar columns, in one aggregate query per table.
-    const measurable = rowCount > 0 && rowCount <= COLUMN_STATISTICS_ROW_LIMIT ? columns.filter((column) => !classified.get(column.column_name)!.tags.length && SQL_SERVER_MEASURABLE.has(column.data_type)) : [];
+    const measurable = rowCount !== null && rowCount > 0 && rowCount <= COLUMN_STATISTICS_ROW_LIMIT ? columns.filter((column) => !classified.get(column.column_name)!.tags.length && SQL_SERVER_MEASURABLE.has(column.data_type)) : [];
     const statistics = new Map<string, ColumnStatistics>();
     if (measurable.length) {
       const parts = measurable.flatMap((column, index) => { const ref = quote(column.column_name); return [`COUNT_BIG(${ref}) AS n${index}`, `COUNT_BIG(DISTINCT ${ref}) AS d${index}`, SQL_SERVER_TEXT.has(column.data_type) ? `AVG(CAST(LEN(${ref}) AS float)) AS l${index}` : `CAST(NULL AS float) AS l${index}`]; });
       const measured = (await (await this.request()).query<Record<string, string | number | null>>(`SELECT ${parts.join(',')} FROM ${fullName}`)).recordset[0]!;
-      measurable.forEach((column, index) => statistics.set(column.column_name, { nullRate: 1 - Number(measured[`n${index}`]) / rowCount, distinctCount: Number(measured[`d${index}`]), averageLength: measured[`l${index}`] === null ? null : Number(measured[`l${index}`]) }));
+      measurable.forEach((column, index) => statistics.set(column.column_name, { nullRate: 1 - Number(measured[`n${index}`]) / rowCount!, distinctCount: Number(measured[`d${index}`]), averageLength: measured[`l${index}`] === null ? null : Number(measured[`l${index}`]) }));
     }
     return { assetKey, qualifiedName, version: createHash('sha256').update(JSON.stringify(columns)).digest('hex'), rowCount, columns: columns.map((column) => { const found = classified.get(column.column_name)!; return { name: column.column_name, dataType: column.data_type, isNullable: column.is_nullable, sensitivityTags: found.tags, sensitivityEvidence: found.evidence, statistics: statistics.get(column.column_name) ?? UNMEASURED }; }) };
   }

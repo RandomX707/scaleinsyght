@@ -23,28 +23,12 @@ So **#17 and #18 are both merged.**
 - **riverside-health sources:** PostgreSQL (`pgs`) and SQL Server (`sql`) were already connected by Yashaswi; the Operations workbook was added through Add connector, and PostgreSQL and SQL Server were re-profiled so display labels work. No dbt project, no Tableau and no nightly refresh have been run there yet (`profiler.nightly_schedules` is backfilled by migration 032 when 4284 is migrated). Drafts Yashaswi created were left alone.
 - `../scaleinsyght/.env` was changed: `MODEL_DAILY_COST_CAP_USD=5`, `MODEL_DAILY_USER_COST_CAP_USD=1`, token cap removed (backup in my scratchpad as `main-env-backup`).
 
-## S7 state (branch `s7-saved-exports`, commit 4323e76, WIP, no PR)
+## S7 state
 
-Base: `s6-nightly` before its final lockfile and resilience commits. **First merge `origin/main` into it and run `pnpm install`.** Decision 49 is drafted in `docs/decisions.md` on the branch.
-
-Done (written and typechecked, lint clean; not yet run against si_test):
-- Save from a thumbs up: `POST /api/runs/:runId/save` (`apps/api/src/server.ts`); "Save this question" button after Useful (`apps/web/src/main.tsx`, `saveQuestion`).
-- Starting from a saved question reuses its typed steps (query intents or lineage requests) with no model call, in a new conversation (`/api/me/saved-questions/:planId/start`); My agent navigates to `/conversations/:id`. Previously it built a plan with no typed steps that no real source could run.
-- Governed draft from a saved question: `POST /api/governed-agents` with `planId` pins the saved typed steps (same bug as above, fixed for this path only).
-- Evidence packs include the question and every group row (withheld cells stay `<11`) and lineage links: `packages/reports/src/index.ts` (`figureLines`, `safeEvidencePack`, PDF, XLSX, PPTX).
-- Dictionary export: `packages/reports/src/dictionary.ts` (Markdown and Word via jszip), route `GET /api/connections/:connectionId/dictionary/export?format=markdown|docx` (shares `DICTIONARY_SQL` with the dictionary route), buttons Export Markdown, Export Word (.docx) and Copy on the Dictionary page; `jszip` added to `packages/reports/package.json`.
-- Test helper to open exports: `tests/support/document-text.ts` (PDF text from pdfkit streams, XLSX rows, PPTX and DOCX text).
-- Walkthrough written: `tests/e2e/real-product-s7-saved-exports.spec.ts` (ask, save, three exports checked against `testbed/truth.json`, reuse with zero model calls, governed report approved by a second person, run, export, scheduled run, Dictionary Markdown and Word).
-
-Half-done:
-- The walkthrough has never run; expect fixes (selectors, the second user's entitlements, scheduler timing). The scheduled run depends on the testbed worker's `dispatchDueSchedule` picking up `reports.schedules` within 90 seconds.
-- `tests/contracts/c1_saved_questions_reports.test.ts` and `c2_governed_agent.test.ts` may expect the old start and draft behaviour; run `pnpm test:contracts`.
-- No UI yet to make a governed agent from a saved question (API only); the Reports page was not reviewed against the prototype.
-
-Not started:
-- Gap audit row "Saved questions, reports, exports and evidence packs" (still Missing until the walkthrough passes).
-- Eval questions for S7 (none needed unless planning changes).
-- S8 (Tableau `.twb` reader and upload, Power BI `.pbit` reader that stays Missing without a real file, Snowflake skipped: no `SNOWFLAKE_*` in `.env`), Part 3 prototype fidelity, Part 4 final check, and updating `docs/overnight-report.md` for today.
+- Rebased `s7-saved-exports` on main through PR #29. Restored the merged review and Tableau UI while retaining S7 additions.
+- Reports now submits a saved question for review. The S7 walkthrough uses Reports and Approval matrix to submit, approve, save, run, export and schedule.
+- Failed count queries produce an unavailable count and cannot trigger a row-count change. Added a PostgreSQL slow-view regression.
+- Verification, merge and 4284 redeployment are pending.
 
 ## Open problems and known issues
 

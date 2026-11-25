@@ -1,4 +1,4 @@
-import { test, expect, type Page, request as playwrightRequest } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { config } from 'dotenv';
@@ -24,7 +24,7 @@ async function download(page: Page, button: string): Promise<Buffer> {
 }
 function expectFigures(text: string) { for (const row of expected) expect(text, row.departmentName).toContain(`${row.departmentName} (${row.departmentId}): ${row.orderCount}`); }
 
-test('s7_saved_question_reuse_exports_governed_report_schedule_and_dictionary_match_truth', async ({ page, baseURL }) => {
+test('s7_saved_question_reuse_exports_governed_report_schedule_and_dictionary_match_truth', async ({ page, browser }) => {
   test.setTimeout(300_000);
   const tenantId = `exports-${randomUUID()}`; const email = `analyst@${tenantId}.test.invalid`; const password = 'exports-walkthrough-password-2026';
   await createTenant(adminPool, { tenantId, name: 'Exports workspace', displayName: 'Test Analyst', email, password });
@@ -67,20 +67,39 @@ test('s7_saved_question_reuse_exports_governed_report_schedule_and_dictionary_ma
   expect(reruns.rows[0]!.n).toBe('0');
 
   // Governed report from the saved question, approved by a second person, run on demand and on a schedule.
-  const saved = await (await page.request.get('/api/me/saved-questions')).json() as { questions: Array<{ planId: string }> };
-  const governed = await (await page.request.post('/api/governed-agents', { data: { name: 'Orders by department', planId: saved.questions[0]!.planId } })).json() as { governedId: string; version: number };
-  const approver = await playwrightRequest.newContext({ baseURL: baseURL! });
-  expect((await approver.post('/api/auth/login', { data: { tenantId, email: approverEmail, password } })).ok()).toBeTruthy();
-  expect((await approver.post(`/api/governed-agents/${governed.governedId}/approve`, { data: { version: governed.version } })).ok()).toBeTruthy();
-  await approver.dispose();
-  const report = await (await page.request.post('/api/me/reports', { data: { name: 'Orders by department', governedId: governed.governedId, version: governed.version } })).json() as { reportId: string };
-  expect((await page.request.post(`/api/me/reports/${report.reportId}/run`)).status()).toBe(201);
-  await expect.poll(async () => ((await (await page.request.get('/api/me/reports')).json()) as { reports: Array<{ reportId: string; latestSnapshotId: string | null }> }).reports.find((item) => item.reportId === report.reportId)?.latestSnapshotId ?? null, { timeout: 60_000 }).not.toBeNull();
-  const reportPdf = Buffer.from(await (await page.request.get(`/api/me/reports/${report.reportId}/exports/pdf`)).body());
-  expectFigures(pdfText(reportPdf));
-  const schedule = await (await page.request.post('/api/me/schedules', { data: { reportId: report.reportId, localTime: '06:00', cadence: 'daily' } })).json() as { scheduleId: string };
+  await page.goto('/reports');
+  await page.getByLabel('Report name').fill('Orders by department');
+  await page.getByLabel('Saved question').selectOption({label:question});
+  await page.getByRole('button',{name:'Send for approval'}).click();
+  await expect(page.getByRole('status')).toContainText('Sent for approval');
+  const reviewer = await browser.newContext();
+  const reviewPage = await reviewer.newPage();
+  await reviewPage.goto(new URL(`/login?tenant=${tenantId}`,page.url()).href);
+  await reviewPage.getByLabel('Email').fill(approverEmail);
+  await reviewPage.getByLabel('Password').fill(password);
+  await reviewPage.getByRole('button',{name:'Sign in',exact:true}).click();
+  await expect(reviewPage.getByRole('heading',{name:'Good afternoon, Second Approver'})).toBeVisible();
+  await reviewPage.goto(new URL('/approval-matrix',page.url()).href);
+  const definition = reviewPage.locator('article div').filter({hasText:'Orders by department · version 1 · Awaiting approval'}).filter({has:reviewPage.getByRole('button',{name:'Approve version 1'})});
+  await definition.last().getByRole('button',{name:'Approve version 1'}).click();
+  await expect(reviewPage.getByText('Orders by department · version 1 · Approved',{exact:true})).toBeVisible();
+  await reviewer.close();
+
+  await page.reload();
+  await page.getByLabel('Report name').fill('Orders by department');
+  await page.getByLabel('Approved definition').selectOption({label:'Orders by department · version 1'});
+  await page.getByRole('button',{name:'Save report'}).click();
+  await page.getByRole('button',{name:'Run report'}).click();
+  await expect(async()=>{
+    await page.reload();
+    await expect(page.getByRole('button',{name:'Download PDF'})).toBeVisible({timeout:2000});
+  }).toPass({timeout:60_000});
+  expectFigures(pdfText(await download(page,'Download PDF')));
+  await page.getByLabel('Daily schedule for Orders by department').fill('06:00');
+  await page.getByRole('button',{name:'Schedule daily'}).click();
+  await expect(page.getByRole('status')).toContainText('Daily schedule saved');
   const before = await withTenant(adminPool, tenantId, (db) => db.query<{ n: string }>('SELECT count(*)::text AS n FROM reports.snapshots WHERE tenant_id=$1', [tenantId]));
-  await withTenant(adminPool, tenantId, (db) => db.query("UPDATE reports.schedules SET next_run_at=clock_timestamp()-interval '1 minute' WHERE tenant_id=$1 AND schedule_id=$2", [tenantId, schedule.scheduleId]));
+  await withTenant(adminPool, tenantId, (db) => db.query("UPDATE reports.schedules SET next_run_at=clock_timestamp()-interval '1 minute' WHERE tenant_id=$1", [tenantId]));
   await expect.poll(async () => Number((await withTenant(adminPool, tenantId, (db) => db.query<{ n: string }>('SELECT count(*)::text AS n FROM reports.snapshots WHERE tenant_id=$1', [tenantId]))).rows[0]!.n), { timeout: 90_000 }).toBeGreaterThan(Number(before.rows[0]!.n));
 
   // The source's dictionary in Markdown and Word: every table and column, statistics withheld on tagged columns.

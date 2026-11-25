@@ -23,7 +23,7 @@ export function findingText(finding: Finding): string {
       if (detail.change === 'dropped') return `${finding.subject} was dropped from the source.`;
       return `${finding.subject} changed: ${[list(detail.added).length ? `added ${list(detail.added).join(', ')}` : '', list(detail.removed).length ? `removed ${list(detail.removed).join(', ')}` : '',
         ...(Array.isArray(detail.retyped) ? (detail.retyped as Array<{ column: string; from: string; to: string }>).map((item) => `${item.column} changed from ${item.from} to ${item.to}`) : [])].filter(Boolean).join('; ')}.`;
-    case 'data_anomaly': return `${finding.subject} went from ${count(detail.before)} to ${count(detail.after)} rows.`;
+    case 'data_anomaly': if(detail.change==='count_unavailable') return `${finding.subject}: count unavailable.`; return `${finding.subject} went from ${count(detail.before)} to ${count(detail.after)} rows.`;
     case 'new_tables': return `New table ${finding.subject} with ${count(detail.columns)} ${Number(detail.columns) === 1 ? 'column' : 'columns'}${detail.rows === null || detail.rows === undefined ? '' : ` and ${count(detail.rows)} ${Number(detail.rows) === 1 ? 'row' : 'rows'}`}.`;
     case 'sensitive_column': return `${finding.subject} looks ${String(detail.tag)}, inferred from its name or value format. Confirm to keep it protected, or dismiss.`;
     case 'probable_relationship': return `${finding.subject} looks like a relationship${explanation ? `: ${explanation}` : ''}.`;
@@ -69,7 +69,7 @@ export function FindingsPanel(props: { data: Findings; decide: (findingId: strin
   return <div className="findings">
     <article className="nightly-summary">
       <div><h2>{props.data.lastNight.scheduled ? "Last night's run" : 'Latest refresh'}</h2>{props.data.lastNight.startedAt
-        ? <p>{count(props.data.lastNight.connections)} {props.data.lastNight.connections === 1 ? 'source' : 'sources'} refreshed at {new Date(props.data.lastNight.startedAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}: {count(props.data.lastNight.profiled)} changed objects profiled of {count(props.data.lastNight.listed)} listed.</p>
+        ? <p>{count(props.data.lastNight.connections)} {props.data.lastNight.connections === 1 ? 'source' : 'sources'} refreshed at {new Date(props.data.lastNight.startedAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}: {count(props.data.lastNight.profiled)} objects profiled of {count(props.data.lastNight.listed)} listed.</p>
         : <p>No nightly refresh has run yet. Each source is refreshed once a day after it is added.</p>}</div>
       <Badge tone={alerts ? 'bad' : 'good'}>{alerts} open {alerts === 1 ? 'alert' : 'alerts'}</Badge>
       <div className="nightly-stats"><div><strong>{count(nightFindings.length)}</strong><span>findings in this refresh</span></div><div><strong>{count(alerts)}</strong><span>waiting for review</span></div><div><strong>{count(props.data.findings.filter((finding) => finding.status !== 'open').length)}</strong><span>reviewed</span></div></div>
