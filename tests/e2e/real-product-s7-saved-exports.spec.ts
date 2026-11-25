@@ -16,7 +16,7 @@ const adminPool = new Pool({ connectionString: migrateUrl() });
 const postgres = new URL(process.env.DATABASE_URL_TESTBED ?? ''); if (!postgres.hostname) throw new Error('The PostgreSQL testbed is required.');
 const truth = JSON.parse(readFileSync('testbed/truth.json', 'utf8')) as { rowCounts: Record<string, number>; answerChecks: { ordersPerDepartment: { postgres: Array<{ departmentId: number; departmentName: string; orderCount: number }> } } };
 const expected = truth.answerChecks.ordersPerDepartment.postgres;
-const question = 'How many orders are there per orders.department_id in the PostgreSQL testbed?';
+const question = 'How many orders does each department have in the PostgreSQL testbed?';
 
 async function download(page: Page, button: string): Promise<Buffer> {
   const pending = page.waitForEvent('download'); await page.getByRole('button', { name: button }).last().click();
