@@ -966,7 +966,8 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
       const answer=((row.answer as {answer?:unknown}).answer??row.answer) as Parameters<typeof safeEvidencePack>[0]['answer'];
       const pack=safeEvidencePack({runId:request.params.runId,planHash:row.plan_hash,...(row.question?{question:row.question}:{}),answer});
       rendered=await renderEvidencePack(pack,format);
-    }catch(error){if(error instanceof Error&&['evidence_pack_invalid','evidence_pack_sensitive_value'].includes(error.message))return reply.code(422).send({error:error.message});throw error;}
+    }catch(error){if(error instanceof Error&&['evidence_pack_invalid','evidence_pack_sensitive_value'].includes(error.message))return reply.code(422).send({error:error.message});
+      if(error instanceof Error&&error.message==='evidence_pdf_missing_answer_text'){request.log.error({runId:request.params.runId},error.message);return reply.code(500).send({error:error.message});}throw error;}
     await withTenant(options.pool,current.tenantId,async(client)=>{
       await client.query("SELECT set_config('app.principal_id',$1,true)",[current.userId]);
       await client.query('INSERT INTO reports.export_events(tenant_id,run_id,principal_id,format,content_hash) VALUES($1,$2,$3,$4,$5)',[current.tenantId,request.params.runId,current.userId,format,rendered.contentHash]);
@@ -1083,7 +1084,9 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
       return client.query<{snapshot_id:string;run_id:string;safe_pack:SafeEvidencePack;content_hash:string}>('SELECT s.snapshot_id,s.run_id,s.safe_pack,s.content_hash FROM reports.snapshots s JOIN reports.definitions d USING(tenant_id,report_id) WHERE s.tenant_id=$1 AND s.report_id=$2 AND d.owner_id=$3 ORDER BY s.created_at DESC LIMIT 1',[current.tenantId,request.params.reportId,current.userId]);
     });
     if(!row.rowCount)return reply.code(404).send({error:'report_snapshot_not_found'});
-    const rendered=await renderEvidencePack(row.rows[0]!.safe_pack,format);
+    let rendered;
+    try{rendered=await renderEvidencePack(row.rows[0]!.safe_pack,format);}
+    catch(error){if(error instanceof Error&&error.message==='evidence_pdf_missing_answer_text'){request.log.error({runId:row.rows[0]!.run_id},error.message);return reply.code(500).send({error:error.message});}throw error;}
     await withTenant(options.pool,current.tenantId,async(client)=>{
       await client.query("SELECT set_config('app.principal_id',$1,true)",[current.userId]);
       await client.query('INSERT INTO reports.export_events(tenant_id,run_id,principal_id,format,content_hash) VALUES($1,$2,$3,$4,$5)',[current.tenantId,row.rows[0]!.run_id,current.userId,format,rendered.contentHash]);
