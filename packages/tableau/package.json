@@ -1,0 +1,10 @@
+{
+  "name": "@scaleinsyght/tableau",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": {
+    "saxes": "5.0.1"
+  }
+}

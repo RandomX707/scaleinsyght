@@ -61,6 +61,7 @@
     "@scaleinsyght/profiler": "workspace:*",
     "@scaleinsyght/registry": "workspace:*",
     "@scaleinsyght/runner": "workspace:*",
+    "@scaleinsyght/tableau": "workspace:*",
     "dotenv": "^16.6.1",
     "exceljs": "^4.4.0",
     "fastify": "^5.6.2",

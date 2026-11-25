@@ -11,13 +11,14 @@ import { decideFinding, getNotifications, listFindings, markNotificationRead, re
 import { applyPersonalContext, createAnalyticPlan, startAnalyticRun, submitFeedback, type StructuredAnswer } from '@scaleinsyght/analytic';
 import { eventsAfter } from '@scaleinsyght/runner';
 import { AnalyticPlanSchema, FlowSpecSchema, hashPlan, parseQueryIntent, type QueryIntent } from '@scaleinsyght/contracts';
-import { compareGraphSnapshots, getIdentifierPath, getImpactRadius, getLineageGraph, listIdEntities, lookupIdentifierValue, importDbtArtifacts, readDbtArtifacts, importDbtManifest, listGraphAssertions, listGraphAssets, listGraphSnapshots, listIdentifierFields, listReports, queryLineage, reconcileAssertion, reviewGraphAssertion, traceIdentifier, verifyAssertionFromRun } from '@scaleinsyght/graph';
+import { compareGraphSnapshots, getIdentifierPath, getImpactRadius, getLineageGraph, listIdEntities, lookupIdentifierValue, importDbtArtifacts, readDbtArtifacts, importTableauWorkbook, importDbtManifest, listGraphAssertions, listGraphAssets, listGraphSnapshots, listIdentifierFields, listReports, queryLineage, reconcileAssertion, reviewGraphAssertion, traceIdentifier, verifyAssertionFromRun } from '@scaleinsyght/graph';
 import { type DataStudioAdapter, type SemanticsAdapter } from '@scaleinsyght/hub-adapters';
 import { nextScheduleInstant, renderEvidencePack, safeEvidencePack, type ExportFormat, type SafeEvidencePack } from '@scaleinsyght/reports';
 import { ClaimSchema, EvidenceRefSchema } from '@scaleinsyght/contracts';
 import { authorise } from '@scaleinsyght/policy';
 import { createOidcAuthorizationRequest, verifyOidcIdToken } from '@scaleinsyght/auth-oidc';
 import { createEnrollment, hashGatewaySecret, validateGatewayPlan, validateGatewayResult } from '@scaleinsyght/customer-gateway';
+import { readTableauWorkbook } from '@scaleinsyght/tableau';
 import { parseDictionaryFile } from './dictionary-file.js';
 
 export interface TestSource { id: string; type: SourceConnectorType | 'dbt' | 'tableau' | 'power_bi'; name: string; }
@@ -1137,7 +1138,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const source=request.body?.sourceId?availableConnectorSources().find((item)=>item.id===request.body?.sourceId):undefined;
     if(request.body?.sourceId&&!source)return reply.code(400).send({error:'connector_source_not_found'});
     const connectorType=source?.type??request.body?.connectorType;
-    if(connectorType!=='postgres'&&connectorType!=='sql_server'&&connectorType!=='excel'&&connectorType!=='dbt')return reply.code(400).send({error:'connector_type_unsupported'});
+    if(connectorType!=='postgres'&&connectorType!=='sql_server'&&connectorType!=='excel'&&connectorType!=='dbt'&&connectorType!=='tableau')return reply.code(400).send({error:'connector_type_unsupported'});
     const displayName=(request.body?.displayName??source?.name??'').trim();if(displayName.length<1||displayName.length>120)return reply.code(400).send({error:'connection_name_invalid'});
     if(source){const draft=await createConnectionDraft(options.pool,{tenantId:current.tenantId,connectorType:source.type as ConnectorType,sourceRef:source.id});await withTenant(options.pool,current.tenantId,client=>client.query('UPDATE registry.connections SET display_name=$3 WHERE tenant_id=$1 AND connection_id=$2',[current.tenantId,draft.connectionId,displayName]));return reply.code(201).send({connectionId:draft.connectionId,status:'draft',connectorType:source.type,sourceName:displayName});}
     if(connectorType==='dbt'){
@@ -1150,6 +1151,18 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
         return (await client.query<{connection_id:string}>("INSERT INTO registry.connections(tenant_id,connector_type,status,display_name,source_ref) VALUES($1,'dbt','draft',$2,$3) RETURNING connection_id",[current.tenantId,displayName,`warehouse:${warehouseId}`])).rows[0]!;
       });
       if(!draft)return reply.code(400).send({error:'dbt_warehouse_not_found'});
+      return reply.code(201).send({connectionId:draft.connection_id,status:'draft',connectorType,sourceName:displayName});
+    }
+    if(connectorType==='tableau'){
+      // A Tableau workbook is read from its uploaded .twb and linked to the warehouse its data sources read (S8).
+      const warehouseId=request.body?.warehouseConnectionId;
+      if(typeof warehouseId!=='string'||!/^[0-9a-f-]{36}$/i.test(warehouseId))return reply.code(400).send({error:'tableau_warehouse_required'});
+      const draft=await withTenant(options.pool,current.tenantId,async(client)=>{
+        const warehouse=await client.query("SELECT 1 FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2 AND status='active' AND connector_type IN ('postgres','sql_server','snowflake')",[current.tenantId,warehouseId]);
+        if(!warehouse.rowCount)return null;
+        return (await client.query<{connection_id:string}>("INSERT INTO registry.connections(tenant_id,connector_type,status,display_name,source_ref) VALUES($1,'tableau','draft',$2,$3) RETURNING connection_id",[current.tenantId,displayName,`warehouse:${warehouseId}`])).rows[0]!;
+      });
+      if(!draft)return reply.code(400).send({error:'tableau_warehouse_not_found'});
       return reply.code(201).send({connectionId:draft.connection_id,status:'draft',connectorType,sourceName:displayName});
     }
     if(connectorType==='excel'){
@@ -1305,6 +1318,28 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     }catch(error){
       const code=error instanceof Error?error.message:'dbt_import_failed';
       if(['dbt_manifest_invalid','dbt_catalog_invalid','dbt_manifest_has_no_models','dbt_warehouse_unsupported'].includes(code))return reply.code(400).send({error:code});
+      if(code==='connector_allowance_exceeded')return reply.code(409).send({error:code});
+      throw error;
+    }
+  });
+  app.post<{Params:{connectionId:string};Body:{workbook?:unknown}}>('/api/connections/:connectionId/tableau-workbook',{bodyLimit:25*1024*1024},async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const row=(await withTenant(options.pool,current.tenantId,client=>client.query<{status:string;source_ref:string|null;display_name:string;warehouse_type:string|null}>(
+      `SELECT c.status,c.source_ref,c.display_name,w.connector_type AS warehouse_type FROM registry.connections c LEFT JOIN registry.connections w ON w.tenant_id=c.tenant_id AND 'warehouse:'||w.connection_id::text=c.source_ref AND w.status='active'
+       WHERE c.tenant_id=$1 AND c.connection_id=$2 AND c.connector_type='tableau'`,[current.tenantId,request.params.connectionId]))).rows[0];
+    if(!row||!row.source_ref?.startsWith('warehouse:')||!['draft','active'].includes(row.status))return reply.code(404).send({error:'tableau_connection_not_found'});
+    if(!row.warehouse_type)return reply.code(409).send({error:'tableau_warehouse_not_active'});
+    const workbook=request.body?.workbook;
+    if(typeof workbook!=='string'||!workbook.length)return reply.code(400).send({error:'tableau_workbook_required'});
+    try{
+      // The workbook is read in full before anything is activated or written; the file itself is not kept.
+      readTableauWorkbook(workbook);
+      if(row.status==='draft')await activateConnection(options.pool,{tenantId:current.tenantId,principalId:current.userId,connectorType:'tableau',connectionId:request.params.connectionId,sourceRef:row.source_ref});
+      const imported=await importTableauWorkbook(options.pool,{tenantId:current.tenantId,tableauConnectionId:request.params.connectionId,warehouseConnectionId:row.source_ref.slice('warehouse:'.length),warehouseType:row.warehouse_type,workbookName:row.display_name,workbook});
+      return reply.send({connectionId:request.params.connectionId,status:'active',imported});
+    }catch(error){
+      const code=error instanceof Error?error.message:'tableau_import_failed';
+      if(['tableau_workbook_invalid','tableau_workbook_too_large','tableau_twbx_unsupported','tableau_workbook_has_no_datasources','tableau_warehouse_unsupported'].includes(code))return reply.code(400).send({error:code});
       if(code==='connector_allowance_exceeded')return reply.code(409).send({error:code});
       throw error;
     }

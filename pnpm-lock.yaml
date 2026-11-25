@@ -226,6 +226,9 @@ importers:
       '@scaleinsyght/runner':
         specifier: workspace:*
         version: link:packages/runner
+      '@scaleinsyght/tableau':
+        specifier: workspace:*
+        version: link:packages/tableau
       dotenv:
         specifier: ^16.6.1
         version: 16.6.1
@@ -323,6 +326,9 @@ importers:
       '@scaleinsyght/runner':
         specifier: workspace:*
         version: link:../../packages/runner
+      '@scaleinsyght/tableau':
+        specifier: workspace:*
+        version: link:../../packages/tableau
       exceljs:
         specifier: ^4.4.0
         version: 4.4.0
@@ -471,6 +477,9 @@ importers:
       '@scaleinsyght/db':
         specifier: workspace:*
         version: link:../db
+      '@scaleinsyght/tableau':
+        specifier: workspace:*
+        version: link:../tableau
 
   packages/hub-adapters: {}
 
@@ -560,6 +569,12 @@ importers:
       '@scaleinsyght/registry':
         specifier: workspace:*
         version: link:../registry
+
+  packages/tableau:
+    dependencies:
+      saxes:
+        specifier: 5.0.1
+        version: 5.0.1
 
   packages/ui:
     devDependencies:
