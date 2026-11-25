@@ -69,6 +69,10 @@ export interface ReadOnlyConnector {
   routines?():Promise<Array<{qualifiedName:string;kind:'function'|'procedure';definition:string}>>;
   /** View definitions for SQL lineage parsing. definition is null when the source hides it (for example an encrypted module). */
   viewDefinitions?():Promise<Array<{qualifiedName:string;schema:string;definition:string|null}>>;
+  /** Distinct non-null values of one column, as text, for keyed fingerprinting by the ID agent. Values stay in memory:
+   * they are fingerprinted and discarded, never stored, logged or sent to a model (non-negotiable 6). Returns null
+   * when the column has more than limit distinct values. */
+  distinctValues?(qualifiedName:string,column:string,limit:number):Promise<string[]|null>;
   executeQueryIntent?(intent:unknown,includeCellSize?:boolean):Promise<{sql:string;rows:Array<Record<string,unknown>>}>;
   /** Original text of a column (for example a workbook header) when it differs from its SQL identifier. */
   categoryValues?(table: string, column: string): Promise<{sql: string; values: string[]} | undefined>;

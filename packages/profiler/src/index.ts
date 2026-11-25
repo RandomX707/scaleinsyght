@@ -3,6 +3,7 @@ import type { Pool, PoolClient } from 'pg';
 import { EncryptedArtifactStore, type StoredArtifact } from '@scaleinsyght/artifacts';
 import type { ConnectorScope, DiscoveryResult, ObjectProfile, ReadOnlyConnector, ScopeMode } from '@scaleinsyght/connectors';
 import { withTenant } from '@scaleinsyght/db';
+import { runIdAgent } from './id-agent.js';
 import { parseStatementLineage, statementHash, writeStatementLineage, SqlParserUnavailable, type LineageDialect, type StatementLineage } from '@scaleinsyght/graph';
 
 export interface ScopeRule {
@@ -23,6 +24,8 @@ export interface ProfileSummary {
   elapsedMs: number;
   /** Parsed view lineage (contract 6): views parsed, edges written and gaps recorded. */
   lineage?: { views: number; tableEdges: number; columnEdges: number; gaps: number };
+  /** ID agent: identifier fields found, fields fingerprinted and probable cross-source matches. */
+  ids?: { fields: number; fingerprinted: number; matches: number };
 }
 
 export async function saveConnectionScope(pool: Pool, tenantId: string, connectionId: string, rules: ScopeRule[]): Promise<void> {
@@ -247,8 +250,11 @@ export async function runProfile(
   });
 
   const lineage = await collectViewLineage(pool, input);
+  const masterKey = process.env.ARTIFACT_MASTER_KEY ? Buffer.from(process.env.ARTIFACT_MASTER_KEY, 'base64') : undefined;
+  const ids = await runIdAgent(pool, { ...input, ...(masterKey ? { masterKey } : {}) });
   return {
     ...(lineage ? { lineage } : {}),
+    ...(ids ? { ids } : {}),
     jobId,
     listed: discovery.coverage.listed,
     profiled: profiles.length,
@@ -464,3 +470,5 @@ export async function retireConnection(
   });
   if (store) await Promise.all(artifactIds.map((artifactId) => store.remove(input.tenantId, artifactId)));
 }
+
+export { runIdAgent, formatPattern, ID_FINGERPRINT_LIMIT } from './id-agent.js';

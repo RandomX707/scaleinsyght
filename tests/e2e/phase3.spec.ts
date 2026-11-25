@@ -13,7 +13,7 @@ test('empty_lineage_and_bi_reports_offer_source_setup_without_fixture_controls',
   await expect(idTraceLink).toBeFocused();
   await page.keyboard.press('Enter');
   await expect(page.getByRole('heading', { name: 'ID trace' })).toBeVisible();
-  await expect(page.getByText('No identifier fields detected yet.')).toBeVisible();
+  await expect(page.getByRole('heading',{name:'No identifier fields yet'})).toBeVisible();
 
   await page.getByRole('navigation', { name: 'Lineage workspace views' }).getByRole('link', { name: 'BI reports', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'BI reports' })).toBeVisible();

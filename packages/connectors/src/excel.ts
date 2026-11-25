@@ -232,6 +232,14 @@ export class ExcelConnector implements ReadOnlyConnector {
     return {sql, values: result.getRowObjectsJS().map(row => String(row.value))};
   }
 
+  async distinctValues(qualifiedName: string, column: string, limit: number): Promise<string[] | null> {
+    const sheet = (await this.load()).find((item) => item.qualifiedName === qualifiedName); if (!sheet) throw new Error('asset_not_found');
+    const position = sheet.columns.findIndex((item) => item.name === column); if (position < 0) throw new Error('column_not_found');
+    const values = new Set<string>();
+    for (const row of sheet.rows) { const value = row[position]; if (value === null || value === undefined) continue; values.add(value instanceof Date ? value.toISOString() : String(value)); if (values.size > limit) return null; }
+    return [...values];
+  }
+
   async executeQueryIntent(raw: unknown, includeCellSize = false): Promise<{ sql: string; rows: Array<Record<string, unknown>> }> {
     const sheets = await this.load();
     const tables = new Map<string, { table: Table; columns: string[] }>(sheets.map((sheet) => [sheet.qualifiedName, { table: { schema_name: 'main', table_name: sheet.qualifiedName, table_type: 'BASE TABLE' }, columns: sheet.columns.map((column) => column.name) }]));

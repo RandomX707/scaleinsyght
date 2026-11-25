@@ -144,6 +144,14 @@ export class SqlServerConnector implements ReadOnlyConnector {
     return references;
   }
 
+  async distinctValues(qualifiedName: string, column: string, limit: number): Promise<string[] | null> {
+    const object = this.objects.get(qualifiedName); if (!object) throw new Error('asset_not_found');
+    if (!(await this.columns(object)).some((item) => item.column_name === column)) throw new Error('column_not_found');
+    const ref = quote(column);
+    const result = await (await this.request()).query<{ v: string }>(`SELECT DISTINCT TOP (${limit + 1}) CAST(${ref} AS nvarchar(400)) AS v FROM ${quote(object.schema_name)}.${quote(object.object_name)} WHERE ${ref} IS NOT NULL`);
+    return result.recordset.length > limit ? null : result.recordset.map((row) => row.v);
+  }
+
   async viewDefinitions(): Promise<Array<{ qualifiedName: string; schema: string; definition: string | null }>> {
     const rows = await (await this.request()).query<{ qualified_name: string; schema_name: string; definition: string | null }>(`SELECT TOP (${this.maxRows + 1}) s.name+'.'+v.name AS qualified_name,s.name AS schema_name,m.definition
       FROM sys.views v JOIN sys.schemas s ON s.schema_id=v.schema_id LEFT JOIN sys.sql_modules m ON m.object_id=v.object_id ORDER BY qualified_name`);

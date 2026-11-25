@@ -39,3 +39,18 @@
 .lineage-answer .ui-button { min-height:28px; }
 .phase3-workspace form.lineage-find { display:flex; flex-direction:row; align-items:center; gap:6px; margin:0; }
 .phase3-workspace form.lineage-find .ui-input { width:220px; }
+.id-trace { display:flex; flex-direction:column; gap:16px; }
+.id-lookup { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px; padding:16px; border:1px solid var(--line); border-radius:12px; background:var(--surface); }
+.id-lookup h2 { margin:0; }
+.phase3-workspace form.id-lookup-form { display:flex; flex-direction:row; gap:8px; margin:0; }
+.id-lookup-form .ui-input { width:240px; }
+.id-picker { display:flex; flex-wrap:wrap; gap:6px; }
+.phase3-workspace .id-trace .ui-button.id-chip { min-height:28px; border:1px solid var(--line); background:var(--surface); color:var(--ink); border-radius:999px; padding:3px 12px; font-size:12.5px; font-weight:500; }
+.phase3-workspace .id-trace .ui-button.id-chip.on { background:var(--primary-tint); border-color:var(--primary); color:var(--primary-ink); }
+.id-tiles { grid-template-columns:repeat(4,minmax(0,1fr)); }
+.id-path { list-style:none; margin:0; padding:0; display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:10px; }
+.id-path li { display:flex; flex-direction:column; gap:4px; padding:10px; border:1px solid var(--line); border-radius:10px; }
+.id-path p { margin:0; font-size:12px; }
+.id-badges { display:flex; flex-wrap:wrap; gap:4px; }
+.id-found { margin:4px 0 0; padding-left:18px; }
+.id-path code { word-break:break-all; }
