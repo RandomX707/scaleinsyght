@@ -587,6 +587,9 @@ importers:
 
   packages/tableau:
     dependencies:
+      '@scaleinsyght/classification':
+        specifier: workspace:*
+        version: link:../classification
       saxes:
         specifier: 5.0.1
         version: 5.0.1

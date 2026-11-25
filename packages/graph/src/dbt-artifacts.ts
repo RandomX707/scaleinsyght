@@ -47,8 +47,11 @@ export function readDbtArtifacts(manifest: unknown, catalog: unknown) {
     const test = typeof node.test_metadata?.name === 'string' ? node.test_metadata.name : typeof node.name === 'string' ? node.name : null;
     if (test && /^[\w.-]{1,200}$/.test(test)) testList.push({ relation: attached, column: typeof node.column_name === 'string' && NAME.test(node.column_name) ? node.column_name : '', test });
   }
+  // Names and kinds of every model and source, for the Dictionary's dbt source (names only).
+  const modelIds = new Set(models.map((model) => model.id));
+  const objects = [...relations].map(([id, name]) => ({ name, type: modelIds.has(id) ? 'model' as const : 'source' as const })).sort((a, b) => a.name.localeCompare(b.name));
   return {
-    descriptions, testList,
+    descriptions, testList, objects,
     dbtVersion: String(m.metadata.dbt_version ?? 'unknown'), tests: Object.values(m.nodes).filter(node => node?.resource_type === 'test').length, sources: Object.keys(m.sources).length, columns,
     models: models.map((model) => ({ ...model, declaredReads: model.dependsOn.map((id) => relations.get(id)).filter((name): name is string => Boolean(name)) })),
   };
@@ -118,9 +121,9 @@ export async function importDbtArtifacts(pool: Pool, input: { tenantId: string; 
       [input.tenantId, input.dbtConnectionId, item.relation, item.column, item.test]);
     await client.query(
       `UPDATE registry.connections SET dbt_import=jsonb_build_object(
-        'importedAt',clock_timestamp(),'models',$3::integer,'tests',$4::integer)
+        'importedAt',clock_timestamp(),'models',$3::integer,'tests',$4::integer,'objects',$5::jsonb)
         WHERE tenant_id=$1 AND connection_id=$2 AND connector_type='dbt'`,
-      [input.tenantId,input.dbtConnectionId,artifacts.models.length,artifacts.tests]);
+      [input.tenantId,input.dbtConnectionId,artifacts.models.length,artifacts.tests,JSON.stringify(artifacts.objects)]);
     return { models: artifacts.models.length, tests: artifacts.tests, sources: artifacts.sources, ...totals, modelsNotInWarehouse: notInWarehouse.sort() };
   });
 }

@@ -46,7 +46,8 @@ export { classifyColumn, type SensitivityEvidence, type SensitivityTag, type Sam
  * Definition text (view, procedure, function and package SQL; Tableau formulas) with every literal replaced by a typed
  * placeholder, so stored and displayed definitions never carry data values such as hard-coded identifiers
  * (non-negotiable 6, decision 53). String literals become '<string>' (Tableau also "<string>"), numbers <number>.
- * Comments are kept, with the same replacement applied inside them. Identifiers (including digits inside names,
+ * Comment text is hidden (free text can name people or values); line breaks are kept so line numbers still match.
+ * Identifiers (including digits inside names,
  * bracketed or quoted SQL identifiers and @parameters) are unchanged.
  */
 export function scrubDefinition(text: string, dialect: 'sql' | 'tableau' = 'sql'): string {
@@ -54,6 +55,12 @@ export function scrubDefinition(text: string, dialect: 'sql' | 'tableau' = 'sql'
   const isWord = (character: string | undefined) => character !== undefined && /[A-Za-z0-9_@$#]/.test(character);
   while (index < text.length) {
     const character = text[index]!;
+    const lineComment = dialect === 'sql' ? character === '-' && text[index + 1] === '-' : character === '/' && text[index + 1] === '/';
+    if (lineComment) { const end = text.indexOf('\n', index); out += `${character}${character} <comment>`; index = end < 0 ? text.length : end; continue; }
+    if (character === '/' && text[index + 1] === '*') {
+      const end = text.indexOf('*/', index + 2); const stop = end < 0 ? text.length : end + 2;
+      out += `/* <comment>${'\n'.repeat((text.slice(index, stop).match(/\n/g) ?? []).length)} */`; index = stop; continue;
+    }
     // SQL Server Unicode string N'...'.
     if ((character === 'N' || character === 'n') && text[index + 1] === "'" && !isWord(text[index - 1])) { index++; continue; }
     if (character === "'" || (dialect === 'tableau' && character === '"')) {

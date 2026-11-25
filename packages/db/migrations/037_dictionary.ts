@@ -84,6 +84,8 @@ export function up(pgm: MigrationBuilder): void {
   ${tenantPolicy('graph.dbt_tests', 'dbt_tests_tenant')}
   GRANT DELETE ON graph.dbt_tests TO si_app;
   GRANT DELETE ON graph.dictionary_descriptions TO si_app;
+  -- Field -> dataset and referenced-field lookups for the Dictionary and the ER neighbourhood at 5,000 tables.
+  CREATE INDEX graph_relationships_structural_to ON graph.relationships(tenant_id,to_asset_id,relationship_type) WHERE family='structural';
 
   ALTER TABLE core.activity_events ADD COLUMN safe_details jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(safe_details)='object');
   ALTER TABLE core.activity_events DROP CONSTRAINT activity_events_event_type_check;
@@ -96,6 +98,7 @@ export function down(pgm: MigrationBuilder): void {
   ALTER TABLE core.activity_events DROP CONSTRAINT activity_events_event_type_check;
   ALTER TABLE core.activity_events ADD CONSTRAINT activity_events_event_type_check CHECK (event_type IN ('user_active','connector_activated','connector_retired','sso_provider_configured','sso_login_succeeded','sso_login_failed','member_invited','member_joined'));
   ALTER TABLE core.activity_events DROP COLUMN safe_details;
+  DROP INDEX graph.graph_relationships_structural_to;
   DROP TABLE graph.dbt_tests;
   ALTER TABLE graph.dictionary_descriptions DROP COLUMN origin;
   DROP TABLE graph.description_reviews;

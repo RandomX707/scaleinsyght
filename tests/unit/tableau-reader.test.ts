@@ -25,11 +25,11 @@ describe('Tableau .twb reader', () => {
     expect(field('department_id (departments)').source).toEqual({ kind: 'column', relation: 'departments', column: 'department_id' });
     const local = (...fields: string[]) => fields.map((name) => ({ datasource: null, field: name }));
     expect(field('Calculation_1002')).toMatchObject({ caption: 'Stay days', source: { kind: 'calculated', references: local('admitted_at', 'discharged_at'), usesParameters: false } });
-    expect(field('Calculation_1003').source).toEqual({ kind: 'calculated', references: local('Calculation_1002'), usesParameters: false });
-    expect(field('Calculation_1004').source).toEqual({ kind: 'calculated', references: local('Calculation_1001'), usesParameters: true });
+    expect(field('Calculation_1003').source).toEqual({ kind: 'calculated', references: local('Calculation_1002'), usesParameters: false, scrubbedFormula: 'IF [Calculation_1002] > <number> THEN "<string>" ELSE "<string>" END' });
+    expect(field('Calculation_1004').source).toEqual({ kind: 'calculated', references: local('Calculation_1001'), usesParameters: true, scrubbedFormula: '[Calculation_1001] > [Parameters].[Parameter 1]' });
     // A formula naming another data source's field keeps which data source it is.
     expect(workbook.datasources[1]!.fields.find((item) => item.name === 'Calculation_2001')!.source)
-      .toEqual({ kind: 'calculated', references: [{ datasource: 'federated.0sample1encounters', field: 'department_name' }], usesParameters: false });
+      .toEqual({ kind: 'calculated', references: [{ datasource: 'federated.0sample1encounters', field: 'department_name' }], usesParameters: false, scrubbedFormula: 'ATTR([federated.0sample1encounters].[department_name])' });
     const sql = workbook.datasources[1]!.relations[0]!;
     expect(sql.kind).toBe('custom_sql');
     expect(sql.kind === 'custom_sql' && sql.sql).toMatch(/^SELECT o\.order_id/);
@@ -42,12 +42,13 @@ describe('Tableau .twb reader', () => {
     ]);
   });
 
-  it('returns no formula text, literals or connection details, only names', () => {
+  it('returns formulas only scrubbed, and no literals, comments or connection details', () => {
     const workbook = readTableauWorkbook(fixture);
     const withoutSql = JSON.stringify(workbook.datasources.map((item) => ({ ...item, databases: [], relations: item.relations.map((relation) => relation.kind === 'custom_sql' ? { ...relation, sql: '' } : relation) })));
-    for (const secret of ['tableau_reader', 'warehouse.riverside.example', 'si_sample_source', 'other_warehouse', 'budget-secret-path', 'Over a week marker', 'COUNTD', 'DATEDIFF', 'not_a_field', 'Encounter target']) {
+    for (const secret of ['tableau_reader', 'warehouse.riverside.example', 'si_sample_source', 'other_warehouse', 'budget-secret-path', 'Over a week marker', 'not_a_field', 'Encounter target']) {
       expect(withoutSql).not.toContain(secret);
     }
+    expect(withoutSql).toContain('IF [Calculation_1002] > <number> THEN \\"<string>\\" ELSE \\"<string>\\" END');
   });
 
   it('finds formula references outside string literals and comments', () => {
