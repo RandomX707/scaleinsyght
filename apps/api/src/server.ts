@@ -10,7 +10,7 @@ import { getNotifications, markNotificationRead, readConnectionScope, readWorkbo
 import { applyPersonalContext, createAnalyticPlan, startAnalyticRun, submitFeedback, type StructuredAnswer } from '@scaleinsyght/analytic';
 import { eventsAfter } from '@scaleinsyght/runner';
 import { AnalyticPlanSchema, FlowSpecSchema, hashPlan, parseQueryIntent, type QueryIntent } from '@scaleinsyght/contracts';
-import { compareGraphSnapshots, getIdentifierPath, getImpactRadius, getLineageGraph, importDbtArtifacts, readDbtArtifacts, importDbtManifest, listGraphAssertions, listGraphAssets, listGraphSnapshots, listIdentifierFields, listReports, queryLineage, reconcileAssertion, reviewGraphAssertion, traceIdentifier, verifyAssertionFromRun } from '@scaleinsyght/graph';
+import { compareGraphSnapshots, getIdentifierPath, getImpactRadius, getLineageGraph, listIdEntities, lookupIdentifierValue, importDbtArtifacts, readDbtArtifacts, importDbtManifest, listGraphAssertions, listGraphAssets, listGraphSnapshots, listIdentifierFields, listReports, queryLineage, reconcileAssertion, reviewGraphAssertion, traceIdentifier, verifyAssertionFromRun } from '@scaleinsyght/graph';
 import { type DataStudioAdapter, type SemanticsAdapter } from '@scaleinsyght/hub-adapters';
 import { nextScheduleInstant, renderEvidencePack, safeEvidencePack, type ExportFormat, type SafeEvidencePack } from '@scaleinsyght/reports';
 import { ClaimSchema, EvidenceRefSchema } from '@scaleinsyght/contracts';
@@ -429,6 +429,17 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const {assetId,direction='both',asOf}=request.query;
     if(!assetId||!['upstream','downstream','both'].includes(direction)|| (asOf!==undefined&&!Number.isFinite(Date.parse(asOf))))return reply.code(400).send({error:'invalid_lineage_query'});
     return reply.send(await queryLineage(options.pool,{tenantId:current.tenantId,assetId,direction,...(asOf?{asOf:new Date(asOf)}:{})}));
+  });
+  app.get('/api/ids/entities',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    return reply.send({entities:await listIdEntities(options.pool,current.tenantId)});
+  });
+  app.post<{Body:{value?:string}}>('/api/ids/lookup',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    const value=request.body?.value;if(typeof value!=='string'||!value.trim()||value.length>256)return reply.code(400).send({error:'invalid_identifier_request'});
+    const key=process.env.ARTIFACT_MASTER_KEY;if(!key)return reply.code(503).send({error:'identifier_trace_unavailable'});
+    // The value only becomes a keyed fingerprint here; it is not logged, stored or returned.
+    return reply.send({matches:await lookupIdentifierValue(options.pool,{tenantId:current.tenantId,value,masterKey:Buffer.from(key,'base64')})});
   });
   app.get('/api/ids',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});

@@ -83,3 +83,20 @@ export async function collectExcelTruth() {
     },
   };
 }
+
+/** Every workbook column's cell values keyed as Sheet.snake_header, read directly from the file. */
+export async function collectExcelColumns(): Promise<Record<string, Value[]>> {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile(resolve('testbed/excel/hospital-operations.xlsx'));
+  const snake = (label: string) => label.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  const columns: Record<string, Value[]> = {};
+  for (const sheet of workbook.worksheets) {
+    const headers: string[] = []; sheet.getRow(1).eachCell((cell, index) => { headers[index - 1] = String(cell.value); });
+    headers.forEach((header, index) => {
+      const values: Value[] = [];
+      for (let rowNumber = 2; rowNumber <= sheet.rowCount; rowNumber++) values.push(plain(sheet.getRow(rowNumber).getCell(index + 1).value));
+      columns[`${sheet.name}.${snake(header)}`] = values;
+    });
+  }
+  return columns;
+}

@@ -336,3 +336,4 @@ export * from './sql-lineage.js';
 export * from './dbt-artifacts.js';
 export * from './lineage-graph.js';
 export * from './lineage-answer.js';
+export * from './id-trace.js';
