@@ -1079,7 +1079,9 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const result=await withTenant(options.pool,current.tenantId,async(client)=>client.query(
       `SELECT c.connection_id,c.connector_type,c.status,c.source_ref,c.display_name,c.connector_agent_id,c.dbt_import,w.display_name AS warehouse_name,
-        (SELECT state FROM profiler.jobs j WHERE j.tenant_id=c.tenant_id AND j.connection_id=c.connection_id ORDER BY created_at DESC LIMIT 1) AS last_job_state
+        (SELECT state FROM profiler.jobs j WHERE j.tenant_id=c.tenant_id AND j.connection_id=c.connection_id ORDER BY created_at DESC LIMIT 1) AS last_job_state,
+        CASE WHEN c.connector_type='tableau' THEN (SELECT jsonb_build_object('importedAt',e.captured_at,'datasources',(e.safe_metadata->>'datasources')::int,'worksheets',(e.safe_metadata->>'worksheets')::int)
+          FROM graph.evidence e WHERE e.tenant_id=c.tenant_id AND e.evidence_type='tableau_workbook' AND e.safe_metadata->>'connection_id'=c.connection_id::text ORDER BY e.captured_at DESC LIMIT 1) END AS tableau_import
        FROM registry.connections c LEFT JOIN registry.connections w ON w.tenant_id=c.tenant_id AND c.source_ref='warehouse:'||w.connection_id::text WHERE c.tenant_id=$1 ORDER BY c.created_at DESC`,[current.tenantId]));
     return reply.send({connections:result.rows.map((row)=>({
       connectionId:row.connection_id,
@@ -1088,7 +1090,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
       status:row.status,
       agentId:row.connector_agent_id,
       lastJobState:row.last_job_state,
-      dbtImport:row.dbt_import,warehouseName:row.warehouse_name,
+      dbtImport:row.dbt_import,warehouseName:row.warehouse_name,tableauImport:row.tableau_import??null,
     }))});
   });
   app.get('/api/analytic/sources',async(request,reply)=>{

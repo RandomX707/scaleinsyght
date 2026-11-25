@@ -75,7 +75,7 @@ export async function importTableauWorkbook(pool: Pool, input: {
   return withTenant(pool, input.tenantId, async (client) => {
     const evidence = await client.query<{ evidence_id: string }>(
       `INSERT INTO graph.evidence(tenant_id,evidence_type,safe_metadata) VALUES($1,'tableau_workbook',$2::jsonb) RETURNING evidence_id`,
-      [input.tenantId, JSON.stringify({ collector: COLLECTOR, workbook_hash: workbookHash, datasources: workbook.datasources.length, worksheets: workbook.worksheets.length })]);
+      [input.tenantId, JSON.stringify({ collector: COLLECTOR, connection_id: input.tableauConnectionId, workbook_hash: workbookHash, datasources: workbook.datasources.length, worksheets: workbook.worksheets.length })]);
     const evidenceId = evidence.rows[0]!.evidence_id;
     const seen = new Set<string>(); const written = new Map<string, Set<string>>(); // relationship -> methods
     const raised = new Set<string>(); // `${asset}\0${reason}`

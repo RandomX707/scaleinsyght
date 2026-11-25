@@ -235,6 +235,10 @@ h3 { font-size: 14px; line-height: 1.3; }
 .connector-icon { flex:none; width:34px; height:34px; display:grid; place-items:center; border-radius:9px; background:var(--primary-tint); color:var(--primary-ink); font-size:11px; font-weight:700; }
 .connector-card-status { display:flex; flex-wrap:wrap; gap:6px; }
 .connector-card>p { margin:0; font-size:12px; }
+/* Key and value facts on a tool card, as the prototype's .kv grid. */
+.connector-facts { display:grid; grid-template-columns:auto 1fr; gap:2px 12px; margin:0; font-size:13px; }
+.connector-facts dt { color:var(--faint); }
+.connector-facts dd { margin:0; min-width:0; overflow-wrap:anywhere; }
 .connector-type-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:9px; }
 .connector-type.ui-button { min-height:68px; justify-content:flex-start; gap:10px; white-space:normal; text-align:left; }
 .connector-type>span:last-child { min-width:0; }
