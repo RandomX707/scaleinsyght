@@ -5,7 +5,7 @@
 import { createHash } from 'node:crypto';
 import ExcelJS from 'exceljs';
 import { DuckDBInstance, type DuckDBConnection } from '@duckdb/node-api';
-import { POSSIBLE_REFERENCE_COVERAGE, type ConnectorScope, type DiscoveryResult, type ObjectProfile, type ReadOnlyConnector } from './index.js';
+import { POSSIBLE_REFERENCE_COVERAGE, type ConnectorScope, type DiscoveryResult, type Routine, type ObjectProfile, type ReadOnlyConnector } from './index.js';
 import { compilePostgresDialectIntent, type Table } from './postgres.js';
 import { classifyColumn } from '@scaleinsyght/classification';
 
@@ -189,7 +189,7 @@ export class ExcelConnector implements ReadOnlyConnector {
     return references.sort((left, right) => `${left.from}.${left.fromColumn}`.localeCompare(`${right.from}.${right.fromColumn}`) || left.to.localeCompare(right.to));
   }
 
-  async routines(): Promise<Array<{ qualifiedName: string; kind: 'function' | 'procedure'; definition: string }>> { return []; }
+  async routines(): Promise<Routine[]> { return []; }
 
   async columnLabels(table: string): Promise<Record<string, string>> {
     const sheet = (await this.load()).find((item) => item.qualifiedName === (table.startsWith('main.') ? table.slice(5) : table));

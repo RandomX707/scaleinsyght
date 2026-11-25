@@ -1,0 +1,32 @@
+version: 2
+# Descriptions and tests for the Dictionary (expected content: testbed/dictionary/truth.json).
+models:
+  - name: stg_orders
+    description: One row per order, copied from the hospital orders table.
+    columns:
+      - name: order_id
+        description: Order identifier.
+        tests: [unique, not_null]
+      - name: department_id
+        description: Department that placed the order.
+        tests: [not_null]
+  - name: stg_encounters
+    description: One row per encounter, copied from the hospital encounters table.
+    columns:
+      - name: encounter_id
+        tests: [unique, not_null]
+  - name: mart_department_orders
+    description: Order count and order amount per department.
+    columns:
+      - name: department_id
+        description: Department identifier.
+        tests: [unique, not_null]
+      - name: order_count
+        description: Number of orders placed by the department.
+  - name: mart_provider_encounters
+    description: Encounter count per provider.
+    columns:
+      - name: provider_id
+        tests: [unique]
+  - name: mart_order_claims
+    description: Each order with the amount later claimed, where a claim exists.

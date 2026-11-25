@@ -512,6 +512,9 @@ importers:
       '@scaleinsyght/artifacts':
         specifier: workspace:*
         version: link:../artifacts
+      '@scaleinsyght/classification':
+        specifier: workspace:*
+        version: link:../classification
       '@scaleinsyght/connectors':
         specifier: workspace:*
         version: link:../connectors

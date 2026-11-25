@@ -6,7 +6,7 @@ import type { Pool } from 'pg';
 import { withTenant, getUsage } from '@scaleinsyght/db';
 import { recordAgentRun, tenantAgent } from '@scaleinsyght/registry';
 import { activateConnection, approveGovernedVersion, createConnectionDraft, createGovernedDraft, deletePersonalMemory, getApprovedGovernedVersion, getPersonalMemory, moveConnectionToGroup, putPersonalMemory, type ConnectorType, type PersonalMemoryData } from '@scaleinsyght/registry';
-import { decryptConnectionSecret, encryptConnectionSecret, createExcelConnector, createPostgresConnector, createSqlServerConnector, type ReadOnlyConnector, type SourceConnectorType } from '@scaleinsyght/connectors';
+import { decryptConnectionSecret, encryptConnectionSecret, createExcelConnector, createPostgresConnector, createSqlServerConnector, type ReadOnlyConnector, type Routine, type SourceConnectorType } from '@scaleinsyght/connectors';
 import { EncryptedArtifactStore } from '@scaleinsyght/artifacts';
 import { decideFinding, getNotifications, listFindings, markNotificationRead, readConnectionScope, readWorkbook, retireConnection, runProfile, saveConnectionScope, storeWorkbook } from '@scaleinsyght/profiler';
 import { applyPersonalContext, createAnalyticPlan, parseLineageRequest, startAnalyticRun, submitFeedback, type StructuredAnswer } from '@scaleinsyght/analytic';
@@ -1291,7 +1291,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const result=await withTenant(options.pool,current.tenantId,async(client)=>client.query(
       DICTIONARY_SQL,[current.tenantId,request.params.connectionId]));
-    const tables=result.rows as Array<{qualified_name:string;fields:Array<{name:string;description:string|null}>}>;const columns=tables.flatMap(table=>table.fields);let routines:Array<{qualifiedName:string;kind:string;definition:string}>=[];try{routines=await (await connectorForConnection(current.tenantId,request.params.connectionId)).routines?.()??[];}catch{/* A metadata-only test connector may not expose source routines. */}return reply.send({tables:result.rows,routines,summary:{tableCount:tables.length,columnCount:columns.length,documentedColumnCount:columns.filter(field=>field.description).length,coverage:columns.length?columns.filter(field=>field.description).length/columns.length:0}});
+    const tables=result.rows as Array<{qualified_name:string;fields:Array<{name:string;description:string|null}>}>;const columns=tables.flatMap(table=>table.fields);let routines:Routine[]=[];try{routines=await (await connectorForConnection(current.tenantId,request.params.connectionId)).routines?.()??[];}catch{/* A metadata-only test connector may not expose source routines. */}return reply.send({tables:result.rows,routines,summary:{tableCount:tables.length,columnCount:columns.length,documentedColumnCount:columns.filter(field=>field.description).length,coverage:columns.length?columns.filter(field=>field.description).length/columns.length:0}});
   });
   app.get<{Params:{connectionId:string};Querystring:{format?:string}}>('/api/connections/:connectionId/dictionary/export',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});

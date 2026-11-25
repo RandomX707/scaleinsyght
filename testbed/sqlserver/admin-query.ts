@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 export const SQLSERVER_TESTBED_CONTAINER = 'si_testbed_sqlserver';
 
 export function runSqlServerAdminQuery(sql: string, database = 'master'): string {
-  if (!['master', 'si_testbed_sqlserver'].includes(database)) throw new Error('sqlserver_testbed_database_invalid');
+  if (!['master', 'si_testbed_sqlserver', 'si_testbed_dictionary'].includes(database)) throw new Error('sqlserver_testbed_database_invalid');
   const command = [
     'tool="/opt/mssql-tools18/bin/sqlcmd"; [ -x "$tool" ] || tool="/opt/mssql-tools/bin/sqlcmd"; export SQLCMDPASSWORD="$MSSQL_SA_PASSWORD"; exec "$tool" -S localhost -U sa -C -b -d "' + database + '" -h -1 -W -w 65535',
   ][0]!;

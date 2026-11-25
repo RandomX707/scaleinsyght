@@ -168,10 +168,17 @@ export class SqlServerConnector implements ReadOnlyConnector {
   }
 
   async routines() {
-    const rows = await (await this.request()).query<{ qualified_name: string; kind: 'function'|'procedure'; definition: string }>(`SELECT TOP (${this.maxCatalogRows + 1}) s.name+'.'+o.name AS qualified_name,CASE WHEN o.type='P' THEN 'procedure' ELSE 'function' END AS kind,COALESCE(OBJECT_DEFINITION(o.object_id),'') AS definition
+    // An encrypted module has no definition in sys.sql_modules (is_encrypted = 1); it is reported as encrypted, not empty.
+    const rows = await (await this.request()).query<{ object_id: number; qualified_name: string; kind: 'function'|'procedure'; definition: string | null; encrypted: boolean }>(`SELECT TOP (${this.maxCatalogRows + 1}) o.object_id,s.name+'.'+o.name AS qualified_name,CASE WHEN o.type='P' THEN 'procedure' ELSE 'function' END AS kind,OBJECT_DEFINITION(o.object_id) AS definition,
+        CAST(COALESCE(OBJECTPROPERTY(o.object_id,'IsEncrypted'),0) AS bit) AS encrypted
       FROM sys.objects o JOIN sys.schemas s ON s.schema_id=o.schema_id WHERE o.type IN ('P','FN','IF','TF') ORDER BY s.name,o.name`);
     if (rows.recordset.length > this.maxCatalogRows) throw new Error('sqlserver_connector_result_limit_exceeded');
-    return rows.recordset.map((row) => ({ qualifiedName: row.qualified_name, kind: row.kind, definition: row.definition }));
+    const parameters = await (await this.request()).query<{ object_id: number; name: string; data_type: string; is_output: boolean }>(`SELECT TOP (${this.maxCatalogRows + 1}) p.object_id,p.name,TYPE_NAME(p.user_type_id) AS data_type,p.is_output
+      FROM sys.parameters p JOIN sys.objects o ON o.object_id=p.object_id WHERE o.type IN ('P','FN','IF','TF') AND p.parameter_id>0 ORDER BY p.object_id,p.parameter_id`);
+    if (parameters.recordset.length > this.maxCatalogRows) throw new Error('sqlserver_connector_result_limit_exceeded');
+    const byObject = new Map<number, Array<{ name: string; dataType: string; mode: 'in' | 'out' | 'inout' }>>();
+    for (const parameter of parameters.recordset) byObject.set(parameter.object_id, [...(byObject.get(parameter.object_id) ?? []), { name: parameter.name, dataType: parameter.data_type, mode: parameter.is_output ? 'inout' : 'in' }]);
+    return rows.recordset.map((row) => ({ qualifiedName: row.qualified_name, kind: row.kind, definition: row.encrypted ? null : row.definition, encrypted: Boolean(row.encrypted), parameters: byObject.get(row.object_id) ?? [] }));
   }
 
   async categoryValues(table: string, column: string): Promise<{sql: string; values: string[]} | undefined> {
