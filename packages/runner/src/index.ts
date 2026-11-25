@@ -52,29 +52,37 @@ export async function claimNextStep(pool:Pool,workerId:string,leaseMs:number,ten
   if(!workerId.trim()||!Number.isSafeInteger(leaseMs)||leaseMs<1) throw new Error('invalid_claim_arguments');
   const client=await pool.connect();
   try{
-    await client.query('RESET app.tenant_id');
-    await client.query('RESET app.worker_claim');
-    await client.query('BEGIN');
-    await client.query("SELECT set_config('app.worker_claim','enabled',true)");
-    const candidate=await client.query<{tenant_id:string;run_id:string;step_id:string}>(`
-      SELECT tenant_id,run_id,step_id FROM runs.steps
-      WHERE (state='PENDING' OR (state IN ('CLAIMED','RUNNING') AND lease_expires_at<=clock_timestamp()))
-        AND ($1::text IS NULL OR tenant_id=$1)
-      ORDER BY created_at,step_order FOR UPDATE SKIP LOCKED LIMIT 1`,[tenantId??null]);
-    if(!candidate.rowCount){await client.query('COMMIT');return null;}
-    const selected=candidate.rows[0]!;
-    await client.query("SELECT set_config('app.tenant_id',$1,true)",[selected.tenant_id]);
-    const result=await client.query<{tenant_id:string;run_id:string;step_id:string;attempt:number;fencing_token:string}>(`
-      UPDATE runs.steps SET state='CLAIMED',attempt=attempt+1,fencing_token=fencing_token+1,
-        lease_owner=$4,lease_expires_at=clock_timestamp()+($5::text||' milliseconds')::interval
-      WHERE tenant_id=$1 AND run_id=$2 AND step_id=$3
-      RETURNING tenant_id,run_id,step_id,attempt,fencing_token`,[selected.tenant_id,selected.run_id,selected.step_id,workerId,leaseMs]);
-    const claim=result.rows[0]!;
-    await client.query("SELECT set_config('app.worker_claim','',true)");
-    await client.query("SELECT set_config('app.tenant_id',$1,true)",[claim.tenant_id]);
-    await appendEvent(client,claim.run_id,'step_claimed',{step_id:claim.step_id,attempt:claim.attempt,fencing_token:Number(claim.fencing_token)},claim.step_id,Number(claim.fencing_token));
-    await client.query('COMMIT');
-    return {tenantId:claim.tenant_id,runId:claim.run_id,stepId:claim.step_id,workerId,attempt:claim.attempt,fencingToken:Number(claim.fencing_token)};
+    // A few attempts: a candidate whose run ends while it is being claimed is skipped for the next one.
+    for(let attempt=0;attempt<4;attempt++){
+      await client.query('RESET app.tenant_id');
+      await client.query('RESET app.worker_claim');
+      await client.query('BEGIN');
+      await client.query("SELECT set_config('app.worker_claim','enabled',true)");
+      // The queue policies show only steps whose run is PLANNING or RUNNING (migration 035).
+      const candidate=await client.query<{tenant_id:string;run_id:string;step_id:string}>(`
+        SELECT tenant_id,run_id,step_id FROM runs.steps
+        WHERE (state='PENDING' OR (state IN ('CLAIMED','RUNNING') AND lease_expires_at<=clock_timestamp()))
+          AND ($1::text IS NULL OR tenant_id=$1)
+        ORDER BY created_at,step_order FOR UPDATE SKIP LOCKED LIMIT 1`,[tenantId??null]);
+      if(!candidate.rowCount){await client.query('COMMIT');return null;}
+      const selected=candidate.rows[0]!;
+      await client.query("SELECT set_config('app.tenant_id',$1,true)",[selected.tenant_id]);
+      // The run is locked too, as every run transition does, so a run that ends during this claim is never claimed.
+      const run=await client.query<{state:string}>('SELECT state FROM runs.runs WHERE tenant_id=$1 AND run_id=$2 FOR UPDATE',[selected.tenant_id,selected.run_id]);
+      if(!['PLANNING','RUNNING'].includes(run.rows[0]?.state??'')){await client.query('ROLLBACK');continue;}
+      const result=await client.query<{tenant_id:string;run_id:string;step_id:string;attempt:number;fencing_token:string}>(`
+        UPDATE runs.steps SET state='CLAIMED',attempt=attempt+1,fencing_token=fencing_token+1,
+          lease_owner=$4,lease_expires_at=clock_timestamp()+($5::text||' milliseconds')::interval
+        WHERE tenant_id=$1 AND run_id=$2 AND step_id=$3
+        RETURNING tenant_id,run_id,step_id,attempt,fencing_token`,[selected.tenant_id,selected.run_id,selected.step_id,workerId,leaseMs]);
+      const claim=result.rows[0]!;
+      await client.query("SELECT set_config('app.worker_claim','',true)");
+      await client.query("SELECT set_config('app.tenant_id',$1,true)",[claim.tenant_id]);
+      await appendEvent(client,claim.run_id,'step_claimed',{step_id:claim.step_id,attempt:claim.attempt,fencing_token:Number(claim.fencing_token)},claim.step_id,Number(claim.fencing_token));
+      await client.query('COMMIT');
+      return {tenantId:claim.tenant_id,runId:claim.run_id,stepId:claim.step_id,workerId,attempt:claim.attempt,fencingToken:Number(claim.fencing_token)};
+    }
+    return null;
   }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
 }
 
