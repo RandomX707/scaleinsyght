@@ -35,6 +35,9 @@ export class PostgresConnector implements ReadOnlyConnector {
     if(!Number.isSafeInteger(statementTimeoutMs)||statementTimeoutMs<1)throw new Error('postgres_statement_timeout_invalid');
     if(!Number.isSafeInteger(this.maxRows)||this.maxRows<1)throw new Error('postgres_row_limit_invalid');
     this.pool=new Pool({connectionString:input.connectionString,max:2,connectionTimeoutMillis:5000,statement_timeout:statementTimeoutMs,options:`-c default_transaction_read_only=on -c statement_timeout=${statementTimeoutMs}`});
+    // An idle connection the source closes (restart, failover, a dropped database) must not crash the process: pg emits
+    // the error on the pool, and the next query opens a fresh connection.
+    this.pool.on('error',()=>undefined);
     this.id=input.id??'postgres-source';this.name=input.name??'PostgreSQL source';
   }
 

@@ -19,6 +19,8 @@ import { claimDueSchedule, markScheduleSlotSkipped, markScheduleSlotStarted, per
 
 config({path:fileURLToPath(new URL('../../../.env',import.meta.url))});
 const pool=new Pool({connectionString:process.env.DATABASE_URL_WORKER});
+// A connection the database closes while idle is replaced on next use; it must not crash the process.
+pool.on('error',(error)=>{console.error('Database connection closed:',(error as {code?:string}).code??'unknown');});
 const artifactStore=process.env.ARTIFACT_MASTER_KEY?new EncryptedArtifactStore(resolvePath(process.env.ARTIFACT_VOLUME_PATH??'.local/artifacts'),Buffer.from(process.env.ARTIFACT_MASTER_KEY,'base64')):null;
 const workerId=`worker-${process.pid}`;
 const healthServer=createServer((request,response)=>{if(request.url==='/health'){response.writeHead(200,{'content-type':'application/json'});response.end('{"status":"ok"}');return;}response.writeHead(404);response.end();});
