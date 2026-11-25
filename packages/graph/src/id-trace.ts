@@ -19,7 +19,8 @@ export async function listIdEntities(pool: Pool, tenantId: string): Promise<IdEn
        FROM graph.id_fields i JOIN graph.assets a ON a.tenant_id=i.tenant_id AND a.asset_id=i.asset_id AND a.active
        JOIN registry.connections c ON c.tenant_id=a.tenant_id AND c.connection_id=a.source_id AND c.status='active'
        WHERE i.tenant_id=$1 AND i.active ORDER BY i.field_name`, [tenantId]);
-    const ids = fields.rows.map((row) => row.asset_id);
+    const fieldById = new Map(fields.rows.map(field => [field.asset_id, field]));
+    const ids = [...fieldById.keys()];
     const links = await client.query<{ from_id: string; to_id: string; relationship_type: string; method: string; explanation: string | null; confidence: string | null }>(
       `SELECT r.from_asset_id AS from_id,r.to_asset_id AS to_id,r.relationship_type,a.evidence_method AS method,a.explanation,a.confidence_score::text AS confidence
        FROM graph.relationships r JOIN graph.assertions a ON a.tenant_id=r.tenant_id AND a.relationship_id=r.relationship_id AND a.valid_to IS NULL AND a.review_status NOT IN ('rejected','stale')
@@ -55,7 +56,15 @@ export async function listIdEntities(pool: Pool, tenantId: string): Promise<IdEn
             // Inside a source fields are joined by trusted references; reaching another source always crosses a probable match.
             probable: row.source_id !== home.source_id,
             sharedWithHome: row.format_pattern === 'too_many_values' ? null : sharedBy.get(row.asset_id) ?? 0,
-            evidence: evidence.map((link) => ({ method: link.relationship_type === 'SAME_AS' ? `${link.method} SAME_AS` : `${link.method} reference`, explanation: link.explanation, confidence: link.confidence === null ? null : Number(link.confidence) })) };
+            evidence: evidence.map(link => {
+              const other = fieldById.get(link.from_id === row.asset_id ? link.to_id : link.from_id)!;
+              const target = `${other.source_name} · ${other.field_name}`;
+              const method = link.relationship_type === 'SAME_AS' ? `${link.method} SAME_AS` : `${link.method} reference`;
+              const explanation = link.relationship_type === 'SAME_AS'
+                ? `Possible ID match with ${target}.`
+                : link.from_id === row.asset_id ? `References ${target}.` : `Referenced by ${target}.`;
+              return {method, explanation, confidence: link.confidence === null ? null : Number(link.confidence)};
+            }) };
         }).sort((a, b) => Number(b.role === 'created') - Number(a.role === 'created') || a.sourceName.localeCompare(b.sourceName) || a.field.localeCompare(b.field)) });
     }
     return entities.sort((a, b) => b.fields.length - a.fields.length || a.label.localeCompare(b.label));

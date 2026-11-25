@@ -41,6 +41,14 @@ test('s6_refresh_from_the_approval_matrix_finds_source_changes_and_a_dismissal_i
   await expect(page.getByRole('heading', { name: 'Latest refresh' })).toBeVisible();
   await page.getByRole('button', { name: 'Run a refresh now' }).click();
   await expect(page.locator('.nightly-summary')).toContainText('1 source refreshed');
+  await expect(page.locator('.nightly-summary')).toContainText('4 objects checked, 4 changed');
+  await expect(page.getByRole('tab',{name:'Changes 4',exact:true})).toHaveAttribute('aria-selected','true');
+  await expect(page.getByText('4 Changes to review',{exact:true})).toBeVisible();
+  await expect(page.getByText('0 Suggestions',{exact:true})).toBeVisible();
+  await page.getByRole('tab',{name:'Suggestions 0',exact:true}).click();
+  await expect(page.getByText('No suggestions in this refresh',{exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Approve all suggestions'})).toHaveCount(0);
+  await page.getByRole('tab',{name:'Changes 4',exact:true}).click();
   const rows = page.locator('.findings table tbody tr');
   await expect(rows.filter({ hasText: 'public.shop_orders changed: added channel.' })).toContainText('Schema change');
   await expect(rows.filter({ hasText: 'public.legacy_codes was dropped from the source.' })).toContainText('Schema change');
@@ -49,7 +57,7 @@ test('s6_refresh_from_the_approval_matrix_finds_source_changes_and_a_dismissal_i
   await page.screenshot({ path: 'docs/acceptance/s6/approval-matrix.png', fullPage: true });
 
   await page.getByRole('tab', { name: 'All' }).click();
-  await page.getByRole('tab', { name: 'Suggestions' }).click();
+  await page.getByRole('tab', { name: /^Suggestions \d+$/ }).click();
   const sensitive = rows.filter({ hasText: 'public.customers.contact_email looks personal' });
   await sensitive.getByRole('button', { name: 'Dismiss' }).click();
   await expect(sensitive).toContainText('Dismissed');

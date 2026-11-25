@@ -83,3 +83,10 @@ Updated by Claude Code after #35. S7 (Codex) and S8 (Claude Code) are merged. Th
 - Commit `7943de2` shows “Origin unclear” because matching values do not establish direction. Names have dot breakpoints and tooltips. A render test for equal coverage passed. Browser layout verification is pending.
 - Commit `8b6945f` reserves separate space for badges and routes edges through lane gutters. Both path tests passed. Browser coverage for badge clipping and the full merge gates are pending.
 - Connectors feedback: review-feedback commit `79ecdb8` shows specific connector type labels and hides gateway controls. Typecheck passed and the S4 walkthrough has regression assertions awaiting execution. Commit `bb4f5a2` adds the dedicated dbt card and import summary (migration 034), with re-upload to the existing connection. After redeploy, re-import the same artifacts into Riverside’s existing dbt connection to populate the summary. S4 browser assertions are pending.
+
+## Post-S7 review follow-up
+
+- Branch `review-followup` in `/tmp/scaleinsyght-review-followup`, rebased on `1922537`. Migration 038 stores checked and changed counts per refresh. Historical jobs without comparison totals show that the counts are unavailable.
+- Approval matrix scopes heading counts, tab counts and rows to the selected refresh period. Its default group is populated when possible, and empty groups offer no bulk approval.
+- ID trace shows each field's measured overlap and distinct count. Relationship sentences name the other endpoint without borrowing its counts. The walkthrough checks every card against the independently generated ID truth.
+- Focused S5 and S6 browser checks and both UI render tests passed. Full gates and the three testbed passes are running on si_test via ports 3340/3341/4290. Deployment awaits those gates and green CI.
