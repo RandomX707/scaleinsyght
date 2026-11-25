@@ -52,6 +52,14 @@ test('s4_dbt_upload_view_sql_and_lineage_graph_columns_gaps_and_chat_answers_mat
   await expect(page.getByRole('status')).toContainText(`Imported ${models} models: ${declared - 1} table links declared by dbt`);
   await page.getByRole('button', { name: 'Close dialog' }).click();
 
+  const dbtCard = page.locator('.connector-card').filter({has:page.getByRole('heading',{name:'Hospital dbt project'})});
+  await expect(dbtCard).toContainText('dbt project');
+  await expect(dbtCard).toContainText('Warehouse:');
+  await expect(dbtCard).toContainText('Last import:');
+  await expect(dbtCard).toContainText(`${models} models`);
+  for (const name of ['Upload new manifest','View lineage','Remove']) await expect(dbtCard.getByRole('button',{name})).toBeVisible();
+  for (const name of ['Profile','Dictionary','ER diagram']) await expect(dbtCard.getByRole('button',{name})).toHaveCount(0);
+
   // Lineage graph: every table and view on a path, links with evidence, and the gaps from truth.
   await page.goto('/lineage');
   const datasets = new Set<string>();
