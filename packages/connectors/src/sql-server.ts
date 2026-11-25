@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import sql from 'mssql';
 import { classifyColumn } from '@scaleinsyght/classification';
-import { COLUMN_STATISTICS_ROW_LIMIT, UNMEASURED, type ColumnStatistics, type ConnectorScope, type DiscoveryResult, type ObjectProfile, type ReadOnlyConnector } from './index.js';
+import { COLUMN_STATISTICS_ROW_LIMIT, POSSIBLE_REFERENCE_COVERAGE, UNMEASURED, type ColumnStatistics, type ConnectorScope, type DiscoveryResult, type ObjectProfile, type ReadOnlyConnector } from './index.js';
 
 const SQL_SERVER_TEXT = new Set(['nvarchar', 'varchar', 'nchar', 'char']);
 const SQL_SERVER_MEASURABLE = new Set([...SQL_SERVER_TEXT, 'tinyint', 'smallint', 'int', 'bigint', 'decimal', 'numeric', 'float', 'real', 'bit', 'date', 'datetime', 'datetime2', 'uniqueidentifier']);
@@ -138,7 +138,7 @@ export class SqlServerConnector implements ReadOnlyConnector {
       const count = await (await this.request()).query<{ source_count: number; matched_count: number }>(`SELECT COUNT_BIG(src.${quote(candidate.fromColumn)}) AS source_count,COUNT_BIG(dst.${quote(candidate.toColumn)}) AS matched_count
         FROM ${quote(fromSchema)}.${quote(fromName)} src LEFT JOIN ${quote(toSchema)}.${quote(toName)} dst ON src.${quote(candidate.fromColumn)}=dst.${quote(candidate.toColumn)}`);
       const sourceCount = Number(count.recordset[0]?.source_count ?? 0); const matchedCount = Number(count.recordset[0]?.matched_count ?? 0);
-      if (sourceCount > 0 && matchedCount / sourceCount >= 0.98) references.push({ ...candidate, evidenceMethod: 'inferred',confidence:matchedCount/sourceCount,matchedCount,sourceCount });
+      if (sourceCount > 0 && matchedCount / sourceCount >= POSSIBLE_REFERENCE_COVERAGE) references.push({ ...candidate, evidenceMethod: 'inferred',confidence:matchedCount/sourceCount,matchedCount,sourceCount });
       if (references.length > this.maxRows) throw new Error('sqlserver_connector_result_limit_exceeded');
     }
     return references;

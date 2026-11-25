@@ -62,6 +62,14 @@ test('s2_empty_tenant_adds_real_sql_server_profiles_and_relationships', async ({
   const erResponse=await page.request.get(`/api/connections/${connectionId}/er`);expect(erResponse.ok()).toBeTruthy();const erData=await erResponse.json() as {relationships:Array<{from_name:string;to_name:string;evidence_method:string;confidence_score:number}>;tables:Array<{qualified_name:string;object_type:string;columns:Array<{name:string;data_type:string}>}>};expect(erData.relationships.map(item=>({from:item.from_name,to:item.to_name,evidenceMethod:item.evidence_method,confidence:Number(item.confidence_score)})).sort((a,b)=>a.from.localeCompare(b.from))).toEqual([...truth.expectedRelationships.sqlServer].sort((a,b)=>a.from.localeCompare(b.from)));expect(erData.relationships).toHaveLength(6);expect(erData.tables.find(item=>item.qualified_name==='dbo.department_order_summary')?.object_type).toBe('view');expect(erData.tables.find(item=>item.qualified_name==='dbo.patients')?.columns.some(column=>column.name.endsWith('.patient_id')&&column.data_type)).toBe(true);
   await page.getByRole('button', { name: 'Explore relationships' }).click();
   await expect(page.getByText('6 relationships')).toBeVisible();await expect(page.getByRole('heading',{name:'dbo.department_order_summary',exact:true})).toHaveCSS('text-transform','none');await expect(page.locator('.er-node--view').first()).toHaveCSS('border-top-style','dashed');await expect(page.locator('.er-link--inferred')).toHaveCount(4);await page.screenshot({ path: 'docs/acceptance/s2/er-inferred.png', fullPage: true });
+  // Decision 38: possible relationships below 0.90 appear only on request, each marked low confidence; none are used in answers.
+  const possible = page.getByLabel('Show possible relationships');
+  await expect(possible).not.toBeChecked(); await possible.check();
+  await expect(page.getByText('Declared foreign keys, inferred links above 0.90 confidence, and possible links below it, marked low confidence.')).toBeVisible();
+  const lowConfidence = await page.locator('.er-link--possible').count();
+  await expect(page.getByText(`${6 + lowConfidence} relationships`)).toBeVisible();
+  for (let index = 0; index < lowConfidence; index++) await expect(page.locator('.er-link--possible text').nth(index)).toHaveText(/^Low confidence · /);
+  await possible.uncheck(); await expect(page.getByText('6 relationships')).toBeVisible();
   await page.goto(`/dictionary?connection=${connectionId}`);
   await expect(page.locator('.dictionary-list summary').filter({ hasText: 'dbo.patients' })).toBeVisible();
   await expect(page.getByRole('button',{name:'Choose file'})).toBeVisible();
