@@ -32,7 +32,7 @@ for(const signal of ['SIGINT','SIGTERM'] as const)process.on(signal,()=>{stoppin
 async function dispatchDueNightly():Promise<boolean>{
  const due=await claimDueNightly(pool);if(!due)return false;
  let connector:ReadOnlyConnector|undefined;
- try{connector=await connectorForConnection(pool,due.tenantId,due.connectionId,artifactStore??undefined);await runProfile(pool,{tenantId:due.tenantId,connectionId:due.connectionId,connector,jobType:'nightly'});}
+ try{connector=await connectorForConnection(pool,due.tenantId,due.connectionId,artifactStore??undefined);await runProfile(pool,{tenantId:due.tenantId,connectionId:due.connectionId,connector,jobType:'nightly',scheduled:true});}
  catch(error){console.error('Nightly refresh failed:',error instanceof Error&&/^[a-z_]+$/.test(error.message)?error.message:'nightly_refresh_failed');}
  finally{await connector?.close?.();}
  return true;

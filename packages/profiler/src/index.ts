@@ -84,7 +84,7 @@ function canonicalJson(value: unknown): string {
 
 export async function runProfile(
   pool: Pool,
-  input: { tenantId: string; connectionId: string; connector: ReadOnlyConnector; jobType: 'discovery' | 'profile' | 'nightly' },
+  input: { tenantId: string; connectionId: string; connector: ReadOnlyConnector; jobType: 'discovery' | 'profile' | 'nightly'; scheduled?: boolean },
 ): Promise<ProfileSummary> {
   const started = performance.now();
   const rules = await readConnectionScope(pool, input.tenantId, input.connectionId);
@@ -101,9 +101,9 @@ export async function runProfile(
 
   await withTenant(pool, input.tenantId, async (client) => {
     await client.query(
-      `INSERT INTO profiler.jobs(tenant_id,job_id,connection_id,job_type,state)
-       VALUES($1,$2,$3,$4,'RUNNING')`,
-      [input.tenantId, jobId, input.connectionId, input.jobType],
+      `INSERT INTO profiler.jobs(tenant_id,job_id,connection_id,job_type,state,scheduled)
+       VALUES($1,$2,$3,$4,'RUNNING',$5)`,
+      [input.tenantId, jobId, input.connectionId, input.jobType, input.scheduled ?? false],
     );
     await client.query(
       `INSERT INTO profiler.events(tenant_id,job_id,sequence,event_type,safe_payload)
