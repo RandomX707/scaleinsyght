@@ -5,7 +5,7 @@
 import { createHash } from 'node:crypto';
 import ExcelJS from 'exceljs';
 import { DuckDBInstance, type DuckDBConnection } from '@duckdb/node-api';
-import type { ConnectorScope, DiscoveryResult, ObjectProfile, ReadOnlyConnector } from './index.js';
+import { POSSIBLE_REFERENCE_COVERAGE, type ConnectorScope, type DiscoveryResult, type ObjectProfile, type ReadOnlyConnector } from './index.js';
 import { compilePostgresDialectIntent, type Table } from './postgres.js';
 import { classifyColumn } from '@scaleinsyght/classification';
 
@@ -159,7 +159,8 @@ export class ExcelConnector implements ReadOnlyConnector {
     };
   }
 
-  /** Infers references between sheets: same column name and type, a unique non-null target, and at least 98% coverage. */
+  /** Infers references between sheets: same column name and type, a unique non-null target, and at least 50% coverage.
+   * Below 98% they are possible relationships only (decision 38). */
   async structuralReferences(): Promise<Array<{ from: string; to: string; fromColumn: string; toColumn: string; evidenceMethod: 'inferred'; confidence: number; matchedCount: number; sourceCount: number }>> {
     const sheets = await this.load();
     const references: Array<{ from: string; to: string; fromColumn: string; toColumn: string; evidenceMethod: 'inferred'; confidence: number; matchedCount: number; sourceCount: number }> = [];
@@ -181,7 +182,7 @@ export class ExcelConnector implements ReadOnlyConnector {
           if (!sourceValues.length) continue;
           const matchedCount = sourceValues.filter((value) => unique.has(key(value))).length;
           const confidence = matchedCount / sourceValues.length;
-          if (confidence >= 0.98) references.push({ from: source.qualifiedName, to: target.qualifiedName, fromColumn: targetColumn.name, toColumn: targetColumn.name, evidenceMethod: 'inferred', confidence, matchedCount, sourceCount: sourceValues.length });
+          if (confidence >= POSSIBLE_REFERENCE_COVERAGE) references.push({ from: source.qualifiedName, to: target.qualifiedName, fromColumn: targetColumn.name, toColumn: targetColumn.name, evidenceMethod: 'inferred', confidence, matchedCount, sourceCount: sourceValues.length });
         }
       }
     }

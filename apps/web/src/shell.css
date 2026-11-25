@@ -262,6 +262,10 @@ h3 { font-size: 14px; line-height: 1.3; }
 .er-link path { fill:none; stroke:var(--good); stroke-width:2; }
 .er-link--inferred path { stroke:var(--warn); stroke-dasharray:7 5; }
 .er-link--observed path { stroke:#7954C8; }
+.er-link--possible path { stroke:var(--faint); stroke-dasharray:2 5; stroke-width:1.5; }
+.er-link--possible text { fill:var(--muted); }
+.er-heading-actions { display:flex; align-items:center; gap:16px; }
+.er-possible-toggle { display:flex; align-items:center; gap:6px; color:var(--ink); font-size:12px; }
 .er-node { position:absolute; z-index:1; width:260px; min-height:150px; padding:0!important; overflow:hidden; border:1px solid var(--line)!important; border-radius:10px!important; background:var(--surface)!important; box-shadow:var(--shadow-card)!important; }
 .er-node h3 { margin:0!important; padding:9px 12px; background:var(--primary-tint); color:var(--ink); font:600 12px var(--font); }
 .er-node ul { list-style:none; margin:0; padding:4px 12px; }
@@ -273,6 +277,7 @@ h3 { font-size: 14px; line-height: 1.3; }
 .er-legend i { width:18px; border-top:2px solid var(--good); }
 .er-legend .er-legend-inferred { border-color:var(--warn); border-top-style:dashed; }
 .er-legend .er-legend-observed { border-color:#7954C8; }
+.er-legend .er-legend-possible { border-color:var(--faint); border-top-style:dotted; }
 .er-table-card>.ui-button { margin:4px 10px 10px; }
 .hub-page,.flowspec-page,.usage-page { width:min(1180px,100%); margin:0 auto; display:flex; flex-direction:column; gap:16px; }
 .hub-page>article { display:grid; gap:10px; }

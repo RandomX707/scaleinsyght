@@ -1196,21 +1196,23 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     await withTenant(options.pool,current.tenantId,async(client)=>{for(const row of resolved)await client.query(`INSERT INTO graph.dictionary_descriptions(tenant_id,source_id,table_name,column_name,description) VALUES($1,$2,$3,$4,$5) ON CONFLICT(tenant_id,source_id,table_name,column_name) DO UPDATE SET description=EXCLUDED.description,imported_at=clock_timestamp()`,[current.tenantId,request.params.connectionId,row.table,row.column,row.description]);});
     return reply.send({imported:resolved.length,filename});
   });
-  app.get<{Params:{connectionId:string}}>('/api/connections/:connectionId/er',async(request,reply)=>{
+  app.get<{Params:{connectionId:string};Querystring:{possible?:string}}>('/api/connections/:connectionId/er',async(request,reply)=>{
+    // possible=true also returns inferred references at or below 0.90 confidence, flagged low_confidence (decision 38).
+    const possible=request.query.possible==='true';
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const result=await withTenant(options.pool,current.tenantId,async(client)=>{
       const relationships=await client.query(
-      `SELECT r.relationship_type,r.granularity,f.qualified_name AS from_name,t.qualified_name AS to_name,coalesce(left(f.qualified_name,length(f.qualified_name)-length(fp.field_name))||coalesce(fp.display_name,fp.field_name),f.qualified_name) AS from_label,coalesce(left(t.qualified_name,length(t.qualified_name)-length(tp.field_name))||coalesce(tp.display_name,tp.field_name),t.qualified_name) AS to_label,a.evidence_method,a.review_status,a.verification,a.confidence_score,a.explanation,a.evidence_ids
+      `SELECT r.relationship_type,r.granularity,f.qualified_name AS from_name,t.qualified_name AS to_name,coalesce(left(f.qualified_name,length(f.qualified_name)-length(fp.field_name))||coalesce(fp.display_name,fp.field_name),f.qualified_name) AS from_label,coalesce(left(t.qualified_name,length(t.qualified_name)-length(tp.field_name))||coalesce(tp.display_name,tp.field_name),t.qualified_name) AS to_label,a.evidence_method,a.review_status,a.verification,a.confidence_score,a.explanation,a.evidence_ids,(a.evidence_method='inferred' AND a.confidence_score<=0.90) AS low_confidence
        FROM graph.relationships r JOIN graph.assets f ON f.tenant_id=r.tenant_id AND f.asset_id=r.from_asset_id
        JOIN graph.assets t ON t.tenant_id=r.tenant_id AND t.asset_id=r.to_asset_id
        JOIN LATERAL(SELECT evidence_method,review_status,verification,confidence_score,explanation,evidence_ids FROM graph.assertions assertion
          WHERE assertion.tenant_id=r.tenant_id AND assertion.relationship_id=r.relationship_id AND assertion.valid_to IS NULL AND assertion.review_status NOT IN ('rejected','stale','disputed')
-           AND (assertion.evidence_method='declared' OR (assertion.evidence_method='inferred' AND assertion.confidence_score>0.90))
+           AND (assertion.evidence_method='declared' OR (assertion.evidence_method='inferred' AND (assertion.confidence_score>0.90 OR $3::boolean)))
          ORDER BY CASE WHEN evidence_method='declared' THEN 0 ELSE 1 END,confidence_score DESC,captured_at DESC LIMIT 1)a ON true
        LEFT JOIN LATERAL(SELECT display_name,field_name FROM profiler.field_profiles WHERE tenant_id=f.tenant_id AND asset_id=f.asset_id ORDER BY profile_version DESC LIMIT 1)fp ON true
        LEFT JOIN LATERAL(SELECT display_name,field_name FROM profiler.field_profiles WHERE tenant_id=t.tenant_id AND asset_id=t.asset_id ORDER BY profile_version DESC LIMIT 1)tp ON true
        WHERE r.tenant_id=$1 AND (f.source_id=$2 AND t.source_id=$2) AND f.active AND t.active AND r.family='structural' AND r.relationship_type='REFERENCES' ORDER BY r.relationship_type,f.qualified_name,t.qualified_name`,
-      [current.tenantId,request.params.connectionId]);
+      [current.tenantId,request.params.connectionId,possible]);
       const tables=await client.query(`SELECT dataset.asset_id,dataset.qualified_name,version.structural_attributes->>'object_type' AS object_type,
           coalesce(jsonb_agg(jsonb_build_object('name',field.qualified_name,'label',coalesce(profile.display_name,split_part(field.qualified_name,'.',-1)),'data_type',profile.data_type,'is_nullable',profile.is_nullable) ORDER BY field.qualified_name) FILTER(WHERE field.asset_id IS NOT NULL),'[]'::jsonb) AS columns
         FROM graph.assets dataset JOIN LATERAL(SELECT structural_attributes FROM graph.asset_versions WHERE tenant_id=dataset.tenant_id AND asset_id=dataset.asset_id ORDER BY version DESC LIMIT 1)version ON true

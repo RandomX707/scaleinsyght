@@ -43,6 +43,13 @@ export type ColumnStatistics = { nullRate: number | null; distinctCount: number 
 export const COLUMN_STATISTICS_ROW_LIMIT = 10_000_000;
 export const UNMEASURED: ColumnStatistics = { nullRate: null, distinctCount: null, averageLength: null };
 
+/** Inferred references: at least this share of non-null values must match a unique target key to be proposed as a
+ * relationship that plans may join on (decision 38). */
+export const PROPOSED_REFERENCE_COVERAGE = 0.98;
+/** Lower-coverage candidates down to this share are kept as possible relationships, shown only on request and labelled
+ * low confidence; plans never join on them (decision 38). */
+export const POSSIBLE_REFERENCE_COVERAGE = 0.5;
+
 export interface ConnectorScope {
   profile?: string[];
   listOnly?: string[];

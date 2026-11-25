@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { Pool } from 'pg';
 import { classifyColumn } from '@scaleinsyght/classification';
-import { COLUMN_STATISTICS_ROW_LIMIT, UNMEASURED, type ColumnStatistics, type ConnectorScope, type DiscoveryResult, type ObjectProfile, type ReadOnlyConnector } from './index.js';
+import { COLUMN_STATISTICS_ROW_LIMIT, POSSIBLE_REFERENCE_COVERAGE, UNMEASURED, type ColumnStatistics, type ConnectorScope, type DiscoveryResult, type ObjectProfile, type ReadOnlyConnector } from './index.js';
 
 export type Table = { schema_name: string; table_name: string; table_type: 'BASE TABLE' | 'VIEW' };
 type Column = { column_name: string; data_type: string; is_nullable: 'YES' | 'NO'; comment: string | null };
@@ -150,7 +150,7 @@ export class PostgresConnector implements ReadOnlyConnector {
       const [fromSchema,fromTable]=candidate.from.split('.');const [toSchema,toTable]=candidate.to.split('.');if(!fromSchema||!fromTable||!toSchema||!toTable)continue;
       const counts=await this.pool.query<{source_count:string;matched_count:string}>(`SELECT count(src.${quoteIdentifier(candidate.fromColumn)})::text AS source_count,count(dst.${quoteIdentifier(candidate.toColumn)})::text AS matched_count FROM ${quoteIdentifier(fromSchema)}.${quoteIdentifier(fromTable)} src LEFT JOIN ${quoteIdentifier(toSchema)}.${quoteIdentifier(toTable)} dst ON src.${quoteIdentifier(candidate.fromColumn)}=dst.${quoteIdentifier(candidate.toColumn)}`);
       const sourceCount=Number(counts.rows[0]?.source_count??0);const matchedCount=Number(counts.rows[0]?.matched_count??0);
-      if(sourceCount>0&&matchedCount/sourceCount>=0.98)references.push({...candidate,evidenceMethod:'inferred',confidence:matchedCount/sourceCount,matchedCount,sourceCount});
+      if(sourceCount>0&&matchedCount/sourceCount>=POSSIBLE_REFERENCE_COVERAGE)references.push({...candidate,evidenceMethod:'inferred',confidence:matchedCount/sourceCount,matchedCount,sourceCount});
       if(references.length>=this.maxRows)throw new Error('postgres_connector_result_limit_exceeded');
     }
     return references;
