@@ -12,7 +12,7 @@ if (!artifactMasterKey) throw new Error('ARTIFACT_MASTER_KEY is required for E2E
 const server = await buildServer({
   pool,
   sessionSecret: process.env.SESSION_SECRET ?? '',
-  artifactStore: new EncryptedArtifactStore(resolve(process.env.ARTIFACT_VOLUME_PATH ?? '.local/e2e-artifacts'), Buffer.from(artifactMasterKey, 'base64')),
+  artifactStore: new EncryptedArtifactStore(resolve('.local/e2e-artifacts'), Buffer.from(artifactMasterKey, 'base64')),
 });
 await server.listen({ host: '127.0.0.1', port: Number(process.env.API_PORT ?? 3300) });
 for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, async () => {

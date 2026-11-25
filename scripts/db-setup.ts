@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { config as loadDotEnv } from 'dotenv';
 import { Client } from 'pg';
@@ -48,7 +49,9 @@ function createEnvFile(envPath: string, examplePath: string): void {
     .replace('si_worker:replace-me@', `si_worker:${workerPassword}@`)
     .replace('si_migrate:replace-me@', `si_migrate:${migratePassword}@`)
     .replace('replace-with-a-random-local-secret', sessionSecret)
-    .replace('replace-with-base64-for-a-random-32-byte-key', localArtifactMasterKey());
+    .replace('replace-with-base64-for-a-random-32-byte-key', localArtifactMasterKey())
+    // One volume per machine, outside any worktree, so every worktree sharing the database reads the same files.
+    .replace('replace-with-an-absolute-path', resolve(homedir(), '.scaleinsyght', 'artifacts'));
   writeFileSync(envPath, contents, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
 }
 

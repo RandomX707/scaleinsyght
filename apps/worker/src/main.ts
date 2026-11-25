@@ -10,8 +10,7 @@ import { planLiveQuestion, type PlanningSource } from '@scaleinsyght/api/live-pl
 import { createAnalyticPlan, startAnalyticRun, MINIMUM_ANALYTIC_CELL_SIZE, finalizeAnalyticRun, roundForModel, summarizeGroups } from '@scaleinsyght/analytic';
 import type { AnalyticPlan } from '@scaleinsyght/contracts';
 import { createExcelConnector, createPostgresConnector, createSqlServerConnector, decryptConnectionSecret, type ReadOnlyConnector } from '@scaleinsyght/connectors';
-import { EncryptedArtifactStore } from '@scaleinsyght/artifacts';
-import { resolve as resolvePath } from 'node:path';
+import { EncryptedArtifactStore, artifactVolumePath } from '@scaleinsyght/artifacts';
 import { OpenAIModelGateway } from '@scaleinsyght/model-gateway';
 import { authorise } from '@scaleinsyght/policy';
 import { answerLineageRequest } from '@scaleinsyght/graph';
@@ -22,7 +21,7 @@ config({path:fileURLToPath(new URL('../../../.env',import.meta.url))});
 const pool=new Pool({connectionString:process.env.DATABASE_URL_WORKER});
 // A connection the database closes while idle is replaced on next use; it must not crash the process.
 pool.on('error',(error)=>{console.error('Database connection closed:',(error as {code?:string}).code??'unknown');});
-const artifactStore=process.env.ARTIFACT_MASTER_KEY?new EncryptedArtifactStore(resolvePath(process.env.ARTIFACT_VOLUME_PATH??'.local/artifacts'),Buffer.from(process.env.ARTIFACT_MASTER_KEY,'base64')):null;
+const artifactStore=process.env.ARTIFACT_MASTER_KEY?new EncryptedArtifactStore(artifactVolumePath(process.env.ARTIFACT_VOLUME_PATH),Buffer.from(process.env.ARTIFACT_MASTER_KEY,'base64')):null;
 const workerId=`worker-${process.pid}`;
 const healthServer=createServer((request,response)=>{if(request.url==='/health'){response.writeHead(200,{'content-type':'application/json'});response.end('{"status":"ok"}');return;}response.writeHead(404);response.end();});
 await new Promise<void>((resolve,reject)=>{healthServer.once('error',reject);healthServer.listen(Number(process.env.WORKER_HEALTH_PORT??3001),process.env.WORKER_HEALTH_HOST??'127.0.0.1',resolve);});

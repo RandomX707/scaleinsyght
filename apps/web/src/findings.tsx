@@ -51,6 +51,8 @@ export function findingGroup(kind: string): 'Changes' | 'Suggestions' {
 export function FindingsPanel(props: { data: Findings; decide: (findingId: string, decision: 'approved' | 'rejected') => Promise<void>; refreshNow?: () => Promise<void> }) {
   const [tab, setTab] = useState<'night' | 'earlier' | 'all'>('night');
   const [busy, setBusy] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState('');
   const [group, setGroup] = useState<'Changes' | 'Suggestions'>('Changes');
   const lastNight = new Set(props.data.lastNight.jobIds);
   const shown = props.data.findings.filter((finding) => findingGroup(finding.kind) === group).filter((finding) => tab === 'all' || (tab === 'night' ? lastNight.has(finding.jobId) : !lastNight.has(finding.jobId)));
@@ -71,7 +73,11 @@ export function FindingsPanel(props: { data: Findings; decide: (findingId: strin
         : <p>No nightly refresh has run yet. Each source is refreshed once a day after it is added.</p>}</div>
       <Badge tone={alerts ? 'bad' : 'good'}>{alerts} open {alerts === 1 ? 'alert' : 'alerts'}</Badge>
       <div className="nightly-stats"><div><strong>{count(nightFindings.length)}</strong><span>findings in this refresh</span></div><div><strong>{count(alerts)}</strong><span>waiting for review</span></div><div><strong>{count(props.data.findings.filter((finding) => finding.status !== 'open').length)}</strong><span>reviewed</span></div></div>
-      {props.refreshNow && <Button size="small" onClick={() => void props.refreshNow!()}>Run a refresh now</Button>}
+      {props.refreshNow && <Button size="small" disabled={refreshing} onClick={() => {
+        setRefreshing(true); setRefreshError('');
+        props.refreshNow!().catch((error: unknown) => setRefreshError(error instanceof Error ? error.message : 'The refresh could not be completed.')).finally(() => setRefreshing(false));
+      }}>{refreshing ? 'Refreshing…' : 'Run a refresh now'}</Button>}
+      {refreshError && <p role="alert" className="error">{refreshError}</p>}
     </article>
     <p>Approving a finding records your review and leaves its verification status unchanged.</p>
     <div className="findings-tabs" role="tablist" aria-label="Findings">{([['night', 'Latest refresh'], ['earlier', 'Earlier'], ['all', 'All']] as const).map(([key, label]) =>
