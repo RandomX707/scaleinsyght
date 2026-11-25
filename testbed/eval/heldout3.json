@@ -1,0 +1,92 @@
+[
+  {
+    "id": "H01",
+    "turns": [
+      "How many providers work in each specialty in the PostgreSQL testbed?"
+    ],
+    "sources": [
+      "p"
+    ]
+  },
+  {
+    "id": "H02",
+    "turns": [
+      "How many encounters in the SQL Server testbed have no discharge date?"
+    ],
+    "sources": [
+      "s"
+    ]
+  },
+  {
+    "id": "H03",
+    "turns": [
+      "How many visits does the operations workbook record for each department?"
+    ],
+    "sources": [
+      "x"
+    ]
+  },
+  {
+    "id": "H04",
+    "turns": [
+      "What is the number of cancelled orders in the PostgreSQL testbed?"
+    ],
+    "sources": [
+      "p"
+    ]
+  },
+  {
+    "id": "H05",
+    "turns": [
+      "Which two order types are most common in the SQL Server testbed, and how many orders does each have?"
+    ],
+    "sources": [
+      "s"
+    ]
+  },
+  {
+    "id": "H06",
+    "turns": [
+      "How many encounters did the Emergency department have in the PostgreSQL testbed?"
+    ],
+    "sources": [
+      "p"
+    ]
+  },
+  {
+    "id": "H07",
+    "turns": [
+      "How many charges in the operations workbook were cancelled?"
+    ],
+    "sources": [
+      "x"
+    ]
+  },
+  {
+    "id": "H08",
+    "turns": [
+      "How many patients are in the SQL Server testbed?"
+    ],
+    "sources": [
+      "s"
+    ]
+  },
+  {
+    "id": "H09",
+    "turns": [
+      "How many orders does the Pediatrics department have in the PostgreSQL testbed?"
+    ],
+    "sources": [
+      "p"
+    ]
+  },
+  {
+    "id": "H10",
+    "turns": [
+      "How many orders were placed during March 2025 in the SQL Server testbed?"
+    ],
+    "sources": [
+      "s"
+    ]
+  }
+]

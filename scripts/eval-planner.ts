@@ -28,13 +28,15 @@ const pool = new Pool({ connectionString: database.toString() });
 type Case = {id: string; sources: Source[]; turns: string[]};
 type Item = {id: string; status: 'correct' | 'refused correctly' | 'wrong' | 'failed'; costUsd: number; latencyMs: number; turns: unknown[]};
 const onlySet = process.argv.find(arg=>arg.startsWith('--set='))?.slice('--set='.length);
-if (onlySet && onlySet !== 'heldout2') throw new Error('Only --set=heldout2 is supported');
-// heldout2 has its own SQL-derived truth and is run once, after tuning (testbed/eval/heldout2-truth.ts).
-const truth = {...await load('truth.json'), ...Object.fromEntries(Object.entries(await load('lineage-truth.json')).filter(([id]) => /^Q\d+$/.test(id))), ...(onlySet === 'heldout2' ? await load('heldout2-truth.json') : {})} as Record<string, Expected>;
+// heldout2 is retired: it was run three times and is no longer unseen (known issue K5).
+if (onlySet === 'heldout2') throw new Error('heldout2 is retired (known issue K5); use --set=heldout3');
+if (onlySet && onlySet !== 'heldout3') throw new Error('Only --set=heldout3 is supported');
+// heldout3 has its own SQL-derived truth (testbed/eval/heldout3-truth.ts) and is single-use: nothing is tuned against it.
+const truth = {...await load('truth.json'), ...Object.fromEntries(Object.entries(await load('lineage-truth.json')).filter(([id]) => /^Q\d+$/.test(id))), ...(onlySet === 'heldout3' ? await load('heldout3-truth.json') : {})} as Record<string, Expected>;
 const smoke = process.argv.includes('--smoke');
 const selectedDevelopmentCases = process.argv.find(arg=>arg.startsWith('--questions='))?.slice('--questions='.length).split(',');
 if (selectedDevelopmentCases?.some(id=>!/^Q[0-9]{2}$/.test(id))) throw new Error('Select development case IDs only');
-const sets = onlySet === 'heldout2' ? [{name: 'heldout2', cases: await load('heldout2.json') as Case[], items: [] as Item[]}] : [
+const sets = onlySet === 'heldout3' ? [{name: 'heldout3', cases: await load('heldout3.json') as Case[], items: [] as Item[]}] : [
   {name: 'questions', cases: await load('questions.json') as Case[], items: [] as Item[]},
   ...(smoke || selectedDevelopmentCases ? [] : [{name: 'heldout', cases: await load('heldout.json') as Case[], items: [] as Item[]}]),
 ];
@@ -180,7 +182,8 @@ function summary(items: Item[]) {
 }
 async function save() {
   await writeFile(output, JSON.stringify({started: started.toISOString(), tenantId, warehouse, costUsd: spend, sets: sets.map(set => ({
-    name: set.name, summary: summary(set.items), results: set.items,
+    // Held-out sets are kept aggregate only, in the file as on screen, so no one reads their questions' outcomes.
+    name: set.name, summary: summary(set.items), results: set.name === 'questions' ? set.items : [],
   }))}, null, 2) + '\n', {mode: 0o600});
 }
 
