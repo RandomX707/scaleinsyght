@@ -26,7 +26,7 @@ Updated by Claude Code after #35. S7 (Codex) and S8 (Claude Code) are merged. Th
 | #34 | adf1cfe | Agents checked when a step runs; ID and ID trace agents per tenant (migration 036, decision 52) |
 | #35 | de5daa6 | heldout2 retired; heldout3 added (first runs 9/0/0/1 with and without warehouse marts); K2 closed |
 | #36 | c765e00 | Handover update |
-| #37, #DICT | (pending) | Dictionary spec (decision 53) and the Dictionary rebuild: stored scrubbed definitions (migration 037), lazy Dictionary API and page, HTML export, ER neighbourhood; `docs/phases/dictionary-rebuild.md` section 5 |
+| #37, #38 | (pending) | Dictionary spec (decision 53) and the Dictionary rebuild: stored scrubbed definitions (migration 037), lazy Dictionary API and page, HTML export, ER neighbourhood; `docs/phases/dictionary-rebuild.md` section 5 |
 
 ## Review app on 4284 and riverside-health
 
