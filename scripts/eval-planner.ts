@@ -145,7 +145,7 @@ async function evaluate(test: Case): Promise<Item> {
         }) => ({purpose, model, inputTokens, outputTokens, intents: typedPlan?.intents})), events});
       if (run.state !== 'COMPLETED') {
         const terminalReason = events?.at(-1)?.safe_payload?.reason;
-        if (terminalReason === 'analytic_query_unsupported' && truth[test.id] === null) status = 'refused correctly';
+        if (['analytic_query_unsupported', 'analytic_sensitive_column'].includes(terminalReason) && truth[test.id] === null) status = 'refused correctly';
         break;
       }
       if (turns.length < test.turns.length) continue;
