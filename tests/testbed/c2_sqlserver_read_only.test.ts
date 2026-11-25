@@ -49,7 +49,7 @@ describe('SQL Server connector read-only contract', () => {
     const capped = createSqlServerConnector({
       server: process.env.SQLSERVER_TESTBED_HOST!, port: Number(process.env.SQLSERVER_TESTBED_PORT), database: process.env.SQLSERVER_TESTBED_DATABASE!,
       username: process.env.SQLSERVER_TESTBED_USERNAME!, password: process.env.SQLSERVER_TESTBED_PASSWORD!, encrypt: true, trustServerCertificate: true,
-      statementTimeoutMs: 10_000, maxRows: 2,
+      statementTimeoutMs: 10_000, maxRows: 2, maxCatalogRows: 2, // the catalog has its own ceiling (decision 51)
     });
     try { await expect(capped.discover({ mode: 'profile' })).rejects.toThrow('sqlserver_connector_result_limit_exceeded'); }
     finally { await capped.close(); }

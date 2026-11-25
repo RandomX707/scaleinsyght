@@ -222,5 +222,35 @@
   "Q39": {
     "p": "SELECT department_id AS label,count(*) AS value FROM orders GROUP BY department_id ORDER BY value DESC, department_id OFFSET 0 ROWS FETCH NEXT 3 ROWS ONLY"
   },
-  "Q40": null
+  "Q40": null,
+  "Q46": {
+    "p": "SELECT d.department_name AS label,count(*) AS value FROM orders o JOIN departments d ON o.department_id=d.department_id GROUP BY d.department_name ORDER BY value DESC, d.department_name"
+  },
+  "Q47": {
+    "p": "SELECT d.department_name AS label,count(*) AS value FROM orders o JOIN departments d ON o.department_id=d.department_id WHERE o.order_status='cancelled' GROUP BY d.department_name ORDER BY value DESC, d.department_name"
+  },
+  "Q48": {
+    "p": "SELECT d.department_name AS label,count(*) AS value FROM orders o JOIN departments d ON o.department_id=d.department_id WHERE o.order_status='placed' GROUP BY d.department_name ORDER BY value DESC, d.department_name"
+  },
+  "Q49": {
+    "p": "SELECT p.provider_name AS label,count(*) AS value FROM encounters e JOIN providers p ON e.provider_id=p.provider_id GROUP BY p.provider_name ORDER BY value DESC, p.provider_name"
+  },
+  "Q50": {
+    "p": "SELECT p.specialty AS label,count(*) AS value FROM encounters e JOIN providers p ON e.provider_id=p.provider_id GROUP BY p.specialty ORDER BY value DESC, p.specialty"
+  },
+  "Q51": {
+    "p": "SELECT d.department_name AS label,count(*) AS value FROM orders o JOIN departments d ON o.department_id=d.department_id WHERE o.order_type='imaging' GROUP BY d.department_name ORDER BY value DESC, d.department_name"
+  },
+  "Q52": {
+    "p": "SELECT count(*) AS value FROM orders WHERE order_type='lab' AND ordered_at >= '2025-01-01' AND ordered_at < '2026-01-01'"
+  },
+  "Q53": {
+    "p": "SELECT count(*) AS value FROM orders o JOIN departments d ON o.department_id=d.department_id WHERE d.department_name='Emergency' AND o.order_status='completed'"
+  },
+  "Q54": {
+    "p": "SELECT d.department_name AS label,count(*) AS value FROM encounters e JOIN departments d ON e.department_id=d.department_id GROUP BY d.department_name ORDER BY value DESC, d.department_name OFFSET 0 ROWS FETCH NEXT 3 ROWS ONLY"
+  },
+  "Q55": {
+    "p": "SELECT count(*) AS value FROM encounters e JOIN departments d ON e.department_id=d.department_id WHERE d.department_name='Cardiology'"
+  }
 }

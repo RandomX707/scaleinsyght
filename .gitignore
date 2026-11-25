@@ -14,3 +14,6 @@ __pycache__/
 docs/acceptance/testbed/
 testbed/dbt/target/
 testbed/dbt/logs/
+
+# Scale test run artifacts (numbers are reported in docs/phases/scale-test.md)
+testbed/scale/results/

@@ -1,3 +1,4 @@
+import { CATALOG_ROW_LIMIT } from './limits.js';
 import { createHash } from 'node:crypto';
 import { Pool } from 'pg';
 import { classifyColumn } from '@scaleinsyght/classification';
@@ -25,15 +26,15 @@ export class PostgresConnector implements ReadOnlyConnector {
   readonly id:string;
   readonly name:string;
   private readonly pool:Pool;
-  private readonly maxRows:number;
+  private readonly maxRows:number; private readonly maxCatalogRows:number;
   private readonly seen=new Map<string,string>();
   private readonly current=new Map<string,Table>();
 
-  constructor(input:{connectionString:string;id?:string;name?:string;statementTimeoutMs?:number;maxRows?:number}){
+  constructor(input:{connectionString:string;id?:string;name?:string;statementTimeoutMs?:number;maxRows?:number;maxCatalogRows?:number}){
     const statementTimeoutMs=input.statementTimeoutMs??10_000;
-    this.maxRows=input.maxRows??1_000;
+    this.maxRows=input.maxRows??1_000; this.maxCatalogRows=input.maxCatalogRows??CATALOG_ROW_LIMIT;
     if(!Number.isSafeInteger(statementTimeoutMs)||statementTimeoutMs<1)throw new Error('postgres_statement_timeout_invalid');
-    if(!Number.isSafeInteger(this.maxRows)||this.maxRows<1)throw new Error('postgres_row_limit_invalid');
+    if(!Number.isSafeInteger(this.maxRows)||this.maxRows<1)throw new Error('postgres_row_limit_invalid'); if(!Number.isSafeInteger(this.maxCatalogRows)||this.maxCatalogRows<1)throw new Error('postgres_catalog_limit_invalid');
     this.pool=new Pool({connectionString:input.connectionString,max:2,connectionTimeoutMillis:5000,statement_timeout:statementTimeoutMs,options:`-c default_transaction_read_only=on -c statement_timeout=${statementTimeoutMs}`});
     // An idle connection the source closes (restart, failover, a dropped database) must not crash the process: pg emits
     // the error on the pool, and the next query opens a fresh connection.
@@ -63,16 +64,16 @@ export class PostgresConnector implements ReadOnlyConnector {
     const rows=await this.pool.query<Table>(`SELECT table_schema AS schema_name,table_name,
       CASE WHEN table_type='VIEW' THEN 'VIEW' ELSE 'BASE TABLE' END AS table_type,
       has_schema_privilege(current_user,table_schema,'USAGE') AND has_table_privilege(current_user,format('%I.%I',table_schema,table_name),'SELECT') AS readable
-      FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema') AND table_type IN ('BASE TABLE','VIEW') ORDER BY table_schema,table_name LIMIT $1`,[this.maxRows+1]);
-    if(rows.rows.length>this.maxRows)throw new Error('postgres_connector_result_limit_exceeded');
+      FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema') AND table_type IN ('BASE TABLE','VIEW') ORDER BY table_schema,table_name LIMIT $1`,[this.maxCatalogRows+1]);
+    if(rows.rows.length>this.maxCatalogRows)throw new Error('postgres_connector_result_limit_exceeded');
     return rows.rows;
   }
 
   private async columns(table:Table):Promise<Column[]>{
     const result=await this.pool.query<Column>(`SELECT c.column_name,c.data_type,c.is_nullable,
       pg_catalog.col_description(pg_catalog.to_regclass(format('%I.%I',c.table_schema,c.table_name)),c.ordinal_position) AS comment
-      FROM information_schema.columns c WHERE c.table_schema=$1 AND c.table_name=$2 ORDER BY c.ordinal_position LIMIT $3`,[table.schema_name,table.table_name,this.maxRows+1]);
-    if(result.rows.length>this.maxRows)throw new Error('postgres_connector_result_limit_exceeded');
+      FROM information_schema.columns c WHERE c.table_schema=$1 AND c.table_name=$2 ORDER BY c.ordinal_position LIMIT $3`,[table.schema_name,table.table_name,this.maxCatalogRows+1]);
+    if(result.rows.length>this.maxCatalogRows)throw new Error('postgres_connector_result_limit_exceeded');
     return result.rows;
   }
 
@@ -142,24 +143,42 @@ export class PostgresConnector implements ReadOnlyConnector {
       WHERE fk.contype='f' AND local_ns.nspname NOT IN ('pg_catalog','information_schema') AND local_ns.nspname NOT LIKE 'pg_toast%'
       AND EXISTS(SELECT 1 FROM information_schema.tables visible_local WHERE visible_local.table_schema=local_ns.nspname AND visible_local.table_name=local_table.relname)
       AND EXISTS(SELECT 1 FROM information_schema.tables visible_target WHERE visible_target.table_schema=target_ns.nspname AND visible_target.table_name=target_table.relname)
-      ORDER BY local_ns.nspname,local_table.relname,local_key.position LIMIT $1`,[this.maxRows+1]);
-    if(result.rows.length>this.maxRows)throw new Error('postgres_connector_result_limit_exceeded');
+      ORDER BY local_ns.nspname,local_table.relname,local_key.position LIMIT $1`,[this.maxCatalogRows+1]);
+    if(result.rows.length>this.maxCatalogRows)throw new Error('postgres_connector_result_limit_exceeded');
     const references=result.rows;
-    const inferredCandidates=await this.pool.query<{from:string;to:string;fromColumn:string;toColumn:string}>(`SELECT DISTINCT sn.nspname||'.'||st.relname AS "from",tn.nspname||'.'||tt.relname AS "to",sc.column_name AS "fromColumn",tc.column_name AS "toColumn"
-      FROM information_schema.columns sc
-      JOIN pg_namespace sn ON sn.nspname=sc.table_schema JOIN pg_class st ON st.relnamespace=sn.oid AND st.relname=sc.table_name AND st.relkind IN ('r','p')
-      JOIN information_schema.columns tc ON tc.column_name=sc.column_name AND tc.data_type=sc.data_type
-      JOIN pg_namespace tn ON tn.nspname=tc.table_schema JOIN pg_class tt ON tt.relnamespace=tn.oid AND tt.relname=tc.table_name AND tt.relkind IN ('r','p')
-      JOIN pg_constraint pk ON pk.conrelid=tt.oid AND pk.contype='p'
-      JOIN pg_attribute ta ON ta.attrelid=tt.oid AND ta.attname=tc.column_name AND ta.attnum=ANY(pk.conkey)
-      WHERE sc.table_schema NOT IN ('pg_catalog','information_schema') AND tc.table_schema NOT IN ('pg_catalog','information_schema')
-        AND sc.table_schema NOT LIKE 'pg_toast%' AND tc.table_schema NOT LIKE 'pg_toast%' AND st.oid<>tt.oid
-        AND has_schema_privilege(current_user,sn.oid,'USAGE') AND has_schema_privilege(current_user,tn.oid,'USAGE') AND has_table_privilege(current_user,st.oid,'SELECT') AND has_table_privilege(current_user,tt.oid,'SELECT')
-        AND NOT EXISTS(SELECT 1 FROM pg_constraint source_pk
-          JOIN LATERAL unnest(source_pk.conkey) source_key(attnum) ON true
-          JOIN pg_attribute source_attribute ON source_attribute.attrelid=source_pk.conrelid AND source_attribute.attnum=source_key.attnum
-          WHERE source_pk.conrelid=st.oid AND source_pk.contype='p' AND source_attribute.attname=sc.column_name)
-      ORDER BY 1,2,3 LIMIT $1`,[this.maxRows]);
+    // Candidates by name and type: a column with the same name and type as another table's single-column primary key.
+    // The catalog is read with two plain queries and matched here: a planner-chosen join over pg_catalog took minutes on
+    // 5,000 tables because catalog statistics underestimate large catalogs. A column that already has a declared foreign
+    // key (or is its table's own key) is not re-inferred, and a target in another schema is considered only when the
+    // column has none in its own schema, so key names shared across many schemas do not multiply the candidates.
+    const readable=`FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+      WHERE c.relkind IN ('r','p') AND n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_toast%'
+        AND has_schema_privilege(current_user,n.oid,'USAGE') AND has_table_privilege(current_user,c.oid,'SELECT')`;
+    const columns=await this.pool.query<{table_name:string;column_name:string;type_id:number}>(`SELECT n.nspname||'.'||c.relname AS table_name,a.attname::text AS column_name,a.atttypid::int AS type_id
+      ${readable.replace('WHERE','JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped WHERE')} LIMIT $1`,[this.maxCatalogRows+1]);
+    if(columns.rows.length>this.maxCatalogRows)throw new Error('postgres_connector_result_limit_exceeded');
+    const keys=await this.pool.query<{table_name:string;kind:'p'|'f';key_columns:string[]}>(`SELECT n.nspname||'.'||c.relname AS table_name,k.contype::text AS kind,
+        array(SELECT a.attname::text FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attnum=ANY(k.conkey)) AS key_columns
+      ${readable.replace('WHERE','JOIN pg_constraint k ON k.conrelid=c.oid AND k.contype IN (\'p\',\'f\') WHERE')} LIMIT $1`,[this.maxCatalogRows+1]);
+    if(keys.rows.length>this.maxCatalogRows)throw new Error('postgres_connector_result_limit_exceeded');
+    const typeOf=new Map(columns.rows.map(row=>[`${row.table_name}\0${row.column_name}`,row.type_id]));
+    const ownKeys=new Set(keys.rows.flatMap(row=>row.key_columns.map(column=>`${row.table_name}\0${column}`)));
+    const targets=new Map<string,Array<{table:string;column:string}>>();
+    for(const row of keys.rows)if(row.kind==='p'&&row.key_columns.length===1){
+      const column=row.key_columns[0]!;const key=`${column}\0${typeOf.get(`${row.table_name}\0${column}`)}`;
+      targets.set(key,[...(targets.get(key)??[]),{table:row.table_name,column}]);
+    }
+    const schemaOf=(table:string)=>table.slice(0,table.indexOf('.'));
+    const found:Array<{from:string;to:string;fromColumn:string;toColumn:string}>=[];
+    for(const row of columns.rows){
+      if(ownKeys.has(`${row.table_name}\0${row.column_name}`))continue;
+      const matches=(targets.get(`${row.column_name}\0${row.type_id}`)??[]).filter(target=>target.table!==row.table_name);
+      const local=matches.filter(target=>schemaOf(target.table)===schemaOf(row.table_name));
+      for(const target of local.length?local:matches)found.push({from:row.table_name,to:target.table,fromColumn:row.column_name,toColumn:target.column});
+    }
+    found.sort((a,b)=>a.from.localeCompare(b.from)||a.to.localeCompare(b.to)||a.fromColumn.localeCompare(b.fromColumn));
+    if(found.length>this.maxCatalogRows)throw new Error('postgres_connector_result_limit_exceeded');
+    const inferredCandidates={rows:found};
     const declared=new Set(references.map(item=>`${item.from}\0${item.fromColumn}\0${item.to}\0${item.toColumn}`));
     for(const candidate of inferredCandidates.rows){
       if(declared.has(`${candidate.from}\0${candidate.fromColumn}\0${candidate.to}\0${candidate.toColumn}`))continue;
@@ -167,7 +186,7 @@ export class PostgresConnector implements ReadOnlyConnector {
       const counts=await this.pool.query<{source_count:string;matched_count:string}>(`SELECT count(src.${quoteIdentifier(candidate.fromColumn)})::text AS source_count,count(dst.${quoteIdentifier(candidate.toColumn)})::text AS matched_count FROM ${quoteIdentifier(fromSchema)}.${quoteIdentifier(fromTable)} src LEFT JOIN ${quoteIdentifier(toSchema)}.${quoteIdentifier(toTable)} dst ON src.${quoteIdentifier(candidate.fromColumn)}=dst.${quoteIdentifier(candidate.toColumn)}`);
       const sourceCount=Number(counts.rows[0]?.source_count??0);const matchedCount=Number(counts.rows[0]?.matched_count??0);
       if(sourceCount>0&&matchedCount/sourceCount>=POSSIBLE_REFERENCE_COVERAGE)references.push({...candidate,evidenceMethod:'inferred',confidence:matchedCount/sourceCount,matchedCount,sourceCount});
-      if(references.length>=this.maxRows)throw new Error('postgres_connector_result_limit_exceeded');
+      if(references.length>=this.maxCatalogRows)throw new Error('postgres_connector_result_limit_exceeded');
     }
     return references;
   }
@@ -186,10 +205,10 @@ export class PostgresConnector implements ReadOnlyConnector {
     try{
       await client.query('BEGIN READ ONLY');await client.query("SET LOCAL search_path TO ''");
       result=await client.query<{qualified_name:string;schema_name:string;definition:string|null}>(`SELECT schemaname||'.'||viewname AS qualified_name,schemaname AS schema_name,definition FROM pg_catalog.pg_views WHERE schemaname NOT IN ('pg_catalog','information_schema')
-        UNION ALL SELECT schemaname||'.'||matviewname,schemaname,definition FROM pg_catalog.pg_matviews ORDER BY 1 LIMIT $1`,[this.maxRows+1]);
+        UNION ALL SELECT schemaname||'.'||matviewname,schemaname,definition FROM pg_catalog.pg_matviews ORDER BY 1 LIMIT $1`,[this.maxCatalogRows+1]);
       await client.query('COMMIT');
     }catch(error){await client.query('ROLLBACK').catch(()=>undefined);throw error;}finally{client.release();}
-    if(result.rows.length>this.maxRows)throw new Error('postgres_connector_result_limit_exceeded');
+    if(result.rows.length>this.maxCatalogRows)throw new Error('postgres_connector_result_limit_exceeded');
     return result.rows.map(row=>({qualifiedName:row.qualified_name,schema:row.schema_name,definition:row.definition}));
   }
 
@@ -197,8 +216,8 @@ export class PostgresConnector implements ReadOnlyConnector {
     const result=await this.pool.query<{qualified_name:string;kind:'function'|'procedure';definition:string}>(`SELECT n.nspname||'.'||p.proname||'('||pg_get_function_identity_arguments(p.oid)||')' AS qualified_name,
       CASE WHEN p.prokind='p' THEN 'procedure' ELSE 'function' END AS kind,pg_get_functiondef(p.oid) AS definition
       FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_toast%'
-      AND p.prokind IN ('f','p') ORDER BY n.nspname,p.proname LIMIT $1`,[this.maxRows+1]);
-    if(result.rows.length>this.maxRows)throw new Error('postgres_connector_result_limit_exceeded');
+      AND p.prokind IN ('f','p') ORDER BY n.nspname,p.proname LIMIT $1`,[this.maxCatalogRows+1]);
+    if(result.rows.length>this.maxCatalogRows)throw new Error('postgres_connector_result_limit_exceeded');
     return result.rows.map(row=>({qualifiedName:row.qualified_name,kind:row.kind,definition:row.definition}));
   }
 
@@ -226,7 +245,7 @@ export class PostgresConnector implements ReadOnlyConnector {
   async close():Promise<void>{await this.pool.end();}
 }
 
-export function createPostgresConnector(input:string|{connectionString:string;id?:string;name?:string;statementTimeoutMs?:number;maxRows?:number},name='PostgreSQL source'):PostgresConnector{
+export function createPostgresConnector(input:string|{connectionString:string;id?:string;name?:string;statementTimeoutMs?:number;maxRows?:number;maxCatalogRows?:number},name='PostgreSQL source'):PostgresConnector{
   const config=typeof input==='string'?{connectionString:input,name}:input;
   if(!config.connectionString)throw new Error('postgres_connection_string_required');
   return new PostgresConnector(config);

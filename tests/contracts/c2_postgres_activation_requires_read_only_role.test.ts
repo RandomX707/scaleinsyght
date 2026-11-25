@@ -68,7 +68,8 @@ describe('contract 2 PostgreSQL activation safety', () => {
   });
 
   it('postgres_connector_sets_timeout_and_row_ceiling', async () => {
-    const limited = new PostgresConnector({ connectionString: urlFor(reader), maxRows: 1, statementTimeoutMs: 10_000 });
+    // The catalog has its own ceiling, separate from the data-read row limit (decision 51).
+    const limited = new PostgresConnector({ connectionString: urlFor(reader), maxRows: 1, maxCatalogRows: 1, statementTimeoutMs: 10_000 });
     connectors.push(limited);
     await expect(limited.discover({ mode: 'profile' })).rejects.toThrow('postgres_connector_result_limit_exceeded');
     const configured = new PostgresConnector({ connectionString: urlFor(reader), maxRows: 100, statementTimeoutMs: 75 });

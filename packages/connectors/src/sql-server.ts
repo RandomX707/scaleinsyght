@@ -1,3 +1,4 @@
+import { CATALOG_ROW_LIMIT } from './limits.js';
 import { createHash } from 'node:crypto';
 import sql from 'mssql';
 import { classifyColumn } from '@scaleinsyght/classification';
@@ -20,14 +21,18 @@ export class SqlServerConnector implements ReadOnlyConnector {
   readonly name: string;
   private readonly pool: sql.ConnectionPool;
   private readonly maxRows: number;
+  /** Ceiling for catalog listings (tables, columns, keys, definitions), separate from the data-read row limit. */
+  private readonly maxCatalogRows: number;
   private readonly objects = new Map<string, CatalogObject>();
 
-  constructor(input: SqlServerConnection & { id?: string; name?: string; statementTimeoutMs?: number; maxRows?: number }) {
+  constructor(input: SqlServerConnection & { id?: string; name?: string; statementTimeoutMs?: number; maxRows?: number; maxCatalogRows?: number }) {
     if (!input.encrypt) throw new Error('sqlserver_encryption_required');
     const statementTimeoutMs = input.statementTimeoutMs ?? 10_000;
     this.maxRows = input.maxRows ?? 1_000;
+    this.maxCatalogRows = input.maxCatalogRows ?? CATALOG_ROW_LIMIT;
     if (!Number.isSafeInteger(statementTimeoutMs) || statementTimeoutMs < 1) throw new Error('sqlserver_statement_timeout_invalid');
     if (!Number.isSafeInteger(this.maxRows) || this.maxRows < 1) throw new Error('sqlserver_row_limit_invalid');
+    if (!Number.isSafeInteger(this.maxCatalogRows) || this.maxCatalogRows < 1) throw new Error('sqlserver_catalog_limit_invalid');
     this.pool = new sql.ConnectionPool({
       server: input.server, port: input.port, database: input.database, user: input.username, password: input.password,
       options: { encrypt: true, trustServerCertificate: input.trustServerCertificate ?? false },
@@ -62,19 +67,19 @@ export class SqlServerConnector implements ReadOnlyConnector {
   }
 
   private async catalog(): Promise<CatalogObject[]> {
-    const result = await (await this.request()).query<CatalogObject>(`SELECT TOP (${this.maxRows + 1}) s.name AS schema_name,o.name AS object_name,RTRIM(o.type) AS object_type
+    const result = await (await this.request()).query<CatalogObject>(`SELECT TOP (${this.maxCatalogRows + 1}) s.name AS schema_name,o.name AS object_name,RTRIM(o.type) AS object_type
       FROM sys.objects o JOIN sys.schemas s ON s.schema_id=o.schema_id WHERE o.type IN ('U','V') AND s.name NOT IN ('sys','INFORMATION_SCHEMA') ORDER BY s.name,o.name`);
-    if (result.recordset.length > this.maxRows) throw new Error('sqlserver_connector_result_limit_exceeded');
+    if (result.recordset.length > this.maxCatalogRows) throw new Error('sqlserver_connector_result_limit_exceeded');
     return result.recordset;
   }
 
   private async columns(object: CatalogObject): Promise<CatalogColumn[]> {
-    const result = await (await this.request()).input('schema', sql.NVarChar, object.schema_name).input('object', sql.NVarChar, object.object_name).query<CatalogColumn>(`SELECT TOP (${this.maxRows + 1}) c.name AS column_name,t.name AS data_type,c.is_nullable,
+    const result = await (await this.request()).input('schema', sql.NVarChar, object.schema_name).input('object', sql.NVarChar, object.object_name).query<CatalogColumn>(`SELECT TOP (${this.maxCatalogRows + 1}) c.name AS column_name,t.name AS data_type,c.is_nullable,
       CONVERT(nvarchar(200),ep.value) AS sensitivity FROM sys.columns c JOIN sys.types t ON c.user_type_id=t.user_type_id
       JOIN sys.objects o ON o.object_id=c.object_id JOIN sys.schemas s ON s.schema_id=o.schema_id
       LEFT JOIN sys.extended_properties ep ON ep.major_id=c.object_id AND ep.minor_id=c.column_id AND ep.name='sensitivity'
       WHERE s.name=@schema AND o.name=@object ORDER BY c.column_id`);
-    if (result.recordset.length > this.maxRows) throw new Error('sqlserver_connector_result_limit_exceeded');
+    if (result.recordset.length > this.maxCatalogRows) throw new Error('sqlserver_connector_result_limit_exceeded');
     return result.recordset;
   }
 
@@ -120,13 +125,13 @@ export class SqlServerConnector implements ReadOnlyConnector {
   }
 
   async structuralReferences() {
-    const rows = await (await this.request()).query<{ from: string; to: string; fromColumn: string; toColumn: string }>(`SELECT TOP (${this.maxRows + 1}) ps.name+'.'+pt.name AS [from],rs.name+'.'+rt.name AS [to],pc.name AS fromColumn,rc.name AS toColumn
+    const rows = await (await this.request()).query<{ from: string; to: string; fromColumn: string; toColumn: string }>(`SELECT TOP (${this.maxCatalogRows + 1}) ps.name+'.'+pt.name AS [from],rs.name+'.'+rt.name AS [to],pc.name AS fromColumn,rc.name AS toColumn
       FROM sys.foreign_key_columns f JOIN sys.tables pt ON pt.object_id=f.parent_object_id JOIN sys.schemas ps ON ps.schema_id=pt.schema_id
       JOIN sys.columns pc ON pc.object_id=f.parent_object_id AND pc.column_id=f.parent_column_id JOIN sys.tables rt ON rt.object_id=f.referenced_object_id
       JOIN sys.schemas rs ON rs.schema_id=rt.schema_id JOIN sys.columns rc ON rc.object_id=f.referenced_object_id AND rc.column_id=f.referenced_column_id ORDER BY [from],[to]`);
-    if (rows.recordset.length > this.maxRows) throw new Error('sqlserver_connector_result_limit_exceeded');
+    if (rows.recordset.length > this.maxCatalogRows) throw new Error('sqlserver_connector_result_limit_exceeded');
     const references: Array<{ from: string; to: string; fromColumn: string; toColumn: string; evidenceMethod: 'declared' | 'inferred'; confidence?:number; matchedCount?:number; sourceCount?:number }> = rows.recordset.map((row) => ({ ...row, evidenceMethod: 'declared' }));
-    const candidates = await (await this.request()).query<{ from: string; to: string; fromColumn: string; toColumn: string }>(`SELECT TOP (${this.maxRows}) ss.name+'.'+st.name AS [from],ts.name+'.'+tt.name AS [to],sc.name AS fromColumn,tc.name AS toColumn
+    const candidates = await (await this.request()).query<{ from: string; to: string; fromColumn: string; toColumn: string }>(`SELECT TOP (${this.maxCatalogRows}) ss.name+'.'+st.name AS [from],ts.name+'.'+tt.name AS [to],sc.name AS fromColumn,tc.name AS toColumn
       FROM sys.columns sc JOIN sys.tables st ON st.object_id=sc.object_id JOIN sys.schemas ss ON ss.schema_id=st.schema_id
       JOIN sys.columns tc ON tc.name=sc.name JOIN sys.tables tt ON tt.object_id=tc.object_id JOIN sys.schemas ts ON ts.schema_id=tt.schema_id
       JOIN sys.types stype ON stype.user_type_id=sc.user_type_id JOIN sys.types ttype ON ttype.user_type_id=tc.user_type_id AND ttype.system_type_id=stype.system_type_id
@@ -142,7 +147,7 @@ export class SqlServerConnector implements ReadOnlyConnector {
         FROM ${quote(fromSchema)}.${quote(fromName)} src LEFT JOIN ${quote(toSchema)}.${quote(toName)} dst ON src.${quote(candidate.fromColumn)}=dst.${quote(candidate.toColumn)}`);
       const sourceCount = Number(count.recordset[0]?.source_count ?? 0); const matchedCount = Number(count.recordset[0]?.matched_count ?? 0);
       if (sourceCount > 0 && matchedCount / sourceCount >= POSSIBLE_REFERENCE_COVERAGE) references.push({ ...candidate, evidenceMethod: 'inferred',confidence:matchedCount/sourceCount,matchedCount,sourceCount });
-      if (references.length > this.maxRows) throw new Error('sqlserver_connector_result_limit_exceeded');
+      if (references.length > this.maxCatalogRows) throw new Error('sqlserver_connector_result_limit_exceeded');
     }
     return references;
   }
@@ -156,16 +161,16 @@ export class SqlServerConnector implements ReadOnlyConnector {
   }
 
   async viewDefinitions(): Promise<Array<{ qualifiedName: string; schema: string; definition: string | null }>> {
-    const rows = await (await this.request()).query<{ qualified_name: string; schema_name: string; definition: string | null }>(`SELECT TOP (${this.maxRows + 1}) s.name+'.'+v.name AS qualified_name,s.name AS schema_name,m.definition
+    const rows = await (await this.request()).query<{ qualified_name: string; schema_name: string; definition: string | null }>(`SELECT TOP (${this.maxCatalogRows + 1}) s.name+'.'+v.name AS qualified_name,s.name AS schema_name,m.definition
       FROM sys.views v JOIN sys.schemas s ON s.schema_id=v.schema_id LEFT JOIN sys.sql_modules m ON m.object_id=v.object_id ORDER BY qualified_name`);
-    if (rows.recordset.length > this.maxRows) throw new Error('sqlserver_connector_result_limit_exceeded');
+    if (rows.recordset.length > this.maxCatalogRows) throw new Error('sqlserver_connector_result_limit_exceeded');
     return rows.recordset.map((row) => ({ qualifiedName: row.qualified_name, schema: row.schema_name, definition: row.definition }));
   }
 
   async routines() {
-    const rows = await (await this.request()).query<{ qualified_name: string; kind: 'function'|'procedure'; definition: string }>(`SELECT TOP (${this.maxRows + 1}) s.name+'.'+o.name AS qualified_name,CASE WHEN o.type='P' THEN 'procedure' ELSE 'function' END AS kind,COALESCE(OBJECT_DEFINITION(o.object_id),'') AS definition
+    const rows = await (await this.request()).query<{ qualified_name: string; kind: 'function'|'procedure'; definition: string }>(`SELECT TOP (${this.maxCatalogRows + 1}) s.name+'.'+o.name AS qualified_name,CASE WHEN o.type='P' THEN 'procedure' ELSE 'function' END AS kind,COALESCE(OBJECT_DEFINITION(o.object_id),'') AS definition
       FROM sys.objects o JOIN sys.schemas s ON s.schema_id=o.schema_id WHERE o.type IN ('P','FN','IF','TF') ORDER BY s.name,o.name`);
-    if (rows.recordset.length > this.maxRows) throw new Error('sqlserver_connector_result_limit_exceeded');
+    if (rows.recordset.length > this.maxCatalogRows) throw new Error('sqlserver_connector_result_limit_exceeded');
     return rows.recordset.map((row) => ({ qualifiedName: row.qualified_name, kind: row.kind, definition: row.definition }));
   }
 
@@ -203,4 +208,4 @@ export class SqlServerConnector implements ReadOnlyConnector {
   async close() { if (this.pool.connected) await this.pool.close(); }
 }
 
-export function createSqlServerConnector(input: SqlServerConnection & { id?: string; name?: string; statementTimeoutMs?: number; maxRows?: number }) { return new SqlServerConnector(input); }
+export function createSqlServerConnector(input: SqlServerConnection & { id?: string; name?: string; statementTimeoutMs?: number; maxRows?: number; maxCatalogRows?: number }) { return new SqlServerConnector(input); }
