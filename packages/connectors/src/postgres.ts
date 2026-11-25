@@ -2,7 +2,7 @@ import { CATALOG_ROW_LIMIT } from './limits.js';
 import { createHash } from 'node:crypto';
 import { Pool } from 'pg';
 import { classifyColumn } from '@scaleinsyght/classification';
-import { COLUMN_STATISTICS_ROW_LIMIT, POSSIBLE_REFERENCE_COVERAGE, UNMEASURED, type ColumnStatistics, type ConnectorScope, type DiscoveryResult, type ObjectProfile, type ReadOnlyConnector } from './index.js';
+import { COLUMN_STATISTICS_ROW_LIMIT, POSSIBLE_REFERENCE_COVERAGE, UNMEASURED, type ColumnStatistics, type ConnectorScope, type DiscoveryResult, type Routine, type ObjectProfile, type ReadOnlyConnector } from './index.js';
 
 export type Table = { schema_name: string; table_name: string; table_type: 'BASE TABLE' | 'VIEW'; readable?: boolean };
 type Column = { column_name: string; data_type: string; is_nullable: 'YES' | 'NO'; comment: string | null };
@@ -212,13 +212,16 @@ export class PostgresConnector implements ReadOnlyConnector {
     return result.rows.map(row=>({qualifiedName:row.qualified_name,schema:row.schema_name,definition:row.definition}));
   }
 
-  async routines():Promise<Array<{qualifiedName:string;kind:'function'|'procedure';definition:string}>>{
-    const result=await this.pool.query<{qualified_name:string;kind:'function'|'procedure';definition:string}>(`SELECT n.nspname||'.'||p.proname||'('||pg_get_function_identity_arguments(p.oid)||')' AS qualified_name,
-      CASE WHEN p.prokind='p' THEN 'procedure' ELSE 'function' END AS kind,pg_get_functiondef(p.oid) AS definition
+  async routines():Promise<Routine[]>{
+    // PostgreSQL never encrypts definitions; parameters come from the declared argument names, types and modes.
+    const result=await this.pool.query<{qualified_name:string;kind:'function'|'procedure';definition:string;parameters:Array<{name:string;dataType:string;mode:string}>|null}>(`SELECT n.nspname||'.'||p.proname||'('||pg_get_function_identity_arguments(p.oid)||')' AS qualified_name,
+      CASE WHEN p.prokind='p' THEN 'procedure' ELSE 'function' END AS kind,pg_get_functiondef(p.oid) AS definition,
+      (SELECT json_agg(json_build_object('name',coalesce(nullif(a.name,''),'$'||a.ord),'dataType',format_type(a.type,NULL),'mode',CASE coalesce(a.mode,'i') WHEN 'o' THEN 'out' WHEN 'b' THEN 'inout' ELSE 'in' END) ORDER BY a.ord)
+         FROM unnest(coalesce(p.proallargtypes,p.proargtypes::oid[]),p.proargnames,p.proargmodes) WITH ORDINALITY AS a(type,name,mode,ord)) AS parameters
       FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_toast%'
       AND p.prokind IN ('f','p') ORDER BY n.nspname,p.proname LIMIT $1`,[this.maxCatalogRows+1]);
     if(result.rows.length>this.maxCatalogRows)throw new Error('postgres_connector_result_limit_exceeded');
-    return result.rows.map(row=>({qualifiedName:row.qualified_name,kind:row.kind,definition:row.definition}));
+    return result.rows.map(row=>({qualifiedName:row.qualified_name,kind:row.kind,definition:row.definition,encrypted:false,parameters:(row.parameters??[]).map(parameter=>({name:parameter.name,dataType:parameter.dataType,mode:parameter.mode as 'in'|'out'|'inout'}))}));
   }
 
   async categoryValues(table: string, column: string): Promise<{sql: string; values: string[]} | undefined> {

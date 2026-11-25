@@ -11,7 +11,7 @@ import { docxText, pdfText, pptxText, xlsxRows } from '../support/document-text.
 // report approved by a second person, run on a schedule, and the source's dictionary exported. Every file is opened and
 // its figures compared with testbed/truth.json.
 config({ path: '.env' });
-const migrateUrl = () => { const value = process.env.DATABASE_URL_MIGRATE; if (!value) throw new Error('DATABASE_URL_MIGRATE is required for the S7 walkthrough.'); const url = new URL(value); url.pathname = '/si_test'; return url.toString(); };
+const migrateUrl = () => { const value = process.env.DATABASE_URL_MIGRATE; if (!value) throw new Error('DATABASE_URL_MIGRATE is required for the S7 walkthrough.'); const url = new URL(value); url.pathname = `/${process.env.SI_TEST_DATABASE ?? 'si_test'}`; return url.toString(); };
 const adminPool = new Pool({ connectionString: migrateUrl() });
 const postgres = new URL(process.env.DATABASE_URL_TESTBED ?? ''); if (!postgres.hostname) throw new Error('The PostgreSQL testbed is required.');
 const truth = JSON.parse(readFileSync('testbed/truth.json', 'utf8')) as { rowCounts: Record<string, number>; answerChecks: { ordersPerDepartment: { postgres: Array<{ departmentId: number; departmentName: string; orderCount: number }> } } };
@@ -35,7 +35,7 @@ test('s7_saved_question_reuse_exports_governed_report_schedule_and_dictionary_ma
   });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(`/login?tenant=${tenantId}`); await page.getByLabel('Email').fill(email); await page.getByLabel('Password').fill(password); await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Good afternoon, Test Analyst' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /^Good (morning|afternoon|evening), Test Analyst$/ })).toBeVisible();
   const draft = await page.request.post('/api/connections', { data: { connectorType: 'postgres', displayName: 'PostgreSQL testbed', credential: { host: postgres.hostname, port: Number(postgres.port || 5432), database: postgres.pathname.slice(1), username: decodeURIComponent(postgres.username), password: decodeURIComponent(postgres.password), sslMode: 'disable' } } });
   const { connectionId } = await draft.json() as { connectionId: string };
   expect((await page.request.post(`/api/connections/${connectionId}/test`)).ok()).toBeTruthy();

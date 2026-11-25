@@ -6,7 +6,7 @@ import type { Pool } from 'pg';
 import { withTenant, getUsage } from '@scaleinsyght/db';
 import { recordAgentRun, tenantAgent } from '@scaleinsyght/registry';
 import { activateConnection, approveGovernedVersion, createConnectionDraft, createGovernedDraft, deletePersonalMemory, getApprovedGovernedVersion, getPersonalMemory, moveConnectionToGroup, putPersonalMemory, type ConnectorType, type PersonalMemoryData } from '@scaleinsyght/registry';
-import { decryptConnectionSecret, encryptConnectionSecret, createExcelConnector, createPostgresConnector, createSqlServerConnector, type ReadOnlyConnector, type SourceConnectorType } from '@scaleinsyght/connectors';
+import { decryptConnectionSecret, encryptConnectionSecret, createExcelConnector, createPostgresConnector, createSqlServerConnector, type ReadOnlyConnector, type Routine, type SourceConnectorType } from '@scaleinsyght/connectors';
 import { EncryptedArtifactStore } from '@scaleinsyght/artifacts';
 import { decideFinding, getNotifications, listFindings, markNotificationRead, readConnectionScope, readWorkbook, retireConnection, runProfile, saveConnectionScope, storeWorkbook } from '@scaleinsyght/profiler';
 import { applyPersonalContext, createAnalyticPlan, parseLineageRequest, startAnalyticRun, submitFeedback, type StructuredAnswer } from '@scaleinsyght/analytic';
@@ -21,6 +21,7 @@ import { createOidcAuthorizationRequest, verifyOidcIdToken } from '@scaleinsyght
 import { createEnrollment, hashGatewaySecret, validateGatewayPlan, validateGatewayResult } from '@scaleinsyght/customer-gateway';
 import { readTableauWorkbook } from '@scaleinsyght/tableau';
 import { parseDictionaryFile } from './dictionary-file.js';
+import { registerDictionaryRoutes } from './dictionary.js';
 
 export interface TestSource { id: string; type: SourceConnectorType | 'dbt' | 'tableau' | 'power_bi'; name: string; }
 const DICTIONARY_SQL=`SELECT dataset.asset_id,dataset.qualified_name,
@@ -1287,19 +1288,23 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const classifications=await withTenant(options.pool,current.tenantId,client=>client.query<{qualified_name:string;display_name:string;sensitivity_tags:string[];sensitivity_evidence:unknown}>(`SELECT a.qualified_name,left(a.qualified_name,length(a.qualified_name)-length(p.field_name))||coalesce(p.display_name,p.field_name) AS display_name,p.sensitivity_tags,p.sensitivity_evidence FROM graph.assets a JOIN LATERAL(SELECT sensitivity_tags,sensitivity_evidence,display_name,field_name FROM profiler.field_profiles WHERE tenant_id=a.tenant_id AND asset_id=a.asset_id ORDER BY profile_version DESC LIMIT 1) p ON true WHERE a.tenant_id=$1 AND a.source_id=$2 AND a.asset_type='field' AND a.active AND cardinality(p.sensitivity_tags)>0 ORDER BY a.qualified_name`,[current.tenantId,request.params.connectionId]));
     return reply.send({profile:result.rows[0]??null,classifications:classifications.rows});
   });
+  registerDictionaryRoutes(app,{pool:options.pool,session:authenticatedSession,connector:connectorForConnection});
   app.get<{Params:{connectionId:string}}>('/api/connections/:connectionId/dictionary',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const result=await withTenant(options.pool,current.tenantId,async(client)=>client.query(
       DICTIONARY_SQL,[current.tenantId,request.params.connectionId]));
-    const tables=result.rows as Array<{qualified_name:string;fields:Array<{name:string;description:string|null}>}>;const columns=tables.flatMap(table=>table.fields);let routines:Array<{qualifiedName:string;kind:string;definition:string}>=[];try{routines=await (await connectorForConnection(current.tenantId,request.params.connectionId)).routines?.()??[];}catch{/* A metadata-only test connector may not expose source routines. */}return reply.send({tables:result.rows,routines,summary:{tableCount:tables.length,columnCount:columns.length,documentedColumnCount:columns.filter(field=>field.description).length,coverage:columns.length?columns.filter(field=>field.description).length/columns.length:0}});
+    const tables=result.rows as Array<{qualified_name:string;fields:Array<{name:string;description:string|null}>}>;const columns=tables.flatMap(table=>table.fields);let routines:Routine[]=[];try{routines=await (await connectorForConnection(current.tenantId,request.params.connectionId)).routines?.()??[];}catch{/* A metadata-only test connector may not expose source routines. */}return reply.send({tables:result.rows,routines,summary:{tableCount:tables.length,columnCount:columns.length,documentedColumnCount:columns.filter(field=>field.description).length,coverage:columns.length?columns.filter(field=>field.description).length/columns.length:0}});
   });
-  app.get<{Params:{connectionId:string};Querystring:{format?:string}}>('/api/connections/:connectionId/dictionary/export',async(request,reply)=>{
+  app.get<{Params:{connectionId:string};Querystring:{format?:string;object?:string}}>('/api/connections/:connectionId/dictionary/export',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const format=request.query.format;if(format!=='markdown'&&format!=='docx')return reply.code(400).send({error:'unsupported_export_format'});
     const {tables,name}=await withTenant(options.pool,current.tenantId,async(client)=>({tables:(await client.query<{qualified_name:string;fields:Array<{name:string;label:string|null;dataType:string|null;tags:string[]|null;nullRate:string|number|null;distinctCount:string|number|null;description:string|null}>}>(DICTIONARY_SQL,[current.tenantId,request.params.connectionId])).rows,
       name:(await client.query<{name:string}>("SELECT coalesce(nullif(display_name,''),connector_type) AS name FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2",[current.tenantId,request.params.connectionId])).rows[0]?.name}));
     if(!name)return reply.code(404).send({error:'connection_not_found'});
-    const rendered=await renderDictionary({sourceName:name,generatedAt:new Date().toISOString().slice(0,10),tables:tables.map(table=>({name:table.qualified_name,columns:table.fields.sort((a,b)=>a.name.localeCompare(b.name)).map(field=>({name:field.name,label:field.label,dataType:field.dataType,tags:field.tags??[],nullRate:field.nullRate===null?null:Number(field.nullRate),distinctCount:field.distinctCount===null?null:Number(field.distinctCount),description:field.description}))}))},format);
+    // object= exports one table (the Dictionary header card's Export buttons); without it, the whole source.
+    const chosen=typeof request.query.object==='string'?tables.filter(table=>table.qualified_name===request.query.object):tables;
+    if(typeof request.query.object==='string'&&!chosen.length)return reply.code(404).send({error:'object_not_found'});
+    const rendered=await renderDictionary({sourceName:name,generatedAt:new Date().toISOString().slice(0,10),tables:chosen.map(table=>({name:table.qualified_name,columns:table.fields.sort((a,b)=>a.name.localeCompare(b.name)).map(field=>({name:field.name,label:field.label,dataType:field.dataType,tags:field.tags??[],nullRate:field.nullRate===null?null:Number(field.nullRate),distinctCount:field.distinctCount===null?null:Number(field.distinctCount),description:field.description}))}))},format);
     return reply.type(rendered.contentType).header('content-disposition',`attachment; filename="${rendered.filename}"`).header('x-content-sha256',rendered.contentHash).send(rendered.bytes);
   });
   app.post<{Params:{connectionId:string};Body:{format:'csv'|'xlsx';filename:string;contentBase64:string}}>('/api/connections/:connectionId/dictionary/import',async(request,reply)=>{
@@ -1309,7 +1314,9 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const source=await withTenant(options.pool,current.tenantId,client=>client.query<{qualified_name:string;field_names:string[]}>(`SELECT d.qualified_name,array_agg(f.qualified_name) AS field_names FROM graph.assets d JOIN graph.relationships r ON r.tenant_id=d.tenant_id AND r.from_asset_id=d.asset_id AND r.relationship_type='CONTAINS' JOIN graph.assets f ON f.tenant_id=r.tenant_id AND f.asset_id=r.to_asset_id WHERE d.tenant_id=$1 AND d.source_id=$2 AND d.asset_type='dataset' AND d.active GROUP BY d.qualified_name`,[current.tenantId,request.params.connectionId]));
     const resolved:Array<{table:string;column:string;description:string}>=[];
     for(const row of rows){const matches=source.rows.filter(item=>item.qualified_name===row.table||item.qualified_name.endsWith(`.${row.table}`));if(matches.length!==1)return reply.code(400).send({error:'dictionary_table_unknown_or_ambiguous'});const field=matches[0]!.field_names.find(name=>name.endsWith(`.${row.column}`));if(!field)return reply.code(400).send({error:'dictionary_column_unknown'});resolved.push({table:matches[0]!.qualified_name,column:row.column,description:row.description});}
-    await withTenant(options.pool,current.tenantId,async(client)=>{for(const row of resolved)await client.query(`INSERT INTO graph.dictionary_descriptions(tenant_id,source_id,table_name,column_name,description) VALUES($1,$2,$3,$4,$5) ON CONFLICT(tenant_id,source_id,table_name,column_name) DO UPDATE SET description=EXCLUDED.description,imported_at=clock_timestamp()`,[current.tenantId,request.params.connectionId,row.table,row.column,row.description]);});
+    await withTenant(options.pool,current.tenantId,async(client)=>{for(const row of resolved)await client.query(`INSERT INTO graph.dictionary_descriptions(tenant_id,source_id,table_name,column_name,description,origin) VALUES($1,$2,$3,$4,$5,'imported') ON CONFLICT(tenant_id,source_id,table_name,column_name) DO UPDATE SET description=EXCLUDED.description,origin='imported',imported_at=clock_timestamp()`,[current.tenantId,request.params.connectionId,row.table,row.column,row.description]);
+      // Which file was imported, when and by whom, for the Dictionary's landing summary (decision 53).
+      await client.query(`INSERT INTO graph.dictionary_imports(tenant_id,source_id,file_name,imported_by,table_count,column_count) VALUES($1,$2,$3,$4,$5,$6)`,[current.tenantId,request.params.connectionId,filename.replace(/[\\/]/g,'_').slice(0,255)||'dictionary',current.userId,new Set(resolved.map(row=>row.table)).size,resolved.filter(row=>row.column).length]);});
     return reply.send({imported:resolved.length,filename});
   });
   app.get<{Params:{connectionId:string};Querystring:{possible?:string}}>('/api/connections/:connectionId/er',async(request,reply)=>{

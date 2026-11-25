@@ -9,6 +9,8 @@ export interface DiscoveredObject {
   scopeMode: ScopeMode;
 }
 
+export type Routine = {qualifiedName:string;kind:'function'|'procedure';definition:string|null;encrypted:boolean;parameters:Array<{name:string;dataType:string;mode:'in'|'out'|'inout'}>};
+
 export interface DiscoveryResult {
   objects: DiscoveredObject[];
   listOnlyObjects: Array<{ qualifiedName: string; type: AssetType }>;
@@ -66,7 +68,9 @@ export interface ReadOnlyConnector {
   profile(assetKey: string, scope?: ConnectorScope, mode?: 'profile' | 'nightly'): Promise<ObjectProfile>;
   queryAggregate?(assetKey: string, metric: 'count'): Promise<{ metric: 'count'; value: number }>;
   structuralReferences?(): Promise<Array<{from:string;to:string;fromColumn:string;toColumn:string;evidenceMethod?:'declared'|'inferred';confidence?:number;matchedCount?:number;sourceCount?:number}>>;
-  routines?():Promise<Array<{qualifiedName:string;kind:'function'|'procedure';definition:string}>>;
+  /** Procedures and functions: definition text as the source returns it (null when withheld), whether the source
+   *  encrypts it, and the declared parameters. Callers scrub the text before storing it (decision 53). */
+  routines?():Promise<Routine[]>;
   /** View definitions for SQL lineage parsing. definition is null when the source hides it (for example an encrypted module). */
   viewDefinitions?():Promise<Array<{qualifiedName:string;schema:string;definition:string|null}>>;
   /** Distinct non-null values of one column, as text, for keyed fingerprinting by the ID agent. Values stay in memory:

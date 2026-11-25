@@ -28,7 +28,7 @@ test('s4_dbt_upload_view_sql_and_lineage_graph_columns_gaps_and_chat_answers_mat
   await createTenant(adminPool, { tenantId, name: 'Lineage workspace', displayName: 'Test Analyst', email, password });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(`/login?tenant=${tenantId}`); await page.getByLabel('Email').fill(email); await page.getByLabel('Password').fill(password); await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Good afternoon, Test Analyst' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /^Good (morning|afternoon|evening), Test Analyst$/ })).toBeVisible();
   // Views are parsed while each database is profiled.
   await connect(page, { connectorType: 'postgres', displayName: 'PostgreSQL testbed', credential: { host: postgres.hostname, port: Number(postgres.port || 5432), database: postgres.pathname.slice(1), username: decodeURIComponent(postgres.username), password: decodeURIComponent(postgres.password), sslMode: 'disable' } });
   await connect(page, { connectorType: 'sql_server', displayName: 'SQL Server hospital', credential: { host: process.env.SQLSERVER_TESTBED_HOST, port: Number(process.env.SQLSERVER_TESTBED_PORT), database: process.env.SQLSERVER_TESTBED_DATABASE, username: process.env.SQLSERVER_TESTBED_USERNAME, password: process.env.SQLSERVER_TESTBED_PASSWORD, trustServerCertificate: true } });

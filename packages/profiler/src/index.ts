@@ -4,6 +4,8 @@ import { EncryptedArtifactStore, type StoredArtifact } from '@scaleinsyght/artif
 import type { ConnectorScope, DiscoveryResult, ObjectProfile, ReadOnlyConnector, ScopeMode } from '@scaleinsyght/connectors';
 import { withTenant } from '@scaleinsyght/db';
 import { runIdAgent } from './id-agent.js';
+import { captureDefinitions } from './definitions.js';
+export { analyseDefinition, captureDefinitions } from './definitions.js';
 import { readProfileState, recordFindings } from './findings.js';
 import { parseStatementLineage, statementHash, writeStatementLineage, SqlParserUnavailable, type LineageDialect, type StatementLineage } from '@scaleinsyght/graph';
 
@@ -25,6 +27,8 @@ export interface ProfileSummary {
   elapsedMs: number;
   /** Parsed view lineage (contract 6): views parsed, edges written and gaps recorded. */
   lineage?: { views: number; tableEdges: number; columnEdges: number; gaps: number };
+  /** Scrubbed definitions stored for this connection (decision 53). */
+  definitions?: { captured: number; changed: number; encrypted: number };
   /** ID agent: identifier fields found, fields fingerprinted and probable cross-source matches. */
   ids?: { fields: number; fingerprinted: number; matches: number };
   /** Findings recorded by comparing this run with the previous state (decision 48). */
@@ -263,6 +267,7 @@ export async function runProfile(
   });
 
   const lineage = await collectViewLineage(pool, input);
+  const definitions = await captureDefinitions(pool, input);
   const masterKey = process.env.ARTIFACT_MASTER_KEY ? Buffer.from(process.env.ARTIFACT_MASTER_KEY, 'base64') : undefined;
   const ids = await runIdAgent(pool, { ...input, ...(masterKey ? { masterKey } : {}) });
   const findings = await recordFindings(pool, { tenantId: input.tenantId, connectionId: input.connectionId, jobId, before, scannedObjects: new Set(profiles.map(({ object }) => object.qualifiedName)) });
@@ -272,6 +277,7 @@ export async function runProfile(
      WHERE EXISTS(SELECT 1 FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2 AND status='active') ON CONFLICT DO NOTHING`, [input.tenantId, input.connectionId]));
   return {
     ...(lineage ? { lineage } : {}),
+    definitions,
     ...(ids ? { ids } : {}),
     findings,
     jobId,

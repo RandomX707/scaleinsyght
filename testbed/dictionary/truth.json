@@ -1,0 +1,241 @@
+{
+  "sqlserver": {
+    "database": "si_testbed_dictionary",
+    "standardTables": [
+      "dbo.departments",
+      "dbo.encounters",
+      "dbo.patients"
+    ],
+    "customTables": [
+      "dbo.X_CENSUS_SNAP",
+      "dbo.X_CENSUS_SNAP_ARCH",
+      "dbo.X_JOB_LOG",
+      "dbo.X_READMIT_FLAGS"
+    ],
+    "customViews": [
+      "dbo.X_V_DEPT_CENSUS"
+    ],
+    "procedures": {
+      "dbo.usp_X_LOAD_READMIT_FLAGS": {
+        "group": "Procedures \u00b7 Fact loaders",
+        "writes": [
+          {
+            "table": "dbo.X_READMIT_FLAGS",
+            "mode": "truncate-insert"
+          }
+        ],
+        "reads": [
+          "dbo.encounters"
+        ],
+        "calls": [
+          "dbo.usp_X_LOG_JOB"
+        ],
+        "parameters": [
+          "@LookbackDays"
+        ],
+        "encrypted": false
+      },
+      "dbo.usp_X_MERGE_CENSUS": {
+        "group": "Procedures \u00b7 Fact loaders",
+        "writes": [
+          {
+            "table": "dbo.X_CENSUS_SNAP",
+            "mode": "merge"
+          }
+        ],
+        "reads": [
+          "dbo.encounters"
+        ],
+        "calls": [],
+        "parameters": [
+          "@SnapDate"
+        ],
+        "encrypted": false
+      },
+      "dbo.rpt_X_ENCOUNTERS_BY_DEPT": {
+        "group": "Procedures \u00b7 Report procedures",
+        "writes": [],
+        "reads": [
+          "dbo.departments",
+          "dbo.encounters"
+        ],
+        "calls": [],
+        "parameters": [
+          "@From",
+          "@To"
+        ],
+        "encrypted": false
+      },
+      "dbo.usp_X_CHECK_CENSUS": {
+        "group": "Procedures \u00b7 Data checks",
+        "writes": [],
+        "reads": [
+          "dbo.X_CENSUS_SNAP"
+        ],
+        "calls": [],
+        "parameters": [],
+        "encrypted": false
+      },
+      "dbo.usp_X_ARCHIVE_CENSUS": {
+        "group": "Procedures \u00b7 Archive",
+        "writes": [
+          {
+            "table": "dbo.X_CENSUS_SNAP",
+            "mode": "delete"
+          },
+          {
+            "table": "dbo.X_CENSUS_SNAP_ARCH",
+            "mode": "insert"
+          }
+        ],
+        "reads": [
+          "dbo.X_CENSUS_SNAP"
+        ],
+        "calls": [],
+        "parameters": [
+          "@Before"
+        ],
+        "encrypted": false
+      },
+      "dbo.usp_X_LOG_JOB": {
+        "group": "Procedures \u00b7 Utilities",
+        "writes": [
+          {
+            "table": "dbo.X_JOB_LOG",
+            "mode": "insert"
+          }
+        ],
+        "reads": [],
+        "calls": [],
+        "parameters": [
+          "@JobName",
+          "@Rows"
+        ],
+        "encrypted": false,
+        "calledBy": [
+          "dbo.usp_X_LOAD_READMIT_FLAGS"
+        ]
+      },
+      "dbo.usp_X_SECRET_SCORE": {
+        "group": "Procedures \u00b7 Utilities",
+        "writes": [],
+        "reads": [],
+        "calls": [],
+        "parameters": [],
+        "encrypted": true
+      }
+    },
+    "foreignKeys": [
+      [
+        "dbo.encounters.patient_id",
+        "dbo.patients.patient_id"
+      ],
+      [
+        "dbo.encounters.department_id",
+        "dbo.departments.department_id"
+      ]
+    ],
+    "hardCodedLiterals": [
+      "104233",
+      "readmit flags"
+    ],
+    "sqlSearch": {
+      "query": "LookbackDays",
+      "object": "dbo.usp_X_LOAD_READMIT_FLAGS"
+    }
+  },
+  "dbt": {
+    "models": [
+      "analytics.mart_department_orders",
+      "analytics.mart_order_claims",
+      "analytics.mart_provider_encounters",
+      "analytics.stg_encounters",
+      "analytics.stg_orders"
+    ],
+    "descriptions": {
+      "analytics.stg_orders": "One row per order, copied from the hospital orders table.",
+      "analytics.mart_department_orders": "Order count and order amount per department."
+    },
+    "tests": {
+      "analytics.stg_orders": [
+        [
+          "order_id",
+          "not_null"
+        ],
+        [
+          "order_id",
+          "unique"
+        ],
+        [
+          "department_id",
+          "not_null"
+        ]
+      ],
+      "analytics.mart_department_orders": [
+        [
+          "department_id",
+          "not_null"
+        ],
+        [
+          "department_id",
+          "unique"
+        ]
+      ]
+    }
+  },
+  "postgres": {
+    "tables": [
+      "public.departments",
+      "public.encounters",
+      "public.orders",
+      "public.patients",
+      "public.providers"
+    ],
+    "views": [
+      "public.department_order_summary",
+      "public.patient_encounter_summary"
+    ],
+    "functions": {
+      "public.count_patient_encounters(p_patient_id integer)": {
+        "reads": [
+          "public.encounters"
+        ],
+        "parameters": [
+          "p_patient_id"
+        ]
+      },
+      "public.patient_order_total(p_patient_id integer)": {
+        "reads": [
+          "public.encounters",
+          "public.orders"
+        ],
+        "parameters": [
+          "p_patient_id"
+        ]
+      }
+    },
+    "withheldColumns": {
+      "public.patients": [
+        "date_of_birth",
+        "mrn",
+        "name",
+        "phone"
+      ]
+    }
+  },
+  "excel": {
+    "_note": "Sheets and original headers from testbed/truth.json (excel).",
+    "source": "testbed/truth.json"
+  },
+  "tableau": {
+    "workbook": "testbed/tableau/riverside-operations.twb",
+    "calculatedFields": {
+      "Department orders.Average order value": "SUM([order_amount]) / SUM([order_count])",
+      "Provider workload.Busy provider": "SUM([encounter_count]) >= <number> // <comment>"
+    },
+    "hiddenLiterals": [
+      "40",
+      "threshold agreed"
+    ]
+  }
+}

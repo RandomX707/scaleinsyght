@@ -101,6 +101,7 @@ export async function importTableauWorkbook(pool: Pool, input: {
     const gap = async (assetId: string, reason: string) => { await openGap(client, input.tenantId, assetId, reason); raised.add(`${assetId}\0${reason}`); totals.gaps++; };
 
     const datasetNames = new Set<string>();
+    const formulas = new Map<string, string | null>(); // calculated field asset name -> scrubbed formula
     const fieldAssets = new Map<string, string>(); // `${datasource.name}\0${field.name}` -> asset id
     for (const datasource of workbook.datasources) {
       let datasetName = safeName(datasource.caption);
@@ -117,6 +118,7 @@ export async function importTableauWorkbook(pool: Pool, input: {
         fieldAssets.set(`${datasource.name}\0${field.name}`, fieldId);
         await client.query(`INSERT INTO graph.relationships(tenant_id,family,relationship_type,from_asset_id,to_asset_id,granularity) VALUES($1,'structural','CONTAINS',$2,$3,'field') ON CONFLICT DO NOTHING`, [input.tenantId, datasetId, fieldId]);
         totals.fields++; if (field.source.kind === 'calculated') totals.calculatedFields++;
+        if (field.source.kind === 'calculated') formulas.set(`${datasetName}.${fieldName}`, field.source.scrubbedFormula);
       }
       await importDatasource(datasource, datasetId);
     }
@@ -224,6 +226,16 @@ export async function importTableauWorkbook(pool: Pool, input: {
        FROM graph.gaps g CROSS JOIN LATERAL unnest(g.between_asset_ids) AS x(asset_id) JOIN graph.assets s ON s.tenant_id=g.tenant_id AND s.asset_id=x.asset_id
        WHERE g.tenant_id=$1 AND s.source_id=$2 AND g.closed_by_assertion_id IS NULL`, [input.tenantId, input.tableauConnectionId, COLLECTOR]);
     for (const row of open.rows) if (row.assertion_id && !raised.has(`${row.asset_id}\0${row.reason}`)) await client.query('UPDATE graph.gaps SET closed_by_assertion_id=$3 WHERE tenant_id=$1 AND gap_id=$2', [input.tenantId, row.gap_id, row.assertion_id]);
+    // Scrubbed formulas are kept for the Dictionary as versioned definitions (decision 53); a re-upload replaces them.
+    const current = new Map((await client.query<{ qualified_name: string; version: number; scrubbed_text: string | null }>(`SELECT qualified_name,version,scrubbed_text FROM graph.definitions WHERE tenant_id=$1 AND source_id=$2 AND kind='calculated_field' AND active`, [input.tenantId, input.tableauConnectionId])).rows.map((row) => [row.qualified_name, row]));
+    for (const [name, formula] of formulas) {
+      const previous = current.get(name); current.delete(name);
+      if (previous && previous.scrubbed_text === formula) continue;
+      if (previous) await client.query('UPDATE graph.definitions SET active=false WHERE tenant_id=$1 AND source_id=$2 AND qualified_name=$3 AND active', [input.tenantId, input.tableauConnectionId, name]);
+      await client.query(`INSERT INTO graph.definitions(tenant_id,source_id,qualified_name,version,kind,scrubbed_text)
+        SELECT $1,$2,$3,coalesce(max(version),0)+1,'calculated_field',$4 FROM graph.definitions WHERE tenant_id=$1 AND source_id=$2 AND qualified_name=$3`, [input.tenantId, input.tableauConnectionId, name, formula]);
+    }
+    if (current.size) await client.query(`UPDATE graph.definitions SET active=false WHERE tenant_id=$1 AND source_id=$2 AND kind='calculated_field' AND active AND qualified_name=ANY($3::text[])`, [input.tenantId, input.tableauConnectionId, [...current.keys()]]);
     return { datasources: workbook.datasources.length, worksheets: workbook.worksheets.length, fields: totals.fields, calculatedFields: totals.calculatedFields,
       tableEdges: totals.tableEdges, columnEdges: totals.columnEdges, reportEdges: totals.reportEdges, gaps: totals.gaps };
   });

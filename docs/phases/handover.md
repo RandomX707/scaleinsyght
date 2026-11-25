@@ -25,6 +25,8 @@ Updated by Claude Code after #35. S7 (Codex) and S8 (Claude Code) are merged. Th
 | #33 | d435b7e | CI on pull requests and pushes to main only |
 | #34 | adf1cfe | Agents checked when a step runs; ID and ID trace agents per tenant (migration 036, decision 52) |
 | #35 | de5daa6 | heldout2 retired; heldout3 added (first runs 9/0/0/1 with and without warehouse marts); K2 closed |
+| #36 | c765e00 | Handover update |
+| #37, #38 | (pending) | Dictionary spec (decision 53) and the Dictionary rebuild: stored scrubbed definitions (migration 037), lazy Dictionary API and page, HTML export, ER neighbourhood; `docs/phases/dictionary-rebuild.md` section 5 |
 
 ## Review app on 4284 and riverside-health
 
@@ -47,17 +49,21 @@ Updated by Claude Code after #35. S7 (Codex) and S8 (Claude Code) are merged. Th
 - `docs/known-issues.md`: K1 fixed; K2 closed, not reproduced (development and heldout3 score the same with and without dbt marts); K3 open; K4 partly fixed (an intermittent `c2_postgres_connection_credentials` timeout was seen once in CI after the fix; CI now prints slow plans when contracts fail); K5 heldout2 retired; K6 two conditions on one table is not a supported query shape (Q52).
 - The testbed's `pnpm test:testbed` now runs `pnpm testbed:dbt` first, which rebuilds the dbt `analytics` and `billing` schemas in `si_testbed_pg` and revokes the read-only login's access to them.
 - Running anything against `si_test` while another suite is using it breaks both. Each worktree can set `SI_TEST_DATABASE` (Claude Code uses `si_test_cc`) and its own ports (Claude Code: API 3350, worker 3351, web 4295, parser 8031).
-- **Migrations:** `main` has two 035s (`035_claims_need_an_active_run`, `035_saved_reuse`); both are applied on `scale_insyght`, so neither may be renamed. The next migration is 037. Migrations cannot see tenant rows (row security is forced even for the owner): 036 shows how to backfill with policies for the migration role that live only inside its transaction. 032's backfill of nightly schedules inserted nothing for this reason.
+- **Migrations:** `main` has two 035s (`035_claims_need_an_active_run`, `035_saved_reuse`); both are applied on `scale_insyght`, so neither may be renamed. The next migration is 038 (037 is the Dictionary). Migrations cannot see tenant rows (row security is forced even for the owner): 036 shows how to backfill with policies for the migration role that live only inside its transaction. 032's backfill of nightly schedules inserted nothing for this reason.
 - Every worktree's `.env` sets `ARTIFACT_VOLUME_PATH=/Users/yashaswiram/.scaleinsyght/artifacts`.
-- The model ledger (`core.model_usage`) lives in the test databases, which the gates reset, so spend has to be tracked from run logs. Claude Code spent about USD 5 today (evals, the scale test and two walkthroughs); with Codex's USD 12.91 plus later runs, the day stays under the USD 30 cap.
+- The model ledger (`core.model_usage`) lives in the test databases, which the gates reset, so spend has to be tracked from run logs (queue item 5 fixes this). 25 Nov: measured in `si_test_cc` about USD 0.3 per full testbed walkthrough run (S1 to S9 ask questions; the Dictionary itself uses no model); `si_test` showed USD 1.43 when checked.
+- The testbed walkthroughs all honour `SI_TEST_DATABASE` now; S7 used to write to `si_test` regardless (two S7 tenants were added to `si_test` on 25 Nov before this was fixed; nothing was reset).
 - Worktrees: `../scaleinsyght-review` serves 4284; `../scaleinsyght-cc` and `../scaleinsyght-cc-s8` are Claude Code's; `../scaleinsyght-chat` (S7, merged) and `../scaleinsyght-eval` are Codex's. Orphaned SQL parsers from before #30 may still hold ports 8032 and 8033 (in the chat and eval worktrees); `startSqlParser` treats any server on its port as its own, so stop them before relying on those ports.
 
 ## Claude Code queue (in the user's order)
 
 1. Done: K4 follow-ups, K2 and the scale test, CI triggers, agents at execution, heldout3.
-2. **Dictionary rebuild** to match the prototype for every connector type (databases, Excel, dbt with descriptions and tests, Tableau with formulas), landing summary, Standard and Custom, search including SQL, object tabs, and an offline interactive HTML export with an audit record and a Playwright check with no network. Note: decision 50 kept Tableau formulas out of storage; the Dictionary needs them, so they will be stored as descriptive metadata and scrubbed before any model input (contract 7).
-3. **Home as an analytical chat**: prose first, display chosen by code from the declared intent, one collapsed "SQL, sources and lineage" drawer, follow-up reshaping without rerunning, screenshots and a walkthrough per rule.
-4. From the scale test, not yet done: ER explorer and Dictionary payloads at 5,000 tables, per-table profiling time, planner pre-model catalog reads.
+2. Done: **Dictionary rebuild** and the ER explorer at scale (above; Dictionary 633 ms and 14.5 KB, ER 739 ms and 40 KB on 5,000 tables).
+3. **K6**: counts with two or more conditions on one table; development set only.
+4. **Migration safety**: data backfills per tenant with the tenant setting, or through a reviewed function, and a check that fails loudly when a backfill that should change rows changes none.
+5. **Model-spend ledger** kept where test resets don't wipe it, so the daily total is measured.
+6. **Home chat spec and build** (moved from Codex): conversational layout; code picks sentence, small table (2 to 5 values), chart (6 to 20 groups), compact table with Show all (over 20 rows), flow diagram for lineage, or explanation plus a safe alternative for a refusal; never a chart and a full table by default; one collapsed "SQL, sources and lineage" drawer; plan collapsed after completion; follow-ups change the form without rerunning; screenshots and a walkthrough per rule.
+7. From the scale test, still open: per-table profiling time and planner pre-model catalog reads.
 
 ## Codex continuation
 

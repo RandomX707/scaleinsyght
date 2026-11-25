@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { withTenant, type Pool } from '@scaleinsyght/db';
 import { parseStatementLineage, statementHash, writeStatementLineage, SqlParserUnavailable, type LineageDialect, type StatementLineage } from './sql-lineage.js';
 
-type Node = { resource_type?: unknown; name?: unknown; alias?: unknown; schema?: unknown; identifier?: unknown; compiled_code?: unknown; depends_on?: { nodes?: unknown } };
+type Node = { resource_type?: unknown; name?: unknown; alias?: unknown; schema?: unknown; identifier?: unknown; compiled_code?: unknown; depends_on?: { nodes?: unknown }; description?: unknown; columns?: Record<string, { name?: unknown; description?: unknown }>; attached_node?: unknown; column_name?: unknown; test_metadata?: { name?: unknown } };
 type CatalogEntry = { metadata?: { schema?: unknown; name?: unknown }; columns?: Record<string, { type?: unknown; name?: unknown }> };
 export type DbtImportSummary = { models: number; tests: number; sources: number; tableEdges: number; columnEdges: number; gaps: number; modelsNotInWarehouse: string[] };
 
@@ -32,7 +32,26 @@ export function readDbtArtifacts(manifest: unknown, catalog: unknown) {
     const name = relation(entry.metadata?.schema, entry.metadata?.name); if (!name || !entry.columns) continue;
     columns[name] = Object.fromEntries(Object.values(entry.columns).filter((column) => typeof column.name === 'string' && NAME.test(column.name)).map((column) => [String(column.name), String(column.type ?? 'unknown')]));
   }
+  // Descriptions and tests are descriptive metadata from the project (documented, not drafted); kept for the Dictionary.
+  const descriptions: Array<{ relation: string; column: string; text: string }> = [];
+  for (const [id, node] of [...Object.entries(m.nodes), ...Object.entries(m.sources)]) {
+    const name = relations.get(id); if (!name) continue;
+    if (typeof node.description === 'string' && node.description.trim()) descriptions.push({ relation: name, column: '', text: node.description.trim().slice(0, 2000) });
+    for (const column of Object.values(node.columns ?? {})) if (typeof column.name === 'string' && NAME.test(column.name) && typeof column.description === 'string' && column.description.trim())
+      descriptions.push({ relation: name, column: column.name, text: column.description.trim().slice(0, 2000) });
+  }
+  const testList: Array<{ relation: string; column: string; test: string }> = [];
+  for (const node of Object.values(m.nodes)) {
+    if (node.resource_type !== 'test' || typeof node.attached_node !== 'string') continue;
+    const attached = relations.get(node.attached_node); if (!attached) continue;
+    const test = typeof node.test_metadata?.name === 'string' ? node.test_metadata.name : typeof node.name === 'string' ? node.name : null;
+    if (test && /^[\w.-]{1,200}$/.test(test)) testList.push({ relation: attached, column: typeof node.column_name === 'string' && NAME.test(node.column_name) ? node.column_name : '', test });
+  }
+  // Names and kinds of every model and source, for the Dictionary's dbt source (names only).
+  const modelIds = new Set(models.map((model) => model.id));
+  const objects = [...relations].map(([id, name]) => ({ name, type: modelIds.has(id) ? 'model' as const : 'source' as const })).sort((a, b) => a.name.localeCompare(b.name));
   return {
+    descriptions, testList, objects,
     dbtVersion: String(m.metadata.dbt_version ?? 'unknown'), tests: Object.values(m.nodes).filter(node => node?.resource_type === 'test').length, sources: Object.keys(m.sources).length, columns,
     models: models.map((model) => ({ ...model, declaredReads: model.dependsOn.map((id) => relations.get(id)).filter((name): name is string => Boolean(name)) })),
   };
@@ -91,11 +110,20 @@ export async function importDbtArtifacts(pool: Pool, input: { tenantId: string; 
         totals.gaps++;
       }
     }
+    // The project's descriptions and tests replace the previous upload's (decision 53, Dictionary).
+    await client.query(`DELETE FROM graph.dictionary_descriptions WHERE tenant_id=$1 AND source_id=$2 AND origin='dbt'`, [input.tenantId, input.dbtConnectionId]);
+    for (const item of artifacts.descriptions) await client.query(
+      `INSERT INTO graph.dictionary_descriptions(tenant_id,source_id,table_name,column_name,description,origin) VALUES($1,$2,$3,$4,$5,'dbt')
+       ON CONFLICT(tenant_id,source_id,table_name,column_name) DO UPDATE SET description=EXCLUDED.description,origin='dbt',imported_at=clock_timestamp()`,
+      [input.tenantId, input.dbtConnectionId, item.relation, item.column, item.text]);
+    await client.query('DELETE FROM graph.dbt_tests WHERE tenant_id=$1 AND source_id=$2', [input.tenantId, input.dbtConnectionId]);
+    for (const item of artifacts.testList) await client.query('INSERT INTO graph.dbt_tests(tenant_id,source_id,model,column_name,test_name) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING',
+      [input.tenantId, input.dbtConnectionId, item.relation, item.column, item.test]);
     await client.query(
       `UPDATE registry.connections SET dbt_import=jsonb_build_object(
-        'importedAt',clock_timestamp(),'models',$3::integer,'tests',$4::integer)
+        'importedAt',clock_timestamp(),'models',$3::integer,'tests',$4::integer,'objects',$5::jsonb)
         WHERE tenant_id=$1 AND connection_id=$2 AND connector_type='dbt'`,
-      [input.tenantId,input.dbtConnectionId,artifacts.models.length,artifacts.tests]);
+      [input.tenantId,input.dbtConnectionId,artifacts.models.length,artifacts.tests,JSON.stringify(artifacts.objects)]);
     return { models: artifacts.models.length, tests: artifacts.tests, sources: artifacts.sources, ...totals, modelsNotInWarehouse: notInWarehouse.sort() };
   });
 }

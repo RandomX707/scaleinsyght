@@ -512,6 +512,9 @@ importers:
       '@scaleinsyght/artifacts':
         specifier: workspace:*
         version: link:../artifacts
+      '@scaleinsyght/classification':
+        specifier: workspace:*
+        version: link:../classification
       '@scaleinsyght/connectors':
         specifier: workspace:*
         version: link:../connectors
@@ -584,6 +587,9 @@ importers:
 
   packages/tableau:
     dependencies:
+      '@scaleinsyght/classification':
+        specifier: workspace:*
+        version: link:../classification
       saxes:
         specifier: 5.0.1
         version: 5.0.1

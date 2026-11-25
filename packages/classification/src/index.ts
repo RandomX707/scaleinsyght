@@ -41,3 +41,46 @@ export function prepareMetadataForModel(input: ModelMetadataInput): ModelMetadat
   return result;
 }
 export { classifyColumn, type SensitivityEvidence, type SensitivityTag, type SampleValue } from './detect.js';
+
+/**
+ * Definition text (view, procedure, function and package SQL; Tableau formulas) with every literal replaced by a typed
+ * placeholder, so stored and displayed definitions never carry data values such as hard-coded identifiers
+ * (non-negotiable 6, decision 53). String literals become '<string>' (Tableau also "<string>"), numbers <number>.
+ * Comment text is hidden (free text can name people or values); line breaks are kept so line numbers still match.
+ * Identifiers (including digits inside names,
+ * bracketed or quoted SQL identifiers and @parameters) are unchanged.
+ */
+export function scrubDefinition(text: string, dialect: 'sql' | 'tableau' = 'sql'): string {
+  let out = ''; let index = 0;
+  const isWord = (character: string | undefined) => character !== undefined && /[A-Za-z0-9_@$#]/.test(character);
+  while (index < text.length) {
+    const character = text[index]!;
+    const lineComment = dialect === 'sql' ? character === '-' && text[index + 1] === '-' : character === '/' && text[index + 1] === '/';
+    if (lineComment) { const end = text.indexOf('\n', index); out += `${character}${character} <comment>`; index = end < 0 ? text.length : end; continue; }
+    if (character === '/' && text[index + 1] === '*') {
+      const end = text.indexOf('*/', index + 2); const stop = end < 0 ? text.length : end + 2;
+      out += `/* <comment>${'\n'.repeat((text.slice(index, stop).match(/\n/g) ?? []).length)} */`; index = stop; continue;
+    }
+    // SQL Server Unicode string N'...'.
+    if ((character === 'N' || character === 'n') && text[index + 1] === "'" && !isWord(text[index - 1])) { index++; continue; }
+    if (character === "'" || (dialect === 'tableau' && character === '"')) {
+      const quote = character; index++;
+      while (index < text.length) { if (text[index] === quote) { if (text[index + 1] === quote) { index += 2; continue; } index++; break; } index++; }
+      out += `${quote}<string>${quote}`; continue;
+    }
+    // Bracketed or double-quoted SQL identifiers are names, not values.
+    if (character === '[' || (dialect === 'sql' && character === '"')) {
+      const close = character === '[' ? ']' : '"'; const end = text.indexOf(close, index + 1);
+      const stop = end < 0 ? text.length : end + 1; out += text.slice(index, stop); index = stop; continue;
+    }
+    if (/[0-9]/.test(character) && !isWord(text[index - 1]) && !(text[index - 1] === '.' && isWord(text[index - 2]))) {
+      let end = index;
+      if (character === '0' && /[xX]/.test(text[index + 1] ?? '')) { end += 2; while (/[0-9A-Fa-f]/.test(text[end] ?? '')) end++; }
+      else { while (/[0-9.]/.test(text[end] ?? '')) end++; if (/[eE]/.test(text[end] ?? '') && /[+\-0-9]/.test(text[end + 1] ?? '')) { end += 2; while (/[0-9]/.test(text[end] ?? '')) end++; } }
+      if (isWord(text[end])) { out += character; index++; continue; }
+      out += '<number>'; index = end; continue;
+    }
+    out += character; index++;
+  }
+  return out;
+}

@@ -31,7 +31,7 @@ test('s3_empty_tenant_uploads_workbook_profiles_and_answers_with_evidence', asyn
   const tenantId = `s3-${randomUUID()}`; const email = `analyst@${tenantId}.test.invalid`; const password = 's3-testbed-walkthrough-password-2026';
   await createTenant(adminPool, { tenantId, name: 'Workbook test workspace', displayName: 'Test Analyst', email, password });
   await page.goto(`/login?tenant=${tenantId}`); await page.getByLabel('Email').fill(email); await page.getByLabel('Password').fill(password); await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Good afternoon, Test Analyst' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /^Good (morning|afternoon|evening), Test Analyst$/ })).toBeVisible();
 
   // A file that is not an .xlsx workbook is refused with a clear reason and nothing is stored.
   const rejectedDraft = await page.request.post('/api/connections', { data: { connectorType: 'excel', displayName: 'Not a workbook' } });
@@ -94,6 +94,7 @@ test('s3_empty_tenant_uploads_workbook_profiles_and_answers_with_evidence', asyn
   const relationships = er.relationships.map((item) => ({ from: item.from_name, to: item.to_name, evidence: item.evidence_method, confidence: Number(item.confidence_score) })).sort((a, b) => a.from.localeCompare(b.from));
   expect(relationships).toEqual(truth.relationships.map((item) => ({ from: `${item.from}.${item.column}`, to: `${item.to}.${item.column}`, evidence: 'inferred', confidence: item.confidence })).sort((a, b) => a.from.localeCompare(b.from)));
   await page.getByRole('button', { name: 'Explore relationships' }).click();
+  await page.getByRole('button', { name: 'Expand neighbours' }).click();
   await expect(page.getByText(`${truth.relationships.length} relationships`)).toBeVisible();
   const visitsNode = page.locator('.er-node').filter({ has: page.locator('h3', { hasText: /^Visits$/ }) });
   await expect(visitsNode.locator('li span').filter({ hasText: /^Patient ID$/ })).toHaveCount(1);
@@ -103,20 +104,20 @@ test('s3_empty_tenant_uploads_workbook_profiles_and_answers_with_evidence', asyn
 
   // Dictionary: sheets and columns with null rates; statistics on tagged columns are withheld.
   await page.goto(`/dictionary?connection=${connectionId}`);
-  for (const sheet of truth.sheets) await expect(page.locator('.dictionary-list summary').filter({ hasText: sheet.name })).toContainText(`${sheet.columnCount} fields`);
-  const visits = page.locator('.dictionary-list details').filter({ has: page.locator('summary', { hasText: 'Visits' }) });
-  await visits.locator('summary').click();
+  const objects = page.getByRole('navigation', { name: 'Objects' });
+  // Each sheet opens with every column, its original header and statistics; tagged columns are withheld.
+  const openSheet = async (name: string) => { await objects.getByRole('button', { name, exact: true }).click(); const card = page.locator('.dict-card', { hasText: 'Columns, with original headers' }); const all = card.getByRole('button', { name: /^Show all/ }); if (await all.count()) await all.click(); return card; };
+  for (const sheet of truth.sheets) { const card = await openSheet(sheet.name); await expect(card.locator('tbody tr')).toHaveCount(sheet.columnCount); }
+  const visits = await openSheet('Visits');
   const dischargedRate = (truth.nullRates['Visits.discharged_on']! * 100).toLocaleString('en-US', { maximumFractionDigits: 1 });
-  await expect(visits.locator('li strong').filter({ hasText: /^Discharged On$/ })).toHaveCount(1);
-  await expect(visits.locator('li').filter({ hasText: 'Discharged On' })).toContainText(`${dischargedRate}% empty`);
-  await expect(visits.locator('li strong').filter({ hasText: /_/ })).toHaveCount(0);
-  const patients = page.locator('.dictionary-list details').filter({ has: page.locator('summary', { hasText: 'Patients' }) });
-  await patients.locator('summary').click();
-  await expect(patients.locator('li').filter({ hasText: 'Phone' })).toContainText('statistics withheld');
-  await expect(patients.locator('li').filter({ hasText: 'Phone' })).not.toContainText('% empty');
-  const registrations = page.locator('.dictionary-list details').filter({ has: page.locator('summary', { hasText: 'Registrations' }) });
-  await registrations.locator('summary').click();
-  await expect(registrations.locator('li').filter({ hasText: 'Phone Number' })).toContainText('inferred');
+  const dischargedRow = visits.locator('tbody tr').filter({ hasText: 'Discharged On' });
+  await expect(dischargedRow).toHaveCount(1);
+  await expect(dischargedRow).toContainText(`${dischargedRate}%`);
+  const patients = await openSheet('Patients');
+  await expect(patients.locator('tbody tr').filter({ hasText: 'Phone' })).toContainText('Withheld');
+  await expect(patients.locator('tbody tr').filter({ hasText: 'Phone' })).not.toContainText('%');
+  const registrations = await openSheet('Registrations');
+  await expect(registrations.locator('tbody tr').filter({ hasText: 'Phone Number' })).toContainText('inferred');
   await page.screenshot({ path: 'docs/acceptance/s3/dictionary.png', fullPage: true });
 
   type Captured = { state: string; modelProvenance: Array<{ purpose: string; model: string; inputTokens: number; outputTokens: number; typedPlan: unknown }>; answer: { answer: { claims: Array<{ statement: string }>; evidence: Array<{ locator: string }>; bySource: Array<{ connectorType: string; value: number; rows?: Array<{ group_value: string; value: number }> }> } } };

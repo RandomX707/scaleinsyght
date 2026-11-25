@@ -1,9 +1,10 @@
 import { SaxesParser } from 'saxes';
+import { scrubDefinition } from '@scaleinsyght/classification';
 
 /**
  * Reads a Tableau workbook (.twb, the documented workbook XML) for lineage. Only structure leaves this module:
  * data sources and the tables they read, how each field maps to a column, which fields each calculated field refers to,
- * and which fields each worksheet uses. Formula text, server and user names and parameter captions are never returned;
+ * and which fields each worksheet uses. Formula text (except scrubbed, with literals replaced by placeholders), server and user names and parameter captions are never returned;
  * captions are returned with the data source's server, user and database names removed (Tableau's default captions
  * embed them). Custom SQL and the database name are returned so the caller can parse and match them in memory; neither
  * may be stored (contract 7).
@@ -19,7 +20,7 @@ export type TableauFieldSource =
   | { kind: 'column'; relation: string; column: string }
   /** A calculated field: the fields its formula refers to, never the formula itself. `datasource` is set when the
    * formula names another data source's field (`[federated.x].[Field]`); otherwise the field is in the same one. */
-  | { kind: 'calculated'; references: FieldReference[]; usesParameters: boolean }
+  | { kind: 'calculated'; references: FieldReference[]; usesParameters: boolean; /** The formula with every literal replaced by a typed placeholder (decision 53); the raw formula never leaves this module. */ scrubbedFormula: string | null }
   /** Tableau did not record where the field comes from. */
   | { kind: 'unmapped' };
 
@@ -205,7 +206,7 @@ function readDatasource(element: Element): TableauDatasource {
         .map((reference) => reference.datasource === name ? { datasource: null, field: reference.field } : reference)
         .filter((reference, index, all) => !(reference.datasource === null && reference.field === field)
           && all.findIndex((other) => other.datasource === reference.datasource && other.field === reference.field) === index);
-      source = { kind: 'calculated', references, usesParameters: fromFormula.usesParameters };
+      source = { kind: 'calculated', references, usesParameters: fromFormula.usesParameters, scrubbedFormula: calculation.attributes.formula ? scrubDefinition(calculation.attributes.formula, 'tableau').slice(0, 100_000) : null };
     }
     fields.set(field, { name: field, caption: scrub(column.attributes.caption?.trim() || existing?.caption || field) || field, dataType: column.attributes.datatype ?? existing?.dataType ?? null, role: column.attributes.role ?? null, source });
   }

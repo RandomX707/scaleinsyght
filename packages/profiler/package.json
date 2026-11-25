@@ -12,6 +12,7 @@
     "@scaleinsyght/graph": "workspace:*",
     "@scaleinsyght/artifacts": "workspace:*",
     "pg": "^8.16.3",
-    "@scaleinsyght/registry": "workspace:*"
+    "@scaleinsyght/registry": "workspace:*",
+    "@scaleinsyght/classification": "workspace:*"
   }
 }

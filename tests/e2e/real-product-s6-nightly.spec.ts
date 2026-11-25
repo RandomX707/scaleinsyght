@@ -29,7 +29,7 @@ test('s6_refresh_from_the_approval_matrix_finds_source_changes_and_a_dismissal_i
   await createTenant(adminPool, { tenantId, name: 'Nightly workspace', displayName: 'Test Analyst', email, password });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(`/login?tenant=${tenantId}`); await page.getByLabel('Email').fill(email); await page.getByLabel('Password').fill(password); await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Good afternoon, Test Analyst' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /^Good (morning|afternoon|evening), Test Analyst$/ })).toBeVisible();
   const draft = await page.request.post('/api/connections', { data: { connectorType: 'postgres', displayName: 'Shop database', credential: { host: admin.hostname, port: Number(admin.port || 5432), database, username: reader, password: readerPassword, sslMode: 'disable' } } });
   const { connectionId } = await draft.json() as { connectionId: string };
   expect((await page.request.post(`/api/connections/${connectionId}/test`)).ok()).toBeTruthy();
