@@ -89,7 +89,7 @@ export function GroupChart(props: { rows: Row[]; sourceName: string; groupLabel:
   const lowest = numeric.reduce<Row | null>((best, row) => !best || (row.value as number) < (best.value as number) ? row : best, null);
   const description = `Bar chart of ${props.rows.length} ${props.groupLabel.toLowerCase()} groups from ${props.sourceName}.${highest ? ` Highest ${highest.label} at ${number(highest.value as number)}; lowest ${lowest!.label} at ${number(lowest!.value as number)}.` : ''}${withheld ? ` ${withheld} ${withheld === 1 ? 'group is' : 'groups are'} withheld because fewer than 11 records were counted.` : ''}`;
   return <figure className="bar-chart" aria-label={description}><ul>{props.rows.map((row, index) => {
-    const label = row.key && row.key !== row.label ? `${row.label} (${row.key})` : row.label;
+    const label = row.label;
     return <li key={`${row.label}-${index}`} className={`bar-row${row.value === '<11' ? ' is-withheld' : ''}`} tabIndex={0} aria-label={`${label}: ${row.value === '<11' ? 'fewer than 11, withheld' : number(row.value)}`}>
       <span className="bar-label">{label}</span>
       <span className="bar-track">{row.value !== '<11' && max > 0 && <span className="bar" style={{ width: `${Math.max(1, row.value / max * 100)}%` }} />}</span>
@@ -103,7 +103,7 @@ export function GroupTable(props: { rows: Row[]; groupLabel: string; measureLabe
   const shown = props.compact && !all ? props.rows.slice(0, COMPACT_ROWS) : props.rows;
   return <div className="answer-table">
     <Table caption={`${props.compact && !all ? `First ${shown.length} of ${props.rows.length}` : `${props.rows.length} rows`} from ${props.sourceName}`} headers={[props.groupLabel, props.measureLabel]}
-      rows={shown.map((row) => [row.key && row.key !== row.label ? `${row.label} (${row.key})` : row.label, row.value === '<11' ? '<11' : number(row.value)])} />
+      rows={shown.map((row) => [row.label, row.value === '<11' ? '<11' : number(row.value)])} />
     {props.compact && props.rows.length > COMPACT_ROWS && <Button size="small" aria-expanded={all} onClick={() => setAll(!all)}>{all ? `Show the first ${COMPACT_ROWS}` : `Show all ${props.rows.length.toLocaleString('en-US')}`}</Button>}
   </div>;
 }

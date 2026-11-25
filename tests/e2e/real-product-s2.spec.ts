@@ -85,6 +85,8 @@ test('s2_empty_tenant_adds_real_sql_server_profiles_and_relationships', async ({
   await page.screenshot({ path: 'docs/acceptance/s2/dictionary-procedures.png', fullPage: true });
   await page.goto('/'); await page.getByLabel('Ask a question').fill('How many patients are in SQL Server hospital?'); await page.getByRole('button', { name: 'Send question' }).click();
   await expect(page.getByText('Source result: 500', { exact: true })).toBeVisible({ timeout: 60_000 });
+  // Evidence sits in one collapsed drawer (decision 56).
+  await page.locator('.evidence-drawer').last().locator(':scope > summary').click();
   await expect(page.getByText(/Executed on SQL Server hospital; returned 1 aggregate row/)).toBeVisible();
   // The plan collapses to one line after the answer (decision 56); it opens on click.
   await page.locator('.plan-line').last().locator(':scope > summary').click();
@@ -137,6 +139,7 @@ test('s2_empty_tenant_adds_real_sql_server_profiles_and_relationships', async ({
     expect(answer.evidence).toHaveLength(expectedSources);
     for(const evidence of answer.evidence)expect(evidence.locator).toMatch(sql);
     await expect(page.locator('.answer-claim').last()).toHaveText(answer.claims[0]!.statement);
+    await page.locator('.evidence-drawer').last().locator(':scope > summary').click();
     const sourceLine=page.locator('.answer-sources').last();await expect(sourceLine).toContainText(expectedSources>1?'Sources used:':'Source used:');
     for(const name of answer.bySource.map(result=>result.connectorType==='sql_server'?'SQL Server hospital':'PostgreSQL testbed'))await expect(sourceLine).toContainText(name);
     const evidenceRows=page.locator('.evidence-list').last().locator(':scope > div');await expect(evidenceRows).toHaveCount(expectedSources);
