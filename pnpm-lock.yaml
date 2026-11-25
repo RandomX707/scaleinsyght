@@ -387,6 +387,9 @@ importers:
       '@scaleinsyght/policy':
         specifier: workspace:*
         version: link:../../packages/policy
+      '@scaleinsyght/profiler':
+        specifier: workspace:*
+        version: link:../../packages/profiler
       '@scaleinsyght/reports':
         specifier: workspace:*
         version: link:../../packages/reports
