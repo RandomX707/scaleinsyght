@@ -1,6 +1,6 @@
 # Real product gap audit
 
-> Last updated 25 Nov 2026 (overnight: planner robustness and chat threads, both on unmerged draft PRs #17 and #18). One row per item; rows are edited in place, never appended. `Real` means the path has passed its end-to-end walkthrough against a tenant-connected source, and the row names that test. `Missing` means it has not. `tests/unit/gap-audit.test.ts` fails if an item appears twice, a status is unknown, or a `Real` row names no test.
+> Last updated 25 Nov 2026 (day 2: planner, chat threads, display labels and ER possible relationships merged; S4 lineage on branch s4-lineage). One row per item; rows are edited in place, never appended. `Real` means the path has passed its end-to-end walkthrough against a tenant-connected source, and the row names that test. `Missing` means it has not. `tests/unit/gap-audit.test.ts` fails if an item appears twice, a status is unknown, or a `Real` row names no test.
 
 | Item | Status | Evidence or remaining work |
 |---|---|---|
@@ -18,7 +18,7 @@
 | ER explorer | Real | `tests/e2e/real-product-s1.spec.ts`, `tests/e2e/real-product-s2.spec.ts`, `tests/e2e/real-product-s3.spec.ts`: declared and inferred relationships with measured confidence match truth; views are drawn differently; sheet relationships are never proposed on personal or regulated columns. |
 | Dictionary tables, columns, statistics and import | Real | `tests/e2e/real-product-s1.spec.ts` imports a CSV dictionary and checks documented coverage; `tests/e2e/real-product-s3.spec.ts` checks null rates and that tagged columns show statistics withheld. |
 | Dictionary Standard and Custom tabs, procedure interactions | Missing | Routine definitions are discovered and listed; the prototype's full Standard/Custom and procedure tab interactions are not built. |
-| Lineage views, dbt and view or procedure SQL lineage | Missing | S4. View and procedure SQL is discovered; graph lineage from parsed definitions and dbt artifacts is not built. |
+| Lineage views, dbt and view or procedure SQL lineage | Real | `tests/e2e/real-product-s4-lineage.spec.ts` uploads the testbed dbt project's `manifest.json` and `catalog.json` through Add connector, then checks the Lineage graph, a column traced end to end, the `billing.claims` gap and two chat answers against `testbed/lineage-truth.json`; `tests/testbed/c6_testbed_view_lineage.test.ts` checks parsed view lineage on PostgreSQL and SQL Server table by table and column by column (decision 46). Procedure SQL is not parsed into the graph: see the Dictionary procedure row. |
 | ID trace | Missing | S5. Cross-system fingerprints and matching without storing raw identifiers. |
 | Nightly refresh, Approval matrix, findings and notifications | Missing | S6. Snapshot comparison, findings, review of inferred sensitive columns, and notifications. |
 | Saved questions, reports, exports and evidence packs | Missing | S7. Exports on real data checked against truth. |

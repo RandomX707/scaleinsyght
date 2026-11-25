@@ -10,9 +10,18 @@ async function planDigest(plan: AnalyticPlan): Promise<string> {
   return hashPlan({ ...plan, plan_hash: '' });
 }
 
-export async function createAnalyticPlan(input: { question: string; runId: string; sources: AnalyticSource[]; queryIntents?:QueryIntent[] }): Promise<AnalyticPlan> {
+export type LineageRequestInput={asset:string;direction:'upstream'|'downstream'};
+/** A lineage step reads the metadata graph for one table or column of its source; it never queries the source. */
+export function parseLineageRequest(value:unknown):LineageRequestInput{
+  const request=value as {asset?:unknown;direction?:unknown}|null;
+  if(!request||typeof request.asset!=='string'||!/^[A-Za-z_][A-Za-z0-9_$]*(\.[A-Za-z_][A-Za-z0-9_$]*){1,3}$/.test(request.asset)||!['upstream','downstream'].includes(String(request.direction))||Object.keys(request).length!==2)throw new Error('analytic_plan_invalid');
+  return {asset:request.asset,direction:request.direction as LineageRequestInput['direction']};
+}
+
+export async function createAnalyticPlan(input: { question: string; runId: string; sources: AnalyticSource[]; queryIntents?:QueryIntent[]; lineageRequests?:LineageRequestInput[] }): Promise<AnalyticPlan> {
   if (!input.question.trim() || input.question.length > 2000 || input.sources.length === 0) throw new Error('analytic_plan_invalid');
   if(input.queryIntents&&input.queryIntents.length!==input.sources.length)throw new Error('analytic_plan_invalid');
+  if(input.lineageRequests&&(input.queryIntents||input.lineageRequests.length!==input.sources.length))throw new Error('analytic_plan_invalid');
   const questionHash = createHash('sha256').update(input.question.trim()).digest('hex');
   const groups = new Map<string, string>();
   const steps = input.sources.map((source) => {
@@ -21,7 +30,7 @@ export async function createAnalyticPlan(input: { question: string; runId: strin
     return {
       step_id: stepId, capability_id: 'analytic.read', capability_version: 1,
       agent_id: source.agentId, source_id: source.sourceId, via_collating_agent_id: groups.get(source.groupId)!,
-      group_version: source.groupVersion, inputs: input.queryIntents?{query_intent:input.queryIntents[input.sources.indexOf(source)]}:{question_hash: questionHash}, depends_on: [], effect_class: 'READ' as const,
+      group_version: source.groupVersion, inputs: input.lineageRequests?{lineage_request:parseLineageRequest(input.lineageRequests[input.sources.indexOf(source)])}:input.queryIntents?{query_intent:input.queryIntents[input.sources.indexOf(source)]}:{question_hash: questionHash}, depends_on: [], effect_class: 'READ' as const,
       timeout_s: 120, retry: { max: 1, backoff: 'linear' as const }, idempotency_key: randomUUID(),
     };
   });
@@ -61,6 +70,7 @@ function validatePlanGraph(plan: AnalyticPlan): void {
     if(!plan.scope.source_ids.includes(step.source_id)||step.effect_class!=='READ'||Object.keys(step.inputs).length!==1)throw new Error('analytic_plan_invalid');
     if('question_hash'in step.inputs){if(!/^[a-f0-9]{64}$/.test(String(step.inputs.question_hash)))throw new Error('analytic_plan_invalid');}
     else if('query_intent'in step.inputs)parseQueryIntent(step.inputs.query_intent);
+    else if('lineage_request'in step.inputs)parseLineageRequest(step.inputs.lineage_request);
     else throw new Error('analytic_plan_invalid');
   }
 }
@@ -116,6 +126,9 @@ export async function validateAnalyticPlan(pool: Pool, input: { tenantId: string
     if (!entitlement.rows.some((row) => row.resource_id === null)
       && plan.scope.source_ids.some((sourceId) => !entitlement.rows.some((row) => row.resource_id === sourceId))) throw new Error('principal_not_entitled');
     for(const step of plan.steps)if('query_intent'in step.inputs)await validateIntentAssets(client,step.source_id,parseQueryIntent(step.inputs.query_intent));
+    for(const step of plan.steps)if('lineage_request'in step.inputs){const request=parseLineageRequest(step.inputs.lineage_request);
+      const found=await client.query("SELECT 1 FROM graph.assets WHERE tenant_id=current_setting('app.tenant_id') AND source_id=$1 AND qualified_name=$2 AND active AND asset_type IN ('dataset','field')",[step.source_id,request.asset]);
+      if(!found.rowCount)throw new Error('analytic_query_table_not_found');}
   });
   return { tenantId: input.tenantId, principalId: input.principalId, plan };
 }

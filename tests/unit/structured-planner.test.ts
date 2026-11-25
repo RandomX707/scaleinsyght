@@ -142,3 +142,17 @@ describe('display labels for key columns (decision 45)', () => {
     expect(() => decode(summary)).toThrow('grouping_column_is_unique_in_its_table');
   });
 });
+
+describe('lineage requests', () => {
+  const lineage = (value: Record<string, unknown>, intents: unknown[] = []) => JSON.stringify({lineage: value, declaration, intents});
+  it('decodes a lineage request on a catalog table or column with no query intents', () => {
+    expect(decodePlannerOutput(lineage({source_index:0,asset:'Charges.amount',direction:'upstream'}), catalog, []).lineage).toEqual({index:0,asset:'Charges.amount',direction:'upstream'});
+    expect(decodePlannerOutput(lineage({source_index:0,asset:'Charges',direction:'downstream'}), catalog, []).steps).toEqual([]);
+    expect(JSON.stringify(plannerSchema(catalog, []))).toContain('"Charges.amount"');
+  });
+  it('rejects a lineage request outside the catalog, with intents, or with an unknown direction', () => {
+    expect(() => decodePlannerOutput(lineage({source_index:0,asset:'Visits.amount',direction:'upstream'}), catalog, [])).toThrow('lineage_asset_outside_catalog');
+    expect(() => decodePlannerOutput(lineage({source_index:0,asset:'Charges',direction:'upstream'}, [step]), catalog, [])).toThrow('lineage_request_with_query_intents');
+    expect(() => decodePlannerOutput(lineage({source_index:0,asset:'Charges',direction:'sideways'}), catalog, [])).toThrow('lineage_request_invalid');
+  });
+});

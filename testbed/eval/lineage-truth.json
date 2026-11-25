@@ -1,0 +1,44 @@
+{
+  "_note": "Lineage answers for Q41-Q45, derived by hand from testbed/lineage-truth.json (the SQL authored in testbed/). Each lists every related object in the asked direction; Q45 has none and must state the billing.claims gap.",
+  "Q41": {
+    "p": {
+      "lineage": [
+        "analytics.stg_orders.amount",
+        "public.orders.amount"
+      ]
+    }
+  },
+  "Q42": {
+    "p": {
+      "lineage": [
+        "analytics.mart_department_orders.order_amount",
+        "analytics.mart_order_claims.order_amount",
+        "analytics.stg_orders.amount",
+        "public.department_order_summary.order_amount"
+      ]
+    }
+  },
+  "Q43": {
+    "s": {
+      "lineage": [
+        "dbo.departments",
+        "dbo.orders"
+      ]
+    }
+  },
+  "Q44": {
+    "p": {
+      "lineage": [
+        "analytics.stg_encounters",
+        "public.encounters",
+        "public.providers"
+      ]
+    }
+  },
+  "Q45": {
+    "p": {
+      "lineage": [],
+      "gapIncludes": "billing.claims"
+    }
+  }
+}

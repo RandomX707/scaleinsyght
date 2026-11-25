@@ -13,6 +13,7 @@ import { EncryptedArtifactStore } from '@scaleinsyght/artifacts';
 import { resolve as resolvePath } from 'node:path';
 import { OpenAIModelGateway } from '@scaleinsyght/model-gateway';
 import { authorise } from '@scaleinsyght/policy';
+import { answerLineageRequest } from '@scaleinsyght/graph';
 import { claimDueSchedule, markScheduleSlotSkipped, markScheduleSlotStarted, persistReportSnapshot, startScheduledReportRun } from '@scaleinsyght/reports';
 
 config({path:fileURLToPath(new URL('../../../.env',import.meta.url))});
@@ -55,6 +56,13 @@ async function processPlanning(claim: StepClaim): Promise<boolean> {
         sources:planned.selected.map(source=>({sourceId:source.source_id,agentId:source.agent_id,groupId:source.group_id,groupVersion:source.group_version}))});
       await startAnalyticRun(pool,{tenantId:claim.tenantId,principalId:request.principal_id,conversationId:request.conversation_id,
         plan,planningClaim:claim,plannerProvenance:planned.provenance});
+      return true;
+    }
+    if (planned.kind === 'lineage') {
+      // A lineage question becomes one validated read step on its source that reads the metadata graph only.
+      const plan = await createAnalyticPlan({runId:claim.runId,question:request.question,lineageRequests:[{asset:planned.asset,direction:planned.direction}],
+        sources:[{sourceId:planned.source.source_id,agentId:planned.source.agent_id,groupId:planned.source.group_id,groupVersion:planned.source.group_version}]});
+      await startAnalyticRun(pool,{tenantId:claim.tenantId,principalId:request.principal_id,conversationId:request.conversation_id,plan,planningClaim:claim,plannerProvenance:planned.provenance});
       return true;
     }
     attempts = planned.attempts;
@@ -109,6 +117,11 @@ while(!stopping){
     if(!step||step.step_id!==claim.stepId)throw new Error('worker_plan_step_mismatch');
     const decision=await authorise(pool,{principal:{tenant_id:claim.tenantId,principal_id:task.principalId,kind:'user',roles:[],groups:[],attributes:{}},capability_id:step.capability_id,resources:[step.source_id],purpose:'analytic_query',environment:'production'},claim.runId);
     if(decision.outcome!=='allow')throw new Error('policy_revoked');
+    if('lineage_request' in step.inputs){
+     const request=step.inputs.lineage_request as {asset:string;direction:'upstream'|'downstream'};
+     const answered=await answerLineageRequest(pool,{tenantId:claim.tenantId,sourceId:step.source_id,sourceName:task.displayName||task.connectorType,asset:request.asset,direction:request.direction});
+     if(!await completeStep(pool,claim,{resultRef:`lineage:${step.step_id}`,analyticResult:{sourceId:step.source_id,connectorType:task.connectorType,groupId:task.groupId,metric:'lineage',value:answered.value,lineage:answered.lineage,claims:answered.claims,evidence:answered.evidence}}))throw new Error('worker_fence_lost');
+    }else{
     const intent=step.inputs.query_intent;
     if(!intent||!['postgres','sql_server','excel'].includes(task.connectorType))throw new Error('source_query_executor_unavailable');
     let connector: ReadOnlyConnector;
@@ -171,6 +184,7 @@ while(!stopping){
       const analyticResult={sourceId:step.source_id,connectorType:task.connectorType,groupId:task.groupId,metric:String((intent as {kind?:unknown}).kind??'query'),value,...(groupLabel?{groupLabel}:{}),...(groupKeyLabel?{groupKeyLabel}:{}),...(Object.keys(columnLabels).length?{columnLabels}:{}),rows:rows.length===1&&!('group_value'in rows[0]!)?undefined:rows,minimumCellSize:Math.min(...executed.rows.map(row=>Number(row.cell_size??0))),cellSizes:executed.rows.map(row=>Number(row.cell_size??0)),...(missingCategory ? {missingCategory: {column: missingCategory.column, values: missingCategory.values}} : {}),claims:[],evidence:[{evidence_id:evidenceId,kind:'query',source_id:step.source_id,asset_ids:assets.rows.map(item=>item.asset_id),locator:`${task.displayName||'Data source'} · ${executed.sql}`,content_hash:createHash('sha256').update(executed.sql).digest('hex'),captured_at:new Date().toISOString(),collector_version:`${task.connectorType}-query-v1`,redacted_summary:`Executed on ${task.displayName||'Data source'}; returned ${executed.rows.length} aggregate row(s).`}]};
       if(!await completeStep(pool,claim,{resultRef:`postgres-query:${evidenceId}`,analyticResult}))throw new Error('worker_fence_lost');
     }finally{await connector.close?.();}
+    }
    }catch(error){
     const reason=error instanceof Error&&error.message==='source_timeout'?'source_timeout':error instanceof Error&&error.message==='policy_revoked'?'authorization_revoked':'source_query_executor_unavailable';
     await failStep(pool,claim,{reasonCode:reason});
