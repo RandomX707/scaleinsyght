@@ -45,7 +45,7 @@ test('s7_saved_question_reuse_exports_governed_report_schedule_and_dictionary_ma
   await page.goto('/'); await page.getByLabel('Ask a question').fill(question); await page.getByRole('button', { name: 'Send question' }).click();
   await expect(page.locator('.answer-claim').first()).toBeVisible({ timeout: 90_000 });
   for (const row of expected) await expect(page.locator('.grouped-result table').last()).toContainText(row.departmentName);
-  await page.getByRole('button', { name: 'Useful' }).click();
+  await page.getByRole('button', { name: 'Useful', exact:true }).click();
   await page.getByRole('button', { name: 'Save this question' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Saved.' })).toBeVisible();
 
