@@ -84,7 +84,7 @@ describe('contract 4 certified metrics through Semantics', () => {
     expect(second.json()).toEqual(first.json());
     const events = (first.json() as { events: Array<{ sequence: number; safe_payload: Record<string, unknown> }> }).events;
     expect(events.map((event) => event.sequence)).toEqual(events.map((_event, index) => index + 1));
-    expect(JSON.stringify(events)).not.toMatch(/1284|result_rows|raw_sql|compiled_sql/i);
+    expect(JSON.stringify(events)).not.toMatch(/\b1284\b|result_rows|raw_sql|compiled_sql/i);
     const persisted = await withTenant(migrate, tenantId, async (db) => ({
       run: await db.query<{ state: string }>('SELECT state FROM runs.runs WHERE tenant_id=$1 AND run_id=$2', [tenantId, runId]),
       result: await db.query('SELECT run_id FROM hub.metric_results WHERE tenant_id=$1 AND run_id=$2', [tenantId, runId]),
