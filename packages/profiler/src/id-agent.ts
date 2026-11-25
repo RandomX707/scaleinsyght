@@ -77,11 +77,14 @@ export async function runIdAgent(pool: Pool, input: { tenantId: string; connecti
       [input.tenantId, input.connectionId, candidates.map((candidate) => candidate.assetId)]);
     // Probable matches with other connections, from shared fingerprints only.
     const overlaps = await client.query<{ here: string; there: string; there_source: string; shared: string; here_count: string; there_count: string; here_format: string; there_format: string }>(
-      `WITH here AS(SELECT i.asset_id,i.format_pattern,(SELECT count(*) FROM graph.id_fingerprints f WHERE f.tenant_id=i.tenant_id AND f.asset_id=i.asset_id) AS n FROM graph.id_fields i JOIN graph.assets a ON a.tenant_id=i.tenant_id AND a.asset_id=i.asset_id WHERE i.tenant_id=$1 AND i.active AND a.source_id=$2),
-         there AS(SELECT i.asset_id,a.source_id,i.format_pattern,(SELECT count(*) FROM graph.id_fingerprints f WHERE f.tenant_id=i.tenant_id AND f.asset_id=i.asset_id) AS n FROM graph.id_fields i JOIN graph.assets a ON a.tenant_id=i.tenant_id AND a.asset_id=i.asset_id AND a.active WHERE i.tenant_id=$1 AND i.active AND a.source_id<>$2)
-       SELECT h.asset_id AS here,t.asset_id AS there,t.source_id AS there_source,count(*)::text AS shared,h.n::text AS here_count,t.n::text AS there_count,h.format_pattern AS here_format,t.format_pattern AS there_format
-       FROM here h JOIN graph.id_fingerprints hf ON hf.tenant_id=$1 AND hf.asset_id=h.asset_id JOIN graph.id_fingerprints tf ON tf.tenant_id=$1 AND tf.fingerprint=hf.fingerprint JOIN there t ON t.asset_id=tf.asset_id
-       GROUP BY h.asset_id,t.asset_id,t.source_id,h.n,t.n,h.format_pattern,t.format_pattern`, [input.tenantId, input.connectionId]);
+      `WITH fields AS(SELECT i.asset_id,a.source_id,i.format_pattern FROM graph.id_fields i JOIN graph.assets a ON a.tenant_id=i.tenant_id AND a.asset_id=i.asset_id AND a.active WHERE i.tenant_id=$1 AND i.active),
+         sizes AS(SELECT f.asset_id,count(*) AS n FROM graph.id_fingerprints f JOIN fields USING(asset_id) WHERE f.tenant_id=$1 GROUP BY f.asset_id),
+         shared AS(SELECT hf.asset_id AS here,tf.asset_id AS there,count(*) AS n FROM graph.id_fingerprints hf
+           JOIN graph.id_fingerprints tf ON tf.tenant_id=hf.tenant_id AND tf.fingerprint=hf.fingerprint AND tf.asset_id<>hf.asset_id
+           WHERE hf.tenant_id=$1 AND hf.asset_id IN (SELECT asset_id FROM fields WHERE source_id=$2) AND tf.asset_id IN (SELECT asset_id FROM fields WHERE source_id<>$2)
+           GROUP BY hf.asset_id,tf.asset_id)
+       SELECT s.here,s.there,t.source_id AS there_source,s.n::text AS shared,hs.n::text AS here_count,ts.n::text AS there_count,h.format_pattern AS here_format,t.format_pattern AS there_format
+       FROM shared s JOIN fields h ON h.asset_id=s.here JOIN fields t ON t.asset_id=s.there JOIN sizes hs ON hs.asset_id=s.here JOIN sizes ts ON ts.asset_id=s.there`, [input.tenantId, input.connectionId]);
     // One best match per field and other source: almost all of the smaller set matched, then the closest set size.
     const best = new Map<string, { here: string; there: string; shared: number; hereCount: number; thereCount: number; containment: number; jaccard: number }>();
     for (const row of overlaps.rows) {
