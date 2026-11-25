@@ -1,23 +1,8 @@
-import { inflateSync } from 'node:zlib';
 import ExcelJS from 'exceljs';
 import JSZip from 'jszip';
 
-/** Text drawn in a PDF written by pdfkit: inflates each content stream and decodes its text operators. Enough to check
- * an exported figure is really in the file, not a full PDF reader. */
-export function pdfText(bytes: Buffer): string {
-  const source = bytes.toString('latin1'); const parts: string[] = [];
-  const streams = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
-  for (let match = streams.exec(source); match; match = streams.exec(source)) {
-    let content: string;
-    try { content = inflateSync(Buffer.from(match[1]!, 'latin1')).toString('latin1'); } catch { continue; }
-    for (const array of content.matchAll(/\[([^\]]*)\]\s*TJ/g)) {
-      parts.push([...array[1]!.matchAll(/<([0-9a-fA-F]+)>|\(((?:\\.|[^\\)])*)\)/g)].map((item) => item[1]
-        ? Buffer.from(item[1], 'hex').toString('latin1') : item[2]!.replace(/\\([()\\])/g, '$1')).join(''));
-    }
-    for (const single of content.matchAll(/<([0-9a-fA-F]+)>\s*Tj/g)) parts.push(Buffer.from(single[1]!, 'hex').toString('latin1'));
-  }
-  return parts.join('\n');
-}
+/** The product's own PDF reader (known issue K9), so tests and the export check read PDFs the same way. */
+export { pdfText } from '@scaleinsyght/reports';
 
 export async function xlsxRows(bytes: Buffer, sheet: string): Promise<unknown[][]> {
   const workbook = new ExcelJS.Workbook(); await workbook.xlsx.load(bytes as unknown as ArrayBuffer);

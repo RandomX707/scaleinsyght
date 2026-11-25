@@ -3,6 +3,8 @@ import { once } from 'node:events';
 import ExcelJS from 'exceljs';
 import PDFDocument from 'pdfkit';
 import PptxGenJS from 'pptxgenjs';
+import { missingFromPdf } from './pdf-text.js';
+export { missingFromPdf, pdfText } from './pdf-text.js';
 export { claimDueSchedule, markScheduleSlotSkipped, markScheduleSlotStarted, nextScheduleInstant, type DueReportSchedule } from './scheduler.js';
 export { persistReportSnapshot, startScheduledReportRun } from './snapshots.js';
 
@@ -105,8 +107,15 @@ async function pptx(pack: SafeEvidencePack): Promise<Buffer> {
   const bytes = await deck.write({ outputType: 'nodebuffer' }); return Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes as ArrayBuffer);
 }
 
+/** The answer a PDF must contain: the question, every figure line and every claim (known issue K9). */
+export function pdfAnswerLines(pack: SafeEvidencePack): string[] {
+  return [...(pack.question ? [pack.question] : []), ...figureLines(pack), ...pack.claims.map((claim) => claim.statement)];
+}
+
 export async function renderEvidencePack(pack: SafeEvidencePack, format: ExportFormat): Promise<ExportedPack> {
   const bytes = format === 'pdf' ? await pdf(pack) : format === 'xlsx' ? await xlsx(pack) : await pptx(pack);
+  // Every exported PDF is read back before it is served; one without the answer is never handed over.
+  if (format === 'pdf' && missingFromPdf(bytes, pdfAnswerLines(pack)).length) throw new Error('evidence_pdf_missing_answer_text');
   const contentTypes = {
     pdf: 'application/pdf',
     xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
