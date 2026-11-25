@@ -82,10 +82,13 @@ export function criticCheck(answer: StructuredAnswer, plan: AnalyticPlan, partia
 
 export async function finalizeAnalyticRun(pool: Pool, runId: string, compose?: (input:{plan:AnalyticPlan;results:StructuredResult[]})=>Promise<{statement:string;model:string;inputTokens:number;outputTokens:number}>): Promise<'COMPLETED' | 'PARTIAL' | 'FAILED' | 'WAITING'> {
   return withRunTenant(pool, runId, async (client, stored) => {
-    const run = await client.query<{ state: string; state_version: number }>(
-      'SELECT state,state_version FROM runs.runs WHERE tenant_id=$1 AND run_id=$2 FOR UPDATE', [stored.tenant_id, runId],
+    const run = await client.query<{ state: string; state_version: number; deterministic: boolean }>(
+      `SELECT r.state,r.state_version,r.saved_reuse OR EXISTS (
+        SELECT 1 FROM runs.governed_run_pins g WHERE g.tenant_id=r.tenant_id AND g.run_id=r.run_id
+      ) AS deterministic FROM runs.runs r WHERE r.tenant_id=$1 AND r.run_id=$2 FOR UPDATE`, [stored.tenant_id, runId],
     );
     if (!run.rowCount || run.rows[0]!.state !== 'FINALISING') return 'WAITING';
+    if (run.rows[0]!.deterministic) compose = undefined;
     const existing = await client.query<{ status: 'COMPLETED' | 'PARTIAL' }>('SELECT status FROM runs.analytic_answers WHERE tenant_id=$1 AND run_id=$2', [stored.tenant_id, runId]);
     if (existing.rowCount) return existing.rows[0]!.status;
     const storedPlan = await client.query<{ plan: AnalyticPlan }>('SELECT plan FROM runs.analytic_plans WHERE tenant_id=$1 AND run_id=$2', [stored.tenant_id, runId]);

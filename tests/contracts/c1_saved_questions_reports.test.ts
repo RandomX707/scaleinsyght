@@ -31,7 +31,11 @@ describe('contract 1 saved question ownership and revalidation', () => {
     });
     const source = await activateConnection(app, { tenantId, principalId: ownerId, connectorType: 'postgres' });
     await withTenant(migrate, tenantId, async (db) => db.query("INSERT INTO core.entitlements(tenant_id,principal_id,capability_id,resource_id) VALUES($1,$2,'analytic.read',$3)", [tenantId, ownerId, source.connectionId]));
-    const plan = await createAnalyticPlan({ question: 'How many catalog objects are listed?', runId: crypto.randomUUID(), sources: [{ sourceId: source.connectionId, agentId: source.agentId, groupId: source.sourceGroupId, groupVersion: 1 }] });
+    await withTenant(migrate, tenantId, db => db.query(
+      "INSERT INTO graph.assets(tenant_id,source_id,asset_type,qualified_name,fingerprint) VALUES($1,$2,'dataset','public.catalogue',$3)",
+      [tenantId,source.connectionId,Buffer.alloc(32,1)],
+    ));
+    const plan = await createAnalyticPlan({ question: 'How many catalog objects are listed?', queryIntents: [{kind:'count',table:'public.catalogue'}], runId: crypto.randomUUID(), sources: [{ sourceId: source.connectionId, agentId: source.agentId, groupId: source.sourceGroupId, groupVersion: 1 }] });
     await startAnalyticRun(app, { tenantId, principalId: ownerId, plan });
     const step = plan.steps[0]!;
     await withTenant(migrate, tenantId, async (db) => db.query("UPDATE runs.steps SET state='CLAIMED',attempt=1,fencing_token=1,lease_owner='saved-question-test',lease_expires_at=clock_timestamp()+interval '1 minute' WHERE tenant_id=$1 AND run_id=$2 AND step_id=$3", [tenantId, plan.run_id, step.step_id]));

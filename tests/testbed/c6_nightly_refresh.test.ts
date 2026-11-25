@@ -101,4 +101,24 @@ describe('S6 nightly refresh, findings and review', () => {
     // The dismissed tag raises no new finding on the next run.
     expect((await findings()).findings.filter((item) => item.kind === 'sensitive_column')).toHaveLength(1);
   });
+  it('reports a timed-out view count as unavailable without a change finding', async () => {
+    await source(`CREATE VIEW public.slow_count AS SELECT n FROM generate_series(1,30) AS n;
+      GRANT SELECT ON public.slow_count TO ${reader};`);
+    const url = new URL(admin);
+    url.pathname = database;
+    url.username = reader;
+    url.password = readerPassword;
+    const {createPostgresConnector}=await import('@scaleinsyght/connectors');
+    const connector=createPostgresConnector({connectionString:url.toString(),statementTimeoutMs:500});
+    try {
+      await runProfile(workerPool,{tenantId,connectionId,connector,jobType:'profile'});
+      await source(`CREATE OR REPLACE VIEW public.slow_count AS
+        SELECT n FROM generate_series(1,30) AS n WHERE pg_sleep(1) IS NOT NULL;`);
+      const run=await runProfile(workerPool,{tenantId,connectionId,connector,jobType:'nightly'});
+      const result=await findings();
+      const viewFindings=result.findings.filter(item=>item.jobId===run.jobId&&item.subject==='public.slow_count');
+      expect(viewFindings.map(item=>item.detail)).toEqual([{change:'count_unavailable'}]);
+    } finally {await connector.close();}
+  });
+
 });

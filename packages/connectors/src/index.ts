@@ -35,7 +35,7 @@ export interface ObjectProfile {
     /** Measured on untagged columns only; tagged columns and unsupported types keep null (contract 7). averageLength is for text. */
     statistics: ColumnStatistics;
   }>;
-  rowCount: number;
+  rowCount: number | null;
 }
 
 export type ColumnStatistics = { nullRate: number | null; distinctCount: number | null; averageLength?: number | null };

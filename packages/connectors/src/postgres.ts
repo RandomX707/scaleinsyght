@@ -87,16 +87,16 @@ export class PostgresConnector implements ReadOnlyConnector {
       // The change signature covers the columns and, for base tables, the row count, so a nightly run re-profiles a table
       // that only gained or lost rows (decision 48).
       const columns=await this.columns(table);
-      // Base tables only: a view's count runs its query, which may be slow. A count that fails marks the table changed.
-      let rows='view';
-      if(table.table_type==='BASE TABLE'){try{rows=(await this.pool.query<{n:string}>(`SELECT count(*)::text AS n FROM ${quoteIdentifier(table.schema_name)}.${quoteIdentifier(table.table_name)}`)).rows[0]!.n;}catch{rows=`unknown-${Date.now()}`;}}
+      // Base tables only: a view's count runs its query, which may be slow. Unavailable counts are retried on the next refresh.
+      let rows:string|null='view';
+      if(table.table_type==='BASE TABLE'){try{rows=(await this.pool.query<{n:string}>(`SELECT count(*)::text AS n FROM ${quoteIdentifier(table.schema_name)}.${quoteIdentifier(table.table_name)}`)).rows[0]!.n;}catch{rows=null;}}
       const signature=createHash('sha256').update(JSON.stringify({rows,columns:columns.map(({column_name,data_type,is_nullable,comment})=>({column_name,data_type,is_nullable,comment}))})).digest('hex');
       const key=assetKey(qualifiedName);profiles.set(qualifiedName,{table,columns,key,signature});result.coverage.accessible++;
       if(input.scope?.exclude?.includes(qualifiedName)){result.excludedObjects.push({qualifiedName,type:table.table_type==='VIEW'?'view':'table'});continue;}
       if(input.scope?.listOnly?.includes(qualifiedName)){result.listOnlyObjects.push({qualifiedName,type:table.table_type==='VIEW'?'view':'table'});continue;}
       if(input.scope?.profile?.length&&!input.scope.profile.includes(qualifiedName)){result.excludedObjects.push({qualifiedName,type:table.table_type==='VIEW'?'view':'table'});continue;}
       const object={assetKey:key,qualifiedName,type:table.table_type==='VIEW'?'view' as const:'table' as const,scopeMode:'profile' as const};
-      if(input.mode==='nightly'&&this.seen.get(qualifiedName)===signature){result.unchanged++;result.unchangedObjects.push(object);continue;}
+      if(input.mode==='nightly'&&this.seen.get(qualifiedName)===signature&&rows!==null&&rows!=='view'){result.unchanged++;result.unchangedObjects.push(object);continue;}
       result.objects.push(object);
     }
     for(const [name,{signature}] of profiles)this.seen.set(name,signature);
@@ -106,20 +106,23 @@ export class PostgresConnector implements ReadOnlyConnector {
   async profile(key:string,scope?:ConnectorScope):Promise<ObjectProfile>{
     const found=[...this.current.entries()].find(([name])=>assetKey(name)===key);if(!found)throw new Error('asset_not_found');
     const [qualifiedName,table]=found;if(scope?.exclude?.includes(qualifiedName)||scope?.listOnly?.includes(qualifiedName)||(scope?.profile?.length&&!scope.profile.includes(qualifiedName)))throw new Error('object_out_of_scope');
-    const columns=await this.columns(table);const count=await this.pool.query<{count:string}>(`SELECT count(*)::text AS count FROM ${quoteIdentifier(table.schema_name)}.${quoteIdentifier(table.table_name)}`);
+    const columns=await this.columns(table);let rowCount:number|null=null;
+    try {
+      const count=await this.pool.query<{count:string}>(`SELECT count(*)::text AS count FROM ${quoteIdentifier(table.schema_name)}.${quoteIdentifier(table.table_name)}`);
+      rowCount=Number(count.rows[0]!.count);
+    } catch { /* An unavailable count cannot support a change finding. */ }
     const structural=columns.map(({column_name,data_type,is_nullable,comment})=>({column_name,data_type,is_nullable,comment}));
     // Bounded text samples feed the sensitivity detector only; they are discarded here and never stored or sent to a model (decision 41).
     const sampled=new Map<string,string[]>();
-    for(const column of columns)if(['text','character varying','character'].includes(column.data_type)){const rows=await this.pool.query<{v:string}>(`SELECT ${quoteIdentifier(column.column_name)}::text AS v FROM ${quoteIdentifier(table.schema_name)}.${quoteIdentifier(table.table_name)} WHERE ${quoteIdentifier(column.column_name)} IS NOT NULL LIMIT 200`);sampled.set(column.column_name,rows.rows.map(row=>row.v));}
-    const rowCount=Number(count.rows[0]!.count);
+    for(const column of columns)if(rowCount!==null&&['text','character varying','character'].includes(column.data_type)){const rows=await this.pool.query<{v:string}>(`SELECT ${quoteIdentifier(column.column_name)}::text AS v FROM ${quoteIdentifier(table.schema_name)}.${quoteIdentifier(table.table_name)} WHERE ${quoteIdentifier(column.column_name)} IS NOT NULL LIMIT 200`);sampled.set(column.column_name,rows.rows.map(row=>row.v));}
     const classified=new Map(columns.map(column=>{const declared=column.comment?.match(/sensitivity:([a-z_]+)/g)?.map(tag=>tag.slice('sensitivity:'.length))??[];return [column.column_name,classifyColumn({name:column.column_name,declaredTags:declared,sample:sampled.get(column.column_name)??[]})] as const;}));
     // Null rate, distinct count and average text length on untagged scalar columns, in one aggregate query per table.
-    const measurable=rowCount>0&&rowCount<=COLUMN_STATISTICS_ROW_LIMIT?columns.filter(column=>!classified.get(column.column_name)!.tags.length&&POSTGRES_MEASURABLE.has(column.data_type)):[];
+    const measurable=rowCount!==null&&rowCount>0&&rowCount<=COLUMN_STATISTICS_ROW_LIMIT?columns.filter(column=>!classified.get(column.column_name)!.tags.length&&POSTGRES_MEASURABLE.has(column.data_type)):[];
     const statistics=new Map<string,ColumnStatistics>();
     if(measurable.length){
       const parts=measurable.flatMap((column,index)=>{const ref=quoteIdentifier(column.column_name);return [`count(${ref}) AS n${index}`,`count(DISTINCT ${ref}) AS d${index}`,POSTGRES_TEXT.has(column.data_type)?`avg(length(${ref}))::float8 AS l${index}`:`NULL::float8 AS l${index}`];});
       const measured=(await this.pool.query<Record<string,string|number|null>>(`SELECT ${parts.join(',')} FROM ${quoteIdentifier(table.schema_name)}.${quoteIdentifier(table.table_name)}`)).rows[0]!;
-      measurable.forEach((column,index)=>statistics.set(column.column_name,{nullRate:1-Number(measured[`n${index}`])/rowCount,distinctCount:Number(measured[`d${index}`]),averageLength:measured[`l${index}`]===null?null:Number(measured[`l${index}`])}));
+      measurable.forEach((column,index)=>statistics.set(column.column_name,{nullRate:1-Number(measured[`n${index}`])/rowCount!,distinctCount:Number(measured[`d${index}`]),averageLength:measured[`l${index}`]===null?null:Number(measured[`l${index}`])}));
     }
     return {assetKey:key,qualifiedName,version:createHash('sha256').update(JSON.stringify(structural)).digest('hex'),rowCount,columns:columns.map(column=>{const found=classified.get(column.column_name)!;return {name:column.column_name,dataType:column.data_type,isNullable:column.is_nullable==='YES',sensitivityTags:found.tags,sensitivityEvidence:found.evidence,statistics:statistics.get(column.column_name)??UNMEASURED};})};
   }

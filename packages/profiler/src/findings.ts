@@ -57,7 +57,9 @@ export async function recordFindings(pool: Pool, input: { tenantId: string; conn
         const removed = [...before.keys()].filter((column) => !now.has(column));
         const retyped = [...now.keys()].filter((column) => before.has(column) && before.get(column) !== now.get(column)).map((column) => ({ column, from: before.get(column), to: now.get(column) }));
         if (added.length || removed.length || retyped.length) await add('schema_change', name, { change: 'columns', added, removed, retyped }, table.assetId);
-        if (previous.rowCount !== null && table.rowCount !== null) {
+        if (table.rowCount === null) {
+          await add('data_anomaly', name, { change: 'count_unavailable' }, table.assetId);
+        } else if (previous.rowCount !== null) {
           const change = table.rowCount - previous.rowCount;
           if (Math.abs(change) >= ROW_CHANGE_MIN && Math.abs(change) >= ROW_CHANGE_SHARE * Math.max(previous.rowCount, 1)) await add('data_anomaly', name, { change: 'row_count', before: previous.rowCount, after: table.rowCount }, table.assetId);
         }

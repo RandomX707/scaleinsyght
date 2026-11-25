@@ -10,6 +10,7 @@
     "@scaleinsyght/db": "workspace:*",
     "@scaleinsyght/registry": "workspace:*",
     "exceljs": "^4.4.0",
+    "jszip": "^3.10.1",
     "pdfkit": "^0.21.0",
     "pptxgenjs": "^4.0.1",
     "pg": "^8.16.3"
