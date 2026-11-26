@@ -4,6 +4,7 @@ import type { ReadOnlyConnector } from '@scaleinsyght/connectors';
 import { withTenant } from '@scaleinsyght/db';
 import { recordAgentRun, tenantAgent } from '@scaleinsyght/registry';
 import { fingerprintIdentifier } from '@scaleinsyght/graph';
+import { isObjectError, sourceErrorCode } from './source-errors.js';
 
 /** Fields with more distinct values than this are listed as identifier fields but not fingerprinted. */
 export const ID_FINGERPRINT_LIMIT = 1_000_000;
@@ -30,7 +31,7 @@ export function formatPattern(values: string[]): string {
  * overlap. Raw values are read, fingerprinted and dropped in this process; none is stored, logged or sent to a model. */
 export async function runIdAgent(pool: Pool, input: { tenantId: string; connectionId: string; connector: ReadOnlyConnector; masterKey?: Uint8Array; scope?:ConnectorScope;
   /** K13: called after each step (a field fingerprinted, then a field matched), so a long run shows progress. */
-  onProgress?: (done: number, planned: number) => Promise<void> }): Promise<{ fields: number; fingerprinted: number; matches: number } | undefined> {
+  onProgress?: (done: number, planned: number) => Promise<void> }): Promise<{ fields: number; fingerprinted: number; skipped: number; matches: number } | undefined> {
   if (!input.masterKey || input.masterKey.byteLength < 32 || !input.connector.distinctValues) return undefined;
   const candidates = await withTenant(pool, input.tenantId, async (client) => {
     const fields = await client.query<{ asset_id: string; qualified_name: string; table_name: string; tags: string[] | null; evidence: Array<{ tag: string; detection: string }> | null }>(
@@ -58,11 +59,16 @@ export async function runIdAgent(pool: Pool, input: { tenantId: string; connecti
   // set (replaced atomically, never mixed across runs); matching then runs field by field. Nothing waits for one long
   // transaction at the end, and progress is reported after every step.
   const fields = candidates.filter((candidate) => !columnScope(input.scope, candidate.table, candidate.column));
-  const planned = fields.length * 2; let done = 0; let fingerprinted = 0;
+  const planned = fields.length * 2; let done = 0; let fingerprinted = 0; let skipped = 0;
   const step = async () => { done++; await input.onProgress?.(done, planned); };
   await input.onProgress?.(0, planned);
   for (const candidate of fields) {
-    const values = await input.connector.distinctValues!(candidate.table, candidate.column, ID_FINGERPRINT_LIMIT);
+    // A field whose values cannot be read in time (a very large table) is skipped and counted, never fatal (decision
+    // 58): its earlier fingerprints stay as they were, because its current values are unknown. A connection-level
+    // failure still stops the step.
+    let values: string[] | null;
+    try { values = await input.connector.distinctValues!(candidate.table, candidate.column, ID_FINGERPRINT_LIMIT); }
+    catch (error) { if (!isObjectError(sourceErrorCode(error))) throw error; skipped++; await step(); continue; }
     const format = values ? formatPattern(values) : 'too_many_values';
     const fingerprints = values ? values.map((value) => Buffer.from(fingerprintIdentifier(input.masterKey!, input.tenantId, value), 'hex')) : null;
     await withTenant(pool, input.tenantId, async (client) => {
@@ -147,7 +153,7 @@ export async function runIdAgent(pool: Pool, input: { tenantId: string; connecti
        WHERE a.tenant_id=$1 AND r.tenant_id=a.tenant_id AND r.relationship_id=a.relationship_id AND r.relationship_type='SAME_AS' AND a.collector_version=$3 AND a.valid_to IS NULL
          AND (f.source_id=$2 OR t.source_id=$2) AND NOT (r.relationship_id=ANY($4::uuid[]))`, [input.tenantId, input.connectionId, COLLECTOR, [...kept]]);
     // Logged against the tenant's ID agent (decision 52): counts only, never identifier values.
-    await recordAgentRun(client, { tenantId: input.tenantId, agentId: await tenantAgent(client, input.tenantId, 'id'), connectionId: input.connectionId, payload: { action: 'detect_and_match', fields: candidates.length, fingerprinted, matches: best.size } });
-    return { fields: candidates.length, fingerprinted, matches: best.size };
+    await recordAgentRun(client, { tenantId: input.tenantId, agentId: await tenantAgent(client, input.tenantId, 'id'), connectionId: input.connectionId, payload: { action: 'detect_and_match', fields: candidates.length, fingerprinted, skipped, matches: best.size } });
+    return { fields: candidates.length, fingerprinted, skipped, matches: best.size };
   });
 }

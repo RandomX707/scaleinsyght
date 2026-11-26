@@ -126,6 +126,40 @@ describe('contract 5 background profile resilience', () => {
     } finally { await migratePool.query(`DROP SCHEMA ${schema} CASCADE`); }
   }, 60_000);
 
+  it('c5_an_id_field_too_large_to_read_in_time_is_skipped_and_the_profile_completes', async () => {
+    // test_emr on 4284 (27 Nov): one identifier field's distinct values ran past the query limit and the whole ID step
+    // failed, leaving the profile PARTIAL. That field is now skipped and counted; the others are fingerprinted.
+    process.env.ARTIFACT_MASTER_KEY ??= Buffer.alloc(32, 9).toString('base64');
+    const schema = `ids_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
+    await migratePool.query(`CREATE SCHEMA ${schema};
+      CREATE TABLE ${schema}.patients(patient_id integer PRIMARY KEY, mrn text NOT NULL); COMMENT ON COLUMN ${schema}.patients.mrn IS 'sensitivity:identifier';
+      INSERT INTO ${schema}.patients SELECT n, 'MRN' || lpad(n::text, 6, '0') FROM generate_series(1, 50) n;
+      CREATE TABLE ${schema}.visits(visit_id integer PRIMARY KEY, patient_id integer NOT NULL REFERENCES ${schema}.patients); INSERT INTO ${schema}.visits SELECT n, 1 + n % 50 FROM generate_series(1, 200) n;`);
+    try {
+      const real = createPostgresConnector({ connectionString: url('DATABASE_URL_MIGRATE'), statementTimeoutMs: 10_000, id: 'ids', name: 'IDs' });
+      const connector = new Proxy(real, { get: (target, key) => {
+        if (key === 'discover') return async (input: Parameters<ReadOnlyConnector['discover']>[0]) => {
+          const found = await target.discover(input); const mine = found.objects.filter((object) => object.qualifiedName.startsWith(`${schema}.`));
+          return { ...found, objects: mine, unchangedObjects: [], listOnlyObjects: [], excludedObjects: [], inaccessibleObjects: [], coverage: { listed: mine.length, accessible: mine.length, inaccessible: 0 } };
+        };
+        if (key === 'structuralReferences') return async (scope: unknown) => (await (target.structuralReferences as (s: unknown) => Promise<Array<{ from: string }>>)(scope)).filter((reference) => reference.from.startsWith(`${schema}.`));
+        if (key === 'distinctValues') return async (table: string, column: string, limit: number) => {
+          if (table === `${schema}.visits`) throw Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
+          return target.distinctValues!(table, column, limit);
+        };
+        const value = Reflect.get(target, key, target) as unknown; return typeof value === 'function' ? value.bind(target) : value;
+      } }) as ReadOnlyConnector;
+      const { tenantId, jobId } = await tenantWithConnection('id-skip');
+      expect(await runNextDiscovery(workerPool, async () => connector, tenantId)).toBe(true);
+      const job = await withTenant(migratePool, tenantId, async (db) => (await db.query<{ state: string; id_fields_skipped: number; id_steps_done: number; id_steps_planned: number }>('SELECT state,id_fields_skipped,id_steps_done,id_steps_planned FROM profiler.jobs WHERE tenant_id=$1 AND job_id=$2', [tenantId, jobId])).rows[0]!);
+      expect(job.state).toBe('COMPLETED');
+      expect(job.id_fields_skipped).toBe(1);
+      expect(job.id_steps_done).toBe(job.id_steps_planned);
+      const fingerprinted = await withTenant(migratePool, tenantId, (db) => db.query<{ field_name: string }>('SELECT DISTINCT field_name FROM graph.id_fingerprints WHERE tenant_id=$1 ORDER BY 1', [tenantId]));
+      expect(fingerprinted.rows.map((row) => row.field_name)).toEqual([`${schema}.patients.mrn`, `${schema}.patients.patient_id`]);
+    } finally { await migratePool.query(`DROP SCHEMA ${schema} CASCADE`); }
+  }, 60_000);
+
   it('c5_a_connection_failure_stops_the_profile_with_a_plain_reason_code', async () => {
     const { tenantId, jobId } = await tenantWithConnection('unreachable');
     const inner = createGoldenConnector(listGoldenSources().find((item) => item.type === 'postgres')!.id);

@@ -334,6 +334,7 @@ export async function runProfile(
   await withTenant(pool, input.tenantId, (client) => client.query(
     `INSERT INTO profiler.nightly_schedules(tenant_id,connection_id,next_run_at) SELECT $1,$2,clock_timestamp()+interval '1 day'
      WHERE EXISTS(SELECT 1 FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2 AND status='active') ON CONFLICT DO NOTHING`, [input.tenantId, input.connectionId]));
+  if (job && ids?.skipped) await withTenant(pool, input.tenantId, (client) => client.query('UPDATE profiler.jobs SET id_fields_skipped=$4 WHERE tenant_id=$1 AND job_id=$2 AND claim_token=$3', [input.tenantId, job.jobId, job.token, ids.skipped]));
   if (job && !(await finishDiscovery(pool, job, { state: 'COMPLETED' }))) throw new StaleDiscoveryJobError();
   return {
     ...(lineage ? { lineage } : {}),
