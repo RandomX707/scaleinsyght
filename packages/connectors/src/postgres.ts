@@ -1,5 +1,6 @@
 import { columnScope, objectScope } from './scope.js';
 import { CATALOG_ROW_LIMIT } from './limits.js';
+import { inIdSample, postgresIdSampleCondition } from './id-sample.js';
 import { DEFAULT_SAMPLING, SENSITIVITY_MIN_VALUES, SENSITIVITY_VALUES, type SamplingLimits, catalogEstimate, distinctFromCatalog, samplePercent } from './sampling.js';
 import { createHash } from 'node:crypto';
 import { Pool } from 'pg';
@@ -253,12 +254,14 @@ export class PostgresConnector implements ReadOnlyConnector {
     return references;
   }
 
-  async distinctValues(qualifiedName:string,column:string,limit:number):Promise<string[]|null>{
+  /** Distinct values for the ID agent; with sample, only values the consistent rule keeps (decision 61), selected in SQL. */
+  async distinctValues(qualifiedName:string,column:string,limit:number,options:{sample?:boolean}={}):Promise<string[]|null>{
     const table=this.current.get(qualifiedName);if(!table)throw new Error('asset_not_found');
     if(!(await this.columns(table)).some(item=>item.column_name===column))throw new Error('column_not_found');
     const ref=quoteIdentifier(column);
-    const result=await this.pool.query<{v:string}>(`SELECT DISTINCT ${ref}::text AS v FROM ${quoteIdentifier(table.schema_name)}.${quoteIdentifier(table.table_name)} WHERE ${ref} IS NOT NULL LIMIT $1`,[limit+1]);
-    return result.rows.length>limit?null:result.rows.map(row=>row.v);
+    const result=await this.pool.query<{v:string}>(`SELECT DISTINCT ${ref}::text AS v FROM ${quoteIdentifier(table.schema_name)}.${quoteIdentifier(table.table_name)} WHERE ${ref} IS NOT NULL${options.sample?` AND ${postgresIdSampleCondition(`${ref}::text`)}`:''} LIMIT $1`,[limit+1]);
+    if(result.rows.length>limit)return null;
+    return (options.sample?result.rows.filter(row=>inIdSample(row.v)):result.rows).map(row=>row.v);
   }
 
   async viewDefinitions():Promise<Array<{qualifiedName:string;schema:string;definition:string|null}>>{

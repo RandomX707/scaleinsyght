@@ -1,4 +1,5 @@
 import { columnScope, objectScope } from './scope.js';
+import { inIdSample } from './id-sample.js';
 // Read-only connector for an uploaded .xlsx workbook. Each worksheet with a header row is a table.
 // The workbook bytes come from the tenant's encrypted artifact store and are never modified.
 // Questions run as SQL compiled from a validated typed intent against an in-memory DuckDB copy that is
@@ -237,11 +238,12 @@ export class ExcelConnector implements ReadOnlyConnector {
     return {sql, values: result.getRowObjectsJS().map(row => String(row.value))};
   }
 
-  async distinctValues(qualifiedName: string, column: string, limit: number): Promise<string[] | null> {
+  /** Distinct values for the ID agent; with sample, only values the consistent rule keeps (decision 61). */
+  async distinctValues(qualifiedName: string, column: string, limit: number, options: { sample?: boolean } = {}): Promise<string[] | null> {
     const sheet = (await this.load()).find((item) => item.qualifiedName === qualifiedName); if (!sheet) throw new Error('asset_not_found');
     const position = sheet.columns.findIndex((item) => item.name === column); if (position < 0) throw new Error('column_not_found');
     const values = new Set<string>();
-    for (const row of sheet.rows) { const value = row[position]; if (value === null || value === undefined) continue; values.add(value instanceof Date ? value.toISOString() : String(value)); if (values.size > limit) return null; }
+    for (const row of sheet.rows) { const value = row[position]; if (value === null || value === undefined) continue; const text = value instanceof Date ? value.toISOString() : String(value); if (options.sample && !inIdSample(text)) continue; values.add(text); if (values.size > limit) return null; }
     return [...values];
   }
 

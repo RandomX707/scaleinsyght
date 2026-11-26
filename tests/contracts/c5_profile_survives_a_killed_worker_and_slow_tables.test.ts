@@ -7,7 +7,7 @@ import { Pool } from 'pg';
 import { withTenant } from '@scaleinsyght/db';
 import { activateConnection } from '@scaleinsyght/registry';
 import { createPostgresConnector, type ReadOnlyConnector } from '@scaleinsyght/connectors';
-import { claimDiscovery, queueDiscovery, runNextDiscovery } from '@scaleinsyght/profiler';
+import { claimDiscovery, queueDiscovery, runNextDiscovery, StaleDiscoveryJobError } from '@scaleinsyght/profiler';
 import { hashPassword } from '@scaleinsyght/api/server';
 import { createGoldenConnector, listGoldenSources } from '../support/golden-connectors.js';
 
@@ -159,6 +159,21 @@ describe('contract 5 background profile resilience', () => {
       expect(fingerprinted.rows.map((row) => row.field_name)).toEqual([`${schema}.patients.mrn`, `${schema}.patients.patient_id`]);
     } finally { await migratePool.query(`DROP SCHEMA ${schema} CASCADE`); }
   }, 60_000);
+
+  it('c5_a_job_reclaimed_after_its_profile_was_saved_runs_again_to_completion', async () => {
+    // test_emr on 4284 (27 Nov): the first attempt saved the profile, then its worker stopped during the ID step. The
+    // reclaimed attempt reran the save and collided with the first attempt's rows, failing with discovery_failed.
+    const { tenantId, jobId } = await tenantWithConnection('reclaim-after-save');
+    const inner = createGoldenConnector(listGoldenSources().find((item) => item.type === 'postgres')!.id);
+    const stopsAfterSave = new Proxy(inner, { get: (target, key) => key === 'viewDefinitions'
+      ? async () => { throw new StaleDiscoveryJobError(); } // the worker loses the job after the save
+      : (() => { const value = Reflect.get(target, key, target) as unknown; return typeof value === 'function' ? value.bind(target) : value; })() });
+    expect(await runNextDiscovery(workerPool, async () => stopsAfterSave, tenantId)).toBe(true);
+    expect(await jobRow(tenantId, jobId)).toMatchObject({ state: 'RUNNING', phase: 'relationships', claim_token: 1 });
+    await withTenant(migratePool, tenantId, (db) => db.query("UPDATE profiler.jobs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE tenant_id=$1", [tenantId]));
+    expect(await runNextDiscovery(workerPool, async () => createGoldenConnector(listGoldenSources().find((item) => item.type === 'postgres')!.id), tenantId)).toBe(true);
+    expect(await jobRow(tenantId, jobId)).toMatchObject({ state: 'COMPLETED', phase: 'done', claim_token: 2, failure_code: null });
+  });
 
   it('c5_a_connection_failure_stops_the_profile_with_a_plain_reason_code', async () => {
     const { tenantId, jobId } = await tenantWithConnection('unreachable');
