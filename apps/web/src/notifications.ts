@@ -59,7 +59,9 @@ export function groupNotifications(items: NotificationItem[], now = new Date()):
     const first = members[0]!; const latestAt = members.map((item) => item.createdAt ?? '').sort().at(-1) || null;
     const source = first.sourceName || (typeof first.summary.sourceName === 'string' ? first.summary.sourceName : '') || 'A connected source';
     const parts = changeParts(counts);
-    const profiled = members.reduce((total, item) => total + Number(item.summary.profiled ?? 0), 0);
+    // A profile's size is the latest run's, not a sum: profiling the same 7 tables twice is still 7 tables.
+    const latest = [...members].sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''))[0]!;
+    const profiled = Number(latest.summary.profiled ?? 0);
     const what = first.type === 'discovery' ? `profiling finished, ${count(profiled, 'table or view', 'tables and views')} profiled`
       : first.type === 'report_impact' ? 'a connected report may be affected by a change'
       : parts.length ? parts.join(', ') : 'changes found';

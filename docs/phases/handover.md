@@ -1,6 +1,6 @@
-# Handover, 25 Nov 2026 (evening IST)
+# Handover, 26 Nov 2026
 
-Updated by Claude Code after #41. Controls (#42), Home chat (#43) and K6 (#41) are merged. The review app on 4284 runs `main` at `c008f02`.
+Updated by Claude Code after #49. The bug fixes from testing on 4284 (#45 to #49) are merged. The review app on 4284 runs `main` at `7fb2105` (the notification fix in this PR follows).
 
 ## Merged to `main` today
 
@@ -29,10 +29,15 @@ Updated by Claude Code after #41. Controls (#42), Home chat (#43) and K6 (#41) a
 | #37, #38 | 63584bd | Dictionary spec (decision 53) and the Dictionary rebuild: stored scrubbed definitions (migration 037), lazy Dictionary API and page, HTML export, ER neighbourhood; `docs/phases/dictionary-rebuild.md` section 5 |
 | #43 | 88c6d34 | Home chat (decision 56): code picks sentence, small table, chart, compact table or flow diagram; refusals with a safe alternative; one "SQL, sources and lineage" drawer; plan collapsed to one line; form-only follow-ups reuse the answer without a run (migration 040, display turns) |
 | #41 | c008f02 | K6: several conditions on one table, proven-zero answers for absent categories, entity key for unique names (decision 54); original S7 and S2b questions restored; compact answer card fixes K7; K8 ("each provider") fixed |
+| #45 | ce9c178 | K9: exported PDFs are read back and must contain the answer; the PDF reader uses each stream's declared length |
+| #46 | e5210f7 | Bugs 1 and 3: collapsed sidebar has an expand button and every item as an icon with a tooltip; state remembered; profile menu opens beside the strip |
+| #47 | 75a2d37 | Bug 2: Lineage page has only Lineage and ID trace tabs; Show impact in the detail panel |
+| #48 | 46aa4cd | Bug 5: activation queues the discovery profile and returns at once; worker profiling loop; live progress ring; plain-language errors (decision 57, migration 041) |
+| #49 | 7fb2105 | Bug 4: notifications and Home cards name the source, say what changed with a time, link to the details and group repeats; quiet nights notify no one |
 
 ## Review app on 4284 and riverside-health
 
-- **4284 runs `main` at `c008f02`** (redeployed 26 Nov) from `../scaleinsyght-review` (detached): API 3000, worker 3001, web 4284, sqlparse 8011, started with `nohup` by Claude Code (logs in its scratchpad). `scale_insyght` is migrated to 040; backups were taken before the 035, 036, 037, 039 and 040 migrations and before K6 (Claude Code's scratchpad). Riverside-health's procedure and view SQL appears in the Dictionary after its next profile or nightly refresh, which captures definitions. Riverside-health now has its ID and ID trace agents. Its workbook refresh and ID trace (3 systems) were checked by running the same code; a browser check needs the riverside-health password.
+- **4284 runs `main` at `7fb2105`** (redeployed 26 Nov, evening IST) from `../scaleinsyght-review` (detached): API 3000, worker 3001, web 4284, sqlparse 8011, started with `nohup` by Claude Code (logs in its scratchpad). `scale_insyght` is migrated to 041; backups were taken before the 035, 036, 037, 039, 040 and 041 migrations and before K6 (Claude Code's scratchpad). Riverside-health's procedure and view SQL appears in the Dictionary after its next profile or nightly refresh, which captures definitions. Riverside-health now has its ID and ID trace agents. Its workbook refresh and ID trace (3 systems) were checked by running the same code; a browser check needs the riverside-health password.
 - **riverside-health password:** Yashaswi's password (`yashaswi@riverside-health.test`) was reset with `pnpm tenant:reset-password` at about 06:40 IST and given to Yashaswi once in the chat at handover. It is not in the repo. If it is lost, reset it again with the same command.
 - **riverside-health sources:** PostgreSQL (`pgs`) and SQL Server (`sql`) were already connected by Yashaswi; the Operations workbook was added through Add connector, and PostgreSQL and SQL Server were re-profiled so display labels work. No dbt project, no Tableau and no nightly refresh have been run there yet (`profiler.nightly_schedules` is backfilled by migration 032 when 4284 is migrated). Drafts Yashaswi created were left alone.
 - `../scaleinsyght/.env` was changed: `MODEL_DAILY_COST_CAP_USD=5`, `MODEL_DAILY_USER_COST_CAP_USD=1`, token cap removed (backup in my scratchpad as `main-env-backup`).
@@ -59,10 +64,11 @@ Updated by Claude Code after #41. Controls (#42), Home chat (#43) and K6 (#41) a
 
 ## Claude Code queue (in the user's order; Codex is out of limits, so Claude Code holds all work)
 
-1. **Agents, My agent, Usage and BI reports** matched to the prototype, one PR each. Agents is built on `agents-screen` (worktree `../scaleinsyght-cc-controls`, rebased on main): tiers from real source groups, working Adjust groups (moves a connector agent between groups), ID agent counts, governed agents table. Screenshots, gates and testbed runs next.
-2. **Remaining Dictionary items**: keys and indexes, Back buttons, encrypted procedure dependencies, agent schedules ("Run by"), ER grid.
-3. **Cross-source row joins** (the design's collate step): spec first, for the user's approval.
-4. Then: migration backfill safety, a model-spend ledger that test resets don't wipe, per-table profiling time, planner pre-model catalog reads.
+1. **K10**: move `/discover` (Run a profile, on-demand nightly) onto the background job queue, same cause as bug 5.
+2. **Agents, My agent, Usage and BI reports** matched to the prototype, one PR each. Agents is built on `agents-screen` (worktree `../scaleinsyght-cc-controls`); it needs a rebase on main (the shell and Lineage changed), screenshots, gates and testbed runs.
+3. **Remaining Dictionary items**: keys and indexes, Back buttons, encrypted procedure dependencies, agent schedules ("Run by"), ER grid.
+4. **Cross-source row joins** (the design's collate step): spec first, for the user's approval.
+5. Then: K11 (worker nightly runs re-profile every table), migration backfill safety, a model-spend ledger that test resets don't wipe, per-table profiling time, planner pre-model catalog reads.
 
 ## Codex continuation
 
