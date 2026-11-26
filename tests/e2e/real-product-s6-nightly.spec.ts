@@ -5,6 +5,7 @@ import { config } from 'dotenv';
 import { Client, Pool } from 'pg';
 import { withTenant } from '@scaleinsyght/db';
 import { createTenant } from '../../scripts/tenant-create.js';
+import { activateAndWait } from '../support/e2e-profile.js';
 
 // S6: a source changes after it is profiled; a refresh from the Approval matrix finds each change by name and count,
 // and an inferred sensitive column is dismissed with the decision recorded. Uses its own scratch database.
@@ -33,7 +34,7 @@ test('s6_refresh_from_the_approval_matrix_finds_source_changes_and_a_dismissal_i
   const draft = await page.request.post('/api/connections', { data: { connectorType: 'postgres', displayName: 'Shop database', credential: { host: admin.hostname, port: Number(admin.port || 5432), database, username: reader, password: readerPassword, sslMode: 'disable' } } });
   const { connectionId } = await draft.json() as { connectionId: string };
   expect((await page.request.post(`/api/connections/${connectionId}/test`)).ok()).toBeTruthy();
-  expect((await page.request.post(`/api/connections/${connectionId}/activate`, { data: { scope: [] } })).ok()).toBeTruthy();
+  await activateAndWait(page, connectionId);
 
   await run(`ALTER TABLE shop_orders ADD COLUMN channel text; DROP TABLE legacy_codes; INSERT INTO customers SELECT n, 'person' || lpad(n::text,3,'0') || '@example.test' FROM generate_series(31,60) n;
     CREATE TABLE returns(return_id integer PRIMARY KEY); INSERT INTO returns SELECT generate_series(1,5); GRANT SELECT ON ALL TABLES IN SCHEMA public TO ${reader};`);

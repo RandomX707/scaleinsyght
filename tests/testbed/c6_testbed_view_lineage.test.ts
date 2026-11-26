@@ -7,6 +7,7 @@ import { withTenant } from '@scaleinsyght/db';
 import { hashPassword } from '@scaleinsyght/api/server';
 import { buildTestServer } from '../support/test-api.js';
 import { startSqlParser } from '../support/sqlparse-server.js';
+import { runQueuedDiscoveries } from '../support/discovery.js';
 
 config({ path: '.env' });
 const testUrl = (key: 'DATABASE_URL' | 'DATABASE_URL_MIGRATE') => { const value = process.env[key]; if (!value) throw new Error(`${key} is required; lineage contracts are never skipped`); const url = new URL(value); url.pathname = `/${process.env.SI_TEST_DATABASE??'si_test'}`; return url.toString(); };
@@ -40,6 +41,7 @@ describe('contract 6 parsed view lineage on the testbed', () => {
     const id = draft.json<{ connectionId: string }>().connectionId;
     expect((await server.inject({ method: 'POST', url: `/api/connections/${id}/test`, headers: { cookie } })).statusCode).toBe(200);
     const active = await server.inject({ method: 'POST', url: `/api/connections/${id}/activate`, headers: { cookie }, payload: { scope: [] } }); expect(active.statusCode).toBe(200);
+    await runQueuedDiscoveries(tenantId);
     return id;
   };
   const expectViews = (rows: Awaited<ReturnType<typeof flows>>, expected: Record<string, { reads: string[]; columns: Record<string, string[]> }>) => {

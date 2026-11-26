@@ -5,6 +5,7 @@ import { config } from 'dotenv';
 import { Pool } from 'pg';
 import { withTenant } from '@scaleinsyght/db';
 import { createTenant } from '../../scripts/tenant-create.js';
+import { expectProfilePageCompletes } from '../support/e2e-profile.js';
 
 config({ path: '.env' });
 const tenantUrl = () => { const value = process.env.DATABASE_URL_MIGRATE; if (!value) throw new Error('DATABASE_URL_MIGRATE is required for local S3 acceptance.'); const url = new URL(value); url.pathname = `/${process.env.SI_TEST_DATABASE??'si_test'}`; return url.toString(); };
@@ -57,8 +58,7 @@ test('s3_empty_tenant_uploads_workbook_profiles_and_answers_with_evidence', asyn
   await expect(page.getByRole('status')).toContainText(`Workbook checked: ${truth.sheets.length} sheets`);
   for (const sheet of truth.sheets) await expect(page.getByRole('status')).toContainText(`${sheet.name}, ${sheet.rowCount.toLocaleString('en-US')} rows`);
   await page.getByRole('button', { name: 'Start profiling' }).click();
-  await expect(page.getByRole('heading', { name: 'Discovery complete' })).toBeVisible();
-  await page.getByRole('button', { name: 'Close dialog' }).click();
+  await expectProfilePageCompletes(page);
 
   const listed = await page.request.get('/api/connections'); expect(listed.ok()).toBeTruthy();
   const source = (await listed.json() as { connections: Array<{ connectionId: string; connectorType: string; status: string; agentId: string | null }> }).connections.find((item) => item.status === 'active' && item.connectorType === 'excel');
@@ -187,8 +187,7 @@ test('s3_empty_tenant_uploads_workbook_profiles_and_answers_with_evidence', asyn
   await page.getByLabel('SSL mode').selectOption('disable');
   await page.getByRole('button', { name: 'Test connection' }).click();
   await page.getByRole('button', { name: 'Start profiling' }).click();
-  await expect(page.getByRole('heading', { name: 'Discovery complete' })).toBeVisible();
-  await page.getByRole('button', { name: 'Close dialog' }).click();
+  await expectProfilePageCompletes(page);
   await page.goto('/');
   const compare = await askChecked("Does the workbook's Patients sheet have the same number of patients as the PostgreSQL testbed?", 2, /patients/i);
   const byType = Object.fromEntries(compare.answer.bySource.map((item) => [item.connectorType, item.value]));

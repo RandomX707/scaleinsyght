@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { config } from 'dotenv';
 import { Pool } from 'pg';
 import { createTenant } from '../../scripts/tenant-create.js';
+import { activateAndWait } from '../support/e2e-profile.js';
 
 // S9: the Dictionary for every connector type against testbed truth (testbed/dictionary/truth.json, testbed/truth.json),
 // and the interactive HTML export opened offline with every request blocked. Spec docs/phases/dictionary-rebuild.md.
@@ -29,7 +30,7 @@ async function connect(page: Page, data: Record<string, unknown>, workbook?: Buf
   const { connectionId } = await draft.json() as { connectionId: string };
   if (workbook) expect((await page.request.post(`/api/connections/${connectionId}/workbooks`, { data: workbook, headers: { 'content-type': 'application/octet-stream' } })).ok()).toBeTruthy();
   expect((await page.request.post(`/api/connections/${connectionId}/test`)).ok()).toBeTruthy();
-  expect((await page.request.post(`/api/connections/${connectionId}/activate`, { data: { scope: [] } })).ok()).toBeTruthy();
+  await activateAndWait(page, connectionId);
   return connectionId;
 }
 async function profiled(page: Page, connectionId: string) {

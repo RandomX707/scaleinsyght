@@ -7,6 +7,7 @@ import { withTenant } from '@scaleinsyght/db';
 import { hashPassword } from '@scaleinsyght/api/server';
 import { buildTestServer } from '../support/test-api.js';
 import { startSqlParser } from '../support/sqlparse-server.js';
+import { runQueuedDiscoveries } from '../support/discovery.js';
 
 // S8 on the testbed: a hand-written .twb on the dbt marts, uploaded through the product, traced to the operational
 // columns through the dbt lineage, compared with testbed/lineage-truth.json. Reads the testbed sources only.
@@ -41,6 +42,7 @@ describe('contract 6 Tableau workbook lineage on the testbed', () => {
     const warehouse = (await post('/api/connections', { connectorType: 'postgres', displayName: 'PostgreSQL testbed', credential: { host: url.hostname, port: Number(url.port || 5432), database: url.pathname.slice(1), username: decodeURIComponent(url.username), password: decodeURIComponent(url.password), sslMode: 'disable' } })).json<{ connectionId: string }>().connectionId;
     expect((await post(`/api/connections/${warehouse}/test`, {})).statusCode).toBe(200);
     expect((await post(`/api/connections/${warehouse}/activate`, { scope: [] })).statusCode).toBe(200);
+    await runQueuedDiscoveries(tenantId);
     const dbt = (await post('/api/connections', { connectorType: 'dbt', displayName: 'Hospital dbt project', warehouseConnectionId: warehouse })).json<{ connectionId: string }>().connectionId;
     expect((await post(`/api/connections/${dbt}/dbt-artifacts`, { manifest, catalog })).statusCode).toBe(200);
     const tableau = (await post('/api/connections', { connectorType: 'tableau', displayName: truth.connectionName, warehouseConnectionId: warehouse })).json<{ connectionId: string }>().connectionId;

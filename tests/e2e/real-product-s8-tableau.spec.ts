@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { config } from 'dotenv';
 import { Pool } from 'pg';
 import { createTenant } from '../../scripts/tenant-create.js';
+import { activateAndWait } from '../support/e2e-profile.js';
 
 // S8: a Tableau workbook (.twb) added through Add connector, shown as a tool card, its worksheets listed in BI reports
 // and its data sources drawn in Lineage, checked against testbed/lineage-truth.json. No model calls.
@@ -20,7 +21,7 @@ async function connect(page: Page, data: Record<string, unknown>): Promise<strin
   const draft = await page.request.post('/api/connections', { data }); expect(draft.status()).toBe(201);
   const { connectionId } = await draft.json() as { connectionId: string };
   expect((await page.request.post(`/api/connections/${connectionId}/test`)).ok()).toBeTruthy();
-  expect((await page.request.post(`/api/connections/${connectionId}/activate`, { data: { scope: [] } })).ok()).toBeTruthy();
+  await activateAndWait(page, connectionId);
   return connectionId;
 }
 

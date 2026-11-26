@@ -8,6 +8,7 @@ import { runIdAgent } from './id-agent.js';
 import { captureDefinitions } from './definitions.js';
 export { analyseDefinition, captureDefinitions } from './definitions.js';
 import { readProfileState, recordFindings } from './findings.js';
+import { claimDiscovery, finishDiscovery, heartbeat, holdDiscovery, reportDiscovery, StaleDiscoveryJobError, type DiscoveryJob } from './discovery-jobs.js';
 import { parseStatementLineage, statementHash, writeStatementLineage, SqlParserUnavailable, type LineageDialect, type StatementLineage } from '@scaleinsyght/graph';
 
 export interface ScopeRule {
@@ -121,22 +122,33 @@ function canonicalJson(value: unknown): string {
 
 export async function runProfile(
   pool: Pool,
-  input: { tenantId: string; connectionId: string; connector: ReadOnlyConnector; jobType: 'discovery' | 'profile' | 'nightly'; scheduled?: boolean },
+  input: { tenantId: string; connectionId: string; connector: ReadOnlyConnector; jobType: 'discovery' | 'profile' | 'nightly'; scheduled?: boolean;
+    /** A claimed background discovery job (decision 57): progress is written as it goes and every write is fenced. */
+    job?: DiscoveryJob },
 ): Promise<ProfileSummary> {
   const started = performance.now();
   const scope = await readEffectiveScope(pool, input.tenantId, input.connectionId);
   const mode = input.jobType === 'nightly' ? 'nightly' : 'profile';
   const before = await readProfileState(pool, input.tenantId, input.connectionId);
-  const discovery: DiscoveryResult = await input.connector.discover(scope ? { mode, scope } : { mode });
+  const job = input.job;
+  const beat = job ? heartbeat(pool, job) : null;
+  const discovery: DiscoveryResult = await (async () => { try { return await input.connector.discover(scope ? { mode, scope } : { mode }); } catch (error) { beat?.stop(); throw error; } })();
   const profiles: Array<{ object: DiscoveryResult['objects'][number]; profile: ObjectProfile }> = [];
-  for (const object of discovery.objects) {
-    profiles.push({ object, profile: await input.connector.profile(object.assetKey, scope, mode) });
-  }
-  const jobId = randomUUID();
+  try {
+    if (job) await reportDiscovery(pool, job, { phase: 'profiling', listed: discovery.coverage.listed, planned: discovery.objects.length, profiled: 0 });
+    let reported = Date.now();
+    for (const object of discovery.objects) {
+      profiles.push({ object, profile: await input.connector.profile(object.assetKey, scope, mode) });
+      if (job && (beat?.lost())) throw new StaleDiscoveryJobError();
+      if (job && (Date.now() - reported >= 1000 || profiles.length === discovery.objects.length)) { await reportDiscovery(pool, job, { profiled: profiles.length }); reported = Date.now(); }
+    }
+  } finally { beat?.stop(); }
+  const jobId = job?.jobId ?? randomUUID();
   let createdVersions = 0;
 
   await withTenant(pool, input.tenantId, async (client) => {
-    await client.query(
+    if (job) await holdDiscovery(client, job);
+    else await client.query(
       `INSERT INTO profiler.jobs(tenant_id,job_id,connection_id,job_type,state,scheduled)
        VALUES($1,$2,$3,$4,'RUNNING',$5)`,
       [input.tenantId, jobId, input.connectionId, input.jobType, input.scheduled ?? false],
@@ -277,9 +289,10 @@ export async function runProfile(
       inaccessible: discovery.coverage.inaccessible,
     };
     await client.query(
-      `UPDATE profiler.jobs SET state='COMPLETED',state_version=state_version+1,listed_count=$3,profiled_count=$4,inaccessible_count=$5,updated_at=clock_timestamp()
+      // A background job stays RUNNING while relationships, lineage and findings are mapped; it completes after them.
+      `UPDATE profiler.jobs SET state=$6,phase=CASE WHEN $6='RUNNING' THEN 'relationships' ELSE phase END,state_version=state_version+1,listed_count=$3,profiled_count=$4,inaccessible_count=$5,updated_at=clock_timestamp()
        WHERE tenant_id=$1 AND job_id=$2`,
-      [input.tenantId, jobId, summary.listed, summary.profiled, summary.inaccessible],
+      [input.tenantId, jobId, summary.listed, summary.profiled, summary.inaccessible, job ? 'RUNNING' : 'COMPLETED'],
     );
     await client.query(
       `INSERT INTO profiler.events(tenant_id,job_id,sequence,event_type,safe_payload)
@@ -310,6 +323,7 @@ export async function runProfile(
   await withTenant(pool, input.tenantId, (client) => client.query(
     `INSERT INTO profiler.nightly_schedules(tenant_id,connection_id,next_run_at) SELECT $1,$2,clock_timestamp()+interval '1 day'
      WHERE EXISTS(SELECT 1 FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2 AND status='active') ON CONFLICT DO NOTHING`, [input.tenantId, input.connectionId]));
+  if (job && !(await finishDiscovery(pool, job, { state: 'COMPLETED' }))) throw new StaleDiscoveryJobError();
   return {
     ...(lineage ? { lineage } : {}),
     definitions,
@@ -533,8 +547,31 @@ export async function retireConnection(
 }
 
 export { runIdAgent, formatPattern, ID_FINGERPRINT_LIMIT } from './id-agent.js';
+export { claimDiscovery, finishDiscovery, latestDiscovery, queueDiscovery, StaleDiscoveryJobError, DISCOVERY_LEASE_MS, type DiscoveryJob } from './discovery-jobs.js';
 export { readProfileState, recordFindings, listFindings, decideFinding, ROW_CHANGE_SHARE, type FindingRow } from './findings.js';
 export { claimDueNightly } from './nightly.js';
 export { connectorForConnection } from './connector-for.js';
 
 export { getControls, saveControls, listControlChanges, decideControlChange } from './controls.js';
+
+/**
+ * Claims and runs one queued discovery job (decision 57). Returns false when nothing is queued. A failure is recorded on
+ * the job by code: FAILED before anything was written, PARTIAL when the profile was stored but relationships, lineage
+ * or findings could not be mapped. A job this worker no longer holds is left to its new owner.
+ */
+export async function runNextDiscovery(pool: Pool, connectorFor: (tenantId: string, connectionId: string) => Promise<ReadOnlyConnector>, onlyTenant?: string): Promise<boolean> {
+  const job = await claimDiscovery(pool, undefined, onlyTenant);
+  if (!job) return false;
+  let connector: ReadOnlyConnector | undefined;
+  try {
+    connector = await connectorFor(job.tenantId, job.connectionId);
+    await runProfile(pool, { tenantId: job.tenantId, connectionId: job.connectionId, connector, jobType: 'discovery', job });
+  } catch (error) {
+    if (error instanceof StaleDiscoveryJobError) return true;
+    const code = error instanceof Error && /^[a-z_]{1,64}$/.test(error.message) ? error.message : 'discovery_failed';
+    const stored = await withTenant(pool, job.tenantId, (client) => client.query<{ phase: string | null }>('SELECT phase FROM profiler.jobs WHERE tenant_id=$1 AND job_id=$2', [job.tenantId, job.jobId]));
+    await finishDiscovery(pool, job, { state: stored.rows[0]?.phase === 'relationships' ? 'PARTIAL' : 'FAILED', failureCode: code });
+    console.error('Discovery failed:', code);
+  } finally { await connector?.close?.(); }
+  return true;
+}

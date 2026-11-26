@@ -5,6 +5,7 @@ import { Pool } from 'pg';
 import { buildTestServer } from '../support/test-api.js';
 import { hashPassword } from '@scaleinsyght/api/server';
 import { withTenant } from '@scaleinsyght/db';
+import { runQueuedDiscoveries } from '../support/discovery.js';
 
 config({path:'.env'});
 const testUrl=(key:'DATABASE_URL'|'DATABASE_URL_MIGRATE')=>{const value=process.env[key];if(!value)throw new Error(`${key} is required; PostgreSQL credential contracts are never skipped`);const url=new URL(value);url.pathname=`/${process.env.SI_TEST_DATABASE??'si_test'}`;return url.toString();};
@@ -29,6 +30,10 @@ describe('contract 2 PostgreSQL credentials through the connection API',()=>{
     const stored=await withTenant(adminPool,tenantId,db=>db.query<{ciphertext:Buffer;nonce:Buffer;auth_tag:Buffer;display_name:string}>('SELECT s.ciphertext,s.nonce,s.auth_tag,c.display_name FROM registry.connection_secrets s JOIN registry.connections c USING(tenant_id,connection_id) WHERE s.tenant_id=$1 AND s.connection_id=$2',[tenantId,connectionId]));
     expect(stored.rows).toHaveLength(1);expect(stored.rows[0]!.ciphertext.toString()).not.toContain(password);expect(stored.rows[0]!.display_name).toBe('Hospital source');
     const tested=await server.inject({method:'POST',url:`/api/connections/${connectionId}/test`,headers:{cookie}});expect(tested.statusCode).toBe(200);expect(tested.json()).toMatchObject({ok:true,readOnly:true});
-    const activated=await server.inject({method:'POST',url:`/api/connections/${connectionId}/activate`,headers:{cookie},payload:{scope:[]}});expect(activated.statusCode).toBe(200);expect(activated.json<{profile:{profiled:number}}>().profile.profiled).toBeGreaterThan(0);
+    const activated=await server.inject({method:'POST',url:`/api/connections/${connectionId}/activate`,headers:{cookie},payload:{scope:[]}});expect(activated.statusCode).toBe(200);
+    // Activation queues the profile (decision 57); run it as the worker would, then read the result.
+    await runQueuedDiscoveries(tenantId);
+    const profile=(await server.inject({method:'GET',url:`/api/connections/${connectionId}/profile`,headers:{cookie}})).json<{profile:{state:string;profiled_count:number}}>().profile;
+    expect(profile.state).toBe('COMPLETED');expect(profile.profiled_count).toBeGreaterThan(0);
   });
 });

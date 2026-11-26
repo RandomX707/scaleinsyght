@@ -15,7 +15,7 @@ import { OpenAIModelGateway } from '@scaleinsyght/model-gateway';
 import { authorise } from '@scaleinsyght/policy';
 import { checkStepAgent } from '@scaleinsyght/registry';
 import { answerLineageRequest } from '@scaleinsyght/graph';
-import { claimDueNightly, connectorForConnection, checkQueryScope, OutOfScopeError, runProfile } from '@scaleinsyght/profiler';
+import { claimDueNightly, connectorForConnection, checkQueryScope, OutOfScopeError, runNextDiscovery, runProfile } from '@scaleinsyght/profiler';
 import { claimDueSchedule, markScheduleSlotSkipped, markScheduleSlotStarted, persistReportSnapshot, startScheduledReportRun } from '@scaleinsyght/reports';
 
 config({path:fileURLToPath(new URL('../../../.env',import.meta.url))});
@@ -106,10 +106,22 @@ async function processPlanning(claim: StepClaim): Promise<boolean> {
   });
   return true;
 }
+/** Profiling runs in its own loop beside run steps (decision 57): a discovery or nightly profile of a large source can
+ * take minutes, and must never hold up a question being answered. */
+async function profilingLoop():Promise<void>{
+ while(!stopping){
+  try{
+   if(await runNextDiscovery(pool,(tenantId,connectionId)=>connectorForConnection(pool,tenantId,connectionId,artifactStore??undefined)))continue;
+   if(await dispatchDueNightly())continue;
+  }catch(error){console.error('Profiling loop failed:',error instanceof Error&&/^[a-z_]+$/.test(error.message)?error.message:error);}
+  await new Promise(resolve=>setTimeout(resolve,500));
+ }
+}
+const profiling=profilingLoop();
 while(!stopping){
  try{
   const claim=await claimNextStep(pool,workerId,120_000);
-  if(!claim){if(await dispatchDueSchedule())continue;if(await dispatchDueNightly())continue;await new Promise(resolve=>setTimeout(resolve,500));continue;}
+  if(!claim){if(await dispatchDueSchedule())continue;await new Promise(resolve=>setTimeout(resolve,500));continue;}
   if(await processPlanning(claim))continue;
   const task=await withRunTenant(pool,claim.runId,async(client)=>{
     const result=await client.query<{step_order:number;source_group_id:string|null;plan:AnalyticPlan|null;principal_id:string;connector_type:string;display_name:string;ciphertext:Buffer|null;nonce:Buffer|null;auth_tag:Buffer|null}>(
@@ -268,4 +280,4 @@ while(!stopping){
   }
  }catch(error){console.error('Worker iteration failed:',error);process.exitCode=1;stopping=true;}
 }
-healthServer.close();await pool.end();
+await profiling;healthServer.close();await pool.end();

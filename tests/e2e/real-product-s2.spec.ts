@@ -6,6 +6,7 @@ import { Pool } from 'pg';
 import { withTenant } from '@scaleinsyght/db';
 import { createTenant } from '../../scripts/tenant-create.js';
 import { createDisposableSqlServerWriter } from '../support/sqlserver-writer.js';
+import { expectProfilePageCompletes } from '../support/e2e-profile.js';
 
 config({ path: '.env' });
 const tenantUrl = () => { const value = process.env.DATABASE_URL_MIGRATE; if (!value) throw new Error('DATABASE_URL_MIGRATE is required for local S2 acceptance.'); const url = new URL(value); url.pathname = `/${process.env.SI_TEST_DATABASE??'si_test'}`; return url.toString(); };
@@ -47,8 +48,12 @@ test('s2_empty_tenant_adds_real_sql_server_profiles_and_relationships', async ({
   await page.screenshot({ path: 'docs/acceptance/s2/add-sql-server.png', fullPage: true });
   await page.getByRole('button', { name: 'Test connection' }).click();
   await expect(page.getByRole('heading', { name: 'Choose scope' })).toBeVisible();
-  await page.getByRole('button', { name: 'Start profiling' }).click();
-  await expect(page.getByRole('heading', { name: 'Discovery complete' })).toBeVisible();
+  // A double click on Start profiling (bug 5): one activation, one discovery job, and the Profile page with live progress.
+  await page.getByRole('button', { name: 'Start profiling' }).dblclick();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect(page.getByRole('img', { name: /^Profiling, \d+% done$|^Profiling complete$/ })).toBeVisible({ timeout: 15_000 });
+  const profiledConnection = await expectProfilePageCompletes(page);
+  expect((await withTenant(adminPool, slug, (client) => client.query("SELECT 1 FROM profiler.jobs WHERE tenant_id=$1 AND connection_id=$2 AND job_type='discovery'", [slug, profiledConnection]))).rowCount).toBe(1);
   const response = await page.request.get('/api/connections'); expect(response.ok()).toBeTruthy();
   const connections = (await response.json() as { connections: Array<{ connectionId: string; connectorType: string; status: string; agentId: string | null }> }).connections;
   const source = connections.find((item) => item.status === 'active' && item.connectorType === 'sql_server'); expect(source).toBeTruthy();
@@ -119,8 +124,8 @@ test('s2_empty_tenant_adds_real_sql_server_profiles_and_relationships', async ({
   await page.getByLabel('SSL mode').selectOption('disable');
   await page.getByRole('button',{name:'Test connection'}).click();
   await page.getByRole('button',{name:'Start profiling'}).click();
-  await expect(page.getByRole('heading',{name:'Discovery complete'})).toBeVisible();
-  await page.getByRole('button',{name:'Close dialog'}).click();
+  await expectProfilePageCompletes(page);
+  await page.goto('/');
   type Captured={state:string;modelProvenance:Array<{purpose:string;model:string;inputTokens:number;outputTokens:number;typedPlan:unknown}>;answer:{answer:{claims:Array<{statement:string}>;evidence:Array<{locator:string}>;bySource:Array<{connectorType:string;value:number;rows?:Array<{group_value:string;value:number}>}>}}};
   async function askChecked(question:string,expectedSources:number,sql:RegExp,trigger?:()=>Promise<void>){
     const responsePromise=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/runs'&&response.request().method()==='POST',{timeout:15_000});

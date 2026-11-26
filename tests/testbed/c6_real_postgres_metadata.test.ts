@@ -6,6 +6,7 @@ import { Pool } from 'pg';
 import { withTenant } from '@scaleinsyght/db';
 import { hashPassword } from '@scaleinsyght/api/server';
 import { buildTestServer } from '../support/test-api.js';
+import { runQueuedDiscoveries } from '../support/discovery.js';
 
 config({path:'.env'});
 const testUrl=(key:'DATABASE_URL'|'DATABASE_URL_MIGRATE')=>{const value=process.env[key];if(!value)throw new Error(`${key} is required; metadata contracts are never skipped`);const url=new URL(value);url.pathname=`/${process.env.SI_TEST_DATABASE??'si_test'}`;return url.toString();};
@@ -26,7 +27,8 @@ describe('contract 6 real PostgreSQL metadata',()=>{
     expect(visibleTables).toBeGreaterThanOrEqual(7);
     const credentials={host:sourceUrl.hostname,port:Number(sourceUrl.port||5432),database:decodeURIComponent(sourceUrl.pathname.slice(1)),username:decodeURIComponent(sourceUrl.username),password:decodeURIComponent(sourceUrl.password),sslMode:'disable'};
     const draft=await server.inject({method:'POST',url:'/api/connections',headers:{cookie},payload:{connectorType:'postgres',displayName:'Hospital test source',credential:credentials}});expect(draft.statusCode).toBe(201);const id=draft.json<{connectionId:string}>().connectionId;
-    const active=await server.inject({method:'POST',url:`/api/connections/${id}/activate`,headers:{cookie},payload:{scope:[]}});expect(active.statusCode).toBe(200);expect(active.json<{profile:{profiled:number}}>().profile.profiled).toBeGreaterThan(0);
+    const active=await server.inject({method:'POST',url:`/api/connections/${id}/activate`,headers:{cookie},payload:{scope:[]}});expect(active.statusCode).toBe(200);
+    await runQueuedDiscoveries(tenantId);
     const profile=await server.inject({method:'GET',url:`/api/connections/${id}/profile`,headers:{cookie}});const classifications=profile.json<{classifications:Array<{qualified_name:string;sensitivity_tags:string[];sensitivity_evidence:Array<{detection:string}>}>}>().classifications;expect(classifications.flatMap(item=>item.sensitivity_evidence).filter(item=>item.detection==='inferred')).toEqual([]);expect(classifications.map(({qualified_name,sensitivity_tags})=>({qualified_name,sensitivity_tags}))).toEqual(expect.arrayContaining([{qualified_name:'public.patients.name',sensitivity_tags:['personal']},{qualified_name:'public.patients.date_of_birth',sensitivity_tags:['regulated']},{qualified_name:'public.patients.mrn',sensitivity_tags:['identifier']},{qualified_name:'public.patients.phone',sensitivity_tags:['personal']} ]));
     const er=await server.inject({method:'GET',url:`/api/connections/${id}/er`,headers:{cookie}});expect(er.statusCode).toBe(200);expect(er.json<{relationships:Array<{from_name:string;to_name:string;evidence_method:string}>}>().relationships).toEqual(expect.arrayContaining([expect.objectContaining({from_name:'public.encounters.patient_id',to_name:'public.patients.patient_id',evidence_method:'inferred'})]));
     const file=readFileSync('testbed/dictionary.csv');const imported=await server.inject({method:'POST',url:`/api/connections/${id}/dictionary/import`,headers:{cookie},payload:{format:'csv',filename:'dictionary.csv',contentBase64:file.toString('base64')}});expect(imported.statusCode).toBe(200);expect(imported.json()).toMatchObject({imported:4});

@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { config } from 'dotenv';
 import { Pool } from 'pg';
 import { createTenant } from '../../scripts/tenant-create.js';
+import { activateAndWait } from '../support/e2e-profile.js';
 
 // S4: lineage from parsed view SQL and an uploaded dbt project, checked against testbed/lineage-truth.json.
 config({ path: '.env' });
@@ -19,7 +20,7 @@ async function connect(page: Page, data: Record<string, unknown>) {
   const draft = await page.request.post('/api/connections', { data }); expect(draft.status()).toBe(201);
   const { connectionId } = await draft.json() as { connectionId: string };
   expect((await page.request.post(`/api/connections/${connectionId}/test`)).ok()).toBeTruthy();
-  expect((await page.request.post(`/api/connections/${connectionId}/activate`, { data: { scope: [] } })).ok()).toBeTruthy();
+  await activateAndWait(page, connectionId);
 }
 
 test('s4_dbt_upload_view_sql_and_lineage_graph_columns_gaps_and_chat_answers_match_truth', async ({ page }) => {

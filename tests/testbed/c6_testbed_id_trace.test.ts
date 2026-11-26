@@ -10,6 +10,7 @@ import { withTenant } from '@scaleinsyght/db';
 import { hashPassword } from '@scaleinsyght/api/server';
 import { buildTestServer } from '../support/test-api.js';
 import { startSqlParser } from '../support/sqlparse-server.js';
+import { runQueuedDiscoveries } from '../support/discovery.js';
 
 // S5: the ID agent fingerprints identifier values in PostgreSQL, SQL Server and the workbook and matches them across
 // systems. Checked against testbed/id-truth.json, measured directly in each testbed.
@@ -30,7 +31,8 @@ describe('S5 ID agent and ID trace on the testbed', () => {
     parser = await startSqlParser(8032);
     process.env.CONNECTION_SECRET_KEY = Buffer.alloc(32, 47).toString('base64');
     await withTenant(adminPool, tenantId, async (db) => { await db.query('INSERT INTO core.tenants(tenant_id,name) VALUES($1,$1)', [tenantId]); await db.query('INSERT INTO core.users(tenant_id,email,password_hash,display_name) VALUES($1,$2,$3,$4)', [tenantId, email, hashPassword(password), 'ID User']); });
-    server = await buildTestServer({ pool: appPool, sessionSecret: 'id-trace-contract-secret-0123456789abcdefghij', testAccounts: [{ tenantId, email }], artifactStore: new EncryptedArtifactStore(volume, Buffer.alloc(32, 23)) });
+    const store = new EncryptedArtifactStore(volume, Buffer.alloc(32, 23));
+    server = await buildTestServer({ pool: appPool, sessionSecret: 'id-trace-contract-secret-0123456789abcdefghij', testAccounts: [{ tenantId, email }], artifactStore: store });
     cookie = String((await server.inject({ method: 'POST', url: '/api/auth/login', payload: { email, password } })).headers['set-cookie']).split(';')[0]!;
     const pg = new URL(process.env.DATABASE_URL_TESTBED ?? ''); if (!pg.hostname || !process.env.SQLSERVER_TESTBED_PASSWORD) throw new Error('The PostgreSQL and SQL Server testbeds are required; run pnpm testbed:up.');
     for (const payload of [
@@ -43,6 +45,7 @@ describe('S5 ID agent and ID trace on the testbed', () => {
       if (payload.connectorType === 'excel') expect((await server.inject({ method: 'POST', url: `/api/connections/${id}/workbooks`, headers: { cookie, 'content-type': 'application/octet-stream' }, payload: readFileSync('testbed/excel/hospital-operations.xlsx') })).statusCode).toBe(201);
       expect((await server.inject({ method: 'POST', url: `/api/connections/${id}/test`, headers: { cookie } })).statusCode).toBe(200);
       expect((await server.inject({ method: 'POST', url: `/api/connections/${id}/activate`, headers: { cookie }, payload: { scope: [] } })).statusCode).toBe(200);
+      await runQueuedDiscoveries(tenantId, store);
     }
   });
   afterAll(async () => { await server?.close(); parser?.stop(); await appPool.end(); await adminPool.end(); rmSync(volume, { recursive: true, force: true }); delete process.env.CONNECTION_SECRET_KEY; });
