@@ -62,6 +62,7 @@ describe('profile failures and notes', () => {
       '1 object could not be read and was skipped. Check the login’s permissions, then run the profile again.',
     ]);
     expect(profileProgress({ state: 'COMPLETED', phase: 'done' }).notes).toEqual([]);
+    expect(profileProgress({ state: 'COMPLETED', phase: 'done', id_fields_skipped: 1 }).notes).toEqual(['1 ID field was too large to read in time and was skipped; earlier ID matches for it are kept.']);
   });
   it('gives the connector card an honest status and offers a profile only when none is open', () => {
     expect(profileStatus({ state: null })).toMatchObject({ badge: 'Profile needed', line: 'Last profile: not run yet', canRun: true });
