@@ -123,7 +123,8 @@ describe('S6 nightly refresh, findings and review', () => {
     const sensitive = (await findings()).findings.find((item) => item.kind === 'sensitive_column')!;
     expect((await server.inject({ method: 'POST', url: `/api/findings/${sensitive.findingId}/decision`, headers: { cookie }, payload: { decision: 'rejected' } })).json()).toEqual({ status: 'rejected' });
     expect((await server.inject({ method: 'POST', url: `/api/findings/${sensitive.findingId}/decision`, headers: { cookie }, payload: { decision: 'approved' } })).statusCode).toBe(409);
-    expect((await server.inject({ method: 'POST', url: `/api/connections/${connectionId}/discover`, headers: { cookie }, payload: { jobType: 'profile' } })).statusCode).toBe(200);
+    expect((await server.inject({ method: 'POST', url: `/api/connections/${connectionId}/discover`, headers: { cookie }, payload: { jobType: 'profile' } })).statusCode).toBe(202);
+    await runQueuedDiscoveries(tenantId);
     const stored = await withTenant(adminPool, tenantId, async (db) => (await db.query<{ tags: string[]; decision: string; decided_by: string | null }>(
       `SELECT p.sensitivity_tags AS tags,r.decision,r.decided_by::text FROM graph.assets a JOIN profiler.tag_reviews r ON r.tenant_id=a.tenant_id AND r.asset_id=a.asset_id
        JOIN LATERAL(SELECT sensitivity_tags FROM profiler.field_profiles WHERE tenant_id=a.tenant_id AND asset_id=a.asset_id ORDER BY profile_version DESC LIMIT 1)p ON true

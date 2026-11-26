@@ -7,7 +7,8 @@ import { withTenant } from '@scaleinsyght/db';
  * claim_token is the fencing token: it rises on every claim, and every write checks it, so a worker whose lease was
  * lost cannot overwrite the job. The tenant comes from the stored job row, never from a payload.
  */
-export type DiscoveryJob = { tenantId: string; connectionId: string; jobId: string; token: number };
+export type ProfileJobType = 'discovery' | 'profile' | 'nightly';
+export type DiscoveryJob = { tenantId: string; connectionId: string; jobId: string; token: number; jobType?: ProfileJobType };
 export type JobPhase = 'queued' | 'listing' | 'profiling' | 'relationships' | 'done';
 export const DISCOVERY_LEASE_MS = Number(process.env.DISCOVERY_LEASE_MS ?? 120_000);
 /** A job whose worker died this many times is failed rather than retried forever. */
@@ -17,10 +18,22 @@ export class StaleDiscoveryJobError extends Error { constructor() { super('disco
 
 /** Queues the discovery job for a connection inside the caller's tenant transaction; returns the open job. */
 export async function queueDiscovery(client: PoolClient, tenantId: string, connectionId: string): Promise<{ jobId: string; state: string }> {
-  await client.query(
-    `INSERT INTO profiler.jobs(tenant_id,connection_id,job_type,state,phase) VALUES($1,$2,'discovery','QUEUED','queued')
-     ON CONFLICT (tenant_id,connection_id) WHERE job_type='discovery' AND state IN ('QUEUED','RUNNING') DO NOTHING`, [tenantId, connectionId]);
-  return (await latestDiscovery(client, tenantId, connectionId))!;
+  return queueProfileJob(client, tenantId, connectionId, 'discovery');
+}
+
+/** K10: queues any profile (discovery, profile now, nightly) as a background job. A connection has at most one open
+ * background job; if one is already queued or running, that job is returned instead of a second one. */
+export async function queueProfileJob(client: PoolClient, tenantId: string, connectionId: string, jobType: ProfileJobType, scheduled = false): Promise<{ jobId: string; state: string; jobType: string; queued: boolean }> {
+  const inserted = await client.query<{ job_id: string }>(
+    `INSERT INTO profiler.jobs(tenant_id,connection_id,job_type,state,phase,scheduled) VALUES($1,$2,$3,'QUEUED','queued',$4)
+     ON CONFLICT (tenant_id,connection_id) WHERE phase IS NOT NULL AND state IN ('QUEUED','RUNNING') DO NOTHING RETURNING job_id`, [tenantId, connectionId, jobType, scheduled]);
+  const open = (await client.query<{ job_id: string; state: string; job_type: string }>(
+    `SELECT job_id,state,job_type FROM profiler.jobs WHERE tenant_id=$1 AND connection_id=$2 AND phase IS NOT NULL AND state IN ('QUEUED','RUNNING') ORDER BY created_at DESC LIMIT 1`, [tenantId, connectionId])).rows[0];
+  if (!open) { // queued and already finished between the two statements
+    const row = (await client.query<{ job_id: string; state: string; job_type: string }>('SELECT job_id,state,job_type FROM profiler.jobs WHERE tenant_id=$1 AND job_id=$2', [tenantId, inserted.rows[0]!.job_id])).rows[0]!;
+    return { jobId: row.job_id, state: row.state, jobType: row.job_type, queued: true };
+  }
+  return { jobId: open.job_id, state: open.state, jobType: open.job_type, queued: Boolean(inserted.rowCount) };
 }
 
 export async function latestDiscovery(client: PoolClient, tenantId: string, connectionId: string): Promise<{ jobId: string; state: string } | null> {
@@ -37,9 +50,9 @@ export async function claimDiscovery(pool: Pool, leaseMs = DISCOVERY_LEASE_MS, o
     await client.query('RESET app.tenant_id'); await client.query('BEGIN');
     await client.query("SELECT set_config('app.worker_claim','enabled',true)");
     for (;;) {
-      const due = await client.query<{ tenant_id: string; job_id: string; connection_id: string; claim_token: number }>(
-        `SELECT tenant_id,job_id,connection_id,claim_token FROM profiler.jobs
-         WHERE job_type='discovery' AND (state='QUEUED' OR (state='RUNNING' AND lease_expires_at<clock_timestamp())) AND ($1::text IS NULL OR tenant_id=$1)
+      const due = await client.query<{ tenant_id: string; job_id: string; connection_id: string; claim_token: number; job_type: ProfileJobType }>(
+        `SELECT tenant_id,job_id,connection_id,claim_token,job_type FROM profiler.jobs
+         WHERE phase IS NOT NULL AND (state='QUEUED' OR (state='RUNNING' AND lease_expires_at<clock_timestamp())) AND ($1::text IS NULL OR tenant_id=$1)
          ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1`, [onlyTenant ?? null]);
       const row = due.rows[0];
       if (!row) { await client.query('COMMIT'); return null; }
@@ -51,7 +64,7 @@ export async function claimDiscovery(pool: Pool, leaseMs = DISCOVERY_LEASE_MS, o
         `UPDATE profiler.jobs SET state='RUNNING',phase='listing',claim_token=claim_token+1,lease_expires_at=clock_timestamp()+make_interval(secs=>$3::double precision/1000),updated_at=clock_timestamp()
          WHERE tenant_id=$1 AND job_id=$2 RETURNING claim_token`, [row.tenant_id, row.job_id, leaseMs]);
       await client.query('COMMIT');
-      return { tenantId: row.tenant_id, connectionId: row.connection_id, jobId: row.job_id, token: claimed.rows[0]!.claim_token };
+      return { tenantId: row.tenant_id, connectionId: row.connection_id, jobId: row.job_id, token: claimed.rows[0]!.claim_token, jobType: row.job_type };
     }
   } catch (error) { await client.query('ROLLBACK').catch(() => undefined); throw error; }
   finally { client.release(); }

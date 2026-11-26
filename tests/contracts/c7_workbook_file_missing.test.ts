@@ -37,7 +37,9 @@ describe('contract 7 missing workbook file', () => {
 
   it('c7_refresh_with_a_missing_workbook_file_asks_for_it_again_instead_of_failing', async () => {
     const refresh = () => server.inject({ method: 'POST', url: `/api/connections/${connectionId}/discover`, headers: { cookie }, payload: { jobType: 'nightly' } });
-    expect((await refresh()).statusCode).toBe(200);
+    // K10: a refresh is queued for the worker (202); the missing-file check still answers at once (409).
+    expect((await refresh()).statusCode).toBe(202);
+    await runQueuedDiscoveries(tenantId, store);
     const directory = join(volume, store.tenantDirectory(tenantId));
     for (const file of readdirSync(directory)) rmSync(join(directory, file));
     const missing = await refresh();

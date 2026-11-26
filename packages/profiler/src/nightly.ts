@@ -1,4 +1,6 @@
 import type { Pool } from 'pg';
+import { withTenant } from '@scaleinsyght/db';
+import { queueProfileJob } from './discovery-jobs.js';
 
 /** Claims one connection whose nightly refresh is due, across tenants, and moves its next run a day on. The caller runs
  * the refresh under the claimed tenant. Claimed with FOR UPDATE SKIP LOCKED so two workers never refresh the same
@@ -18,4 +20,13 @@ export async function claimDueNightly(pool: Pool, intervalHours = Number(process
     return { tenantId: row.tenant_id, connectionId: row.connection_id };
   } catch (error) { await client.query('ROLLBACK').catch(() => undefined); throw error; }
   finally { client.release(); }
+}
+
+/** K10: claims one due nightly refresh and queues it as a background job, as the worker does every loop. Returns null
+ * when nothing is due; queued is false when the connection already had a profile queued or running. */
+export async function queueDueNightly(pool: Pool, intervalHours?: number): Promise<{ tenantId: string; connectionId: string; jobId: string; state: string; queued: boolean } | null> {
+  const due = await claimDueNightly(pool, intervalHours);
+  if (!due) return null;
+  const job = await withTenant(pool, due.tenantId, (client) => queueProfileJob(client, due.tenantId, due.connectionId, 'nightly', true));
+  return { ...due, jobId: job.jobId, state: job.state, queued: job.queued };
 }

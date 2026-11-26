@@ -61,7 +61,11 @@ describe('contract 6 real PostgreSQL source connector',()=>{
           (SELECT count(*)::int FROM graph.assertions WHERE tenant_id=$1 AND collector_version='phase5b-dbt-manifest-v1') AS assertions`,[tenantId,dbtConnectionId]));
       expect(dbtCounts.rows[0]).toEqual({assets:1,flows:1,assertions:1});
       const nightly=await server.inject({method:'POST',url:`/api/connections/${connectionId}/discover`,headers:{cookie},payload:{jobType:'nightly'}});
-      expect(nightly.statusCode).toBe(200);expect(nightly.json()).toMatchObject({listed:5,profiled:0,unchanged:5});
+      // K10: queued for the worker; the refresh then finds all 5 tables unchanged and profiles none.
+      expect(nightly.statusCode).toBe(202);const nightlyJob=nightly.json<{jobId:string}>().jobId;
+      await runQueuedDiscoveries(tenantId);
+      const outcome=await withTenant(migratePool,tenantId,async(db)=>(await db.query<{state:string;listed_count:number;profiled_count:number;skipped:number}>("SELECT j.state,j.listed_count,j.profiled_count,(SELECT count(*)::int FROM profiler.job_objects o WHERE o.tenant_id=j.tenant_id AND o.job_id=j.job_id AND o.state='SKIPPED') AS skipped FROM profiler.jobs j WHERE j.tenant_id=$1 AND j.job_id=$2",[tenantId,nightlyJob])).rows[0]);
+      expect(outcome).toEqual({state:'COMPLETED',listed_count:5,profiled_count:0,skipped:5});
       await source.connect();
       const privileges=await source.query<{database_create:boolean;schema_create:boolean;table_insert:boolean;table_truncate:boolean;table_owner:boolean}>(`SELECT has_database_privilege(current_user,current_database(),'CREATE') AS database_create,
         has_schema_privilege(current_user,'public','CREATE') AS schema_create,

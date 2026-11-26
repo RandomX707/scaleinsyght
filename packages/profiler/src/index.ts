@@ -587,9 +587,10 @@ export async function retireConnection(
 
 export { runIdAgent, formatPattern, ID_FINGERPRINT_LIMIT } from './id-agent.js';
 export { isObjectError, sourceErrorCode } from './source-errors.js';
+export { queueProfileJob, type ProfileJobType } from './discovery-jobs.js';
 export { claimDiscovery, finishDiscovery, latestDiscovery, queueDiscovery, StaleDiscoveryJobError, DISCOVERY_LEASE_MS, type DiscoveryJob } from './discovery-jobs.js';
 export { readProfileState, recordFindings, listFindings, decideFinding, ROW_CHANGE_SHARE, type FindingRow } from './findings.js';
-export { claimDueNightly } from './nightly.js';
+export { claimDueNightly, queueDueNightly } from './nightly.js';
 export { connectorForConnection } from './connector-for.js';
 
 export { getControls, saveControls, listControlChanges, decideControlChange } from './controls.js';
@@ -605,14 +606,14 @@ export async function runNextDiscovery(pool: Pool, connectorFor: (tenantId: stri
   let connector: ReadOnlyConnector | undefined;
   try {
     connector = await connectorFor(job.tenantId, job.connectionId);
-    await runProfile(pool, { tenantId: job.tenantId, connectionId: job.connectionId, connector, jobType: 'discovery', job });
+    await runProfile(pool, { tenantId: job.tenantId, connectionId: job.connectionId, connector, jobType: job.jobType ?? 'discovery', job });
   } catch (error) {
     if (error instanceof StaleDiscoveryJobError) return true;
     const code = sourceErrorCode(error);
     const stored = await withTenant(pool, job.tenantId, (client) => client.query<{ phase: string | null }>('SELECT phase FROM profiler.jobs WHERE tenant_id=$1 AND job_id=$2', [job.tenantId, job.jobId]));
     await finishDiscovery(pool, job, { state: stored.rows[0]?.phase === 'relationships' ? 'PARTIAL' : 'FAILED', failureCode: code });
     // The reason code and connection only: driver messages can carry host or user names.
-    console.error(`Discovery failed for connection ${job.connectionId} (tenant ${job.tenantId}): ${code}`);
+    console.error(`Profile (${job.jobType ?? 'discovery'}) failed for connection ${job.connectionId} (tenant ${job.tenantId}): ${code}`);
   } finally { await connector?.close?.(); }
   return true;
 }

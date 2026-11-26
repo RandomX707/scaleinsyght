@@ -5,7 +5,7 @@ import { config } from 'dotenv';
 import { Pool } from 'pg';
 import { withTenant } from '@scaleinsyght/db';
 import { createTenant } from '../../scripts/tenant-create.js';
-import { expectProfilePageCompletes } from '../support/e2e-profile.js';
+import { expectProfilePageCompletes, waitForProfile } from '../support/e2e-profile.js';
 
 config({ path: '.env' });
 const tenantUrl = () => { const value = process.env.DATABASE_URL_MIGRATE; if (!value) throw new Error('DATABASE_URL_MIGRATE is required for local S3 acceptance.'); const url = new URL(value); url.pathname = `/${process.env.SI_TEST_DATABASE??'si_test'}`; return url.toString(); };
@@ -69,13 +69,15 @@ test('s3_empty_tenant_uploads_workbook_profiles_and_answers_with_evidence', asyn
 
   const refresh = await page.request.post(`/api/connections/${connectionId}/discover`, { data: {jobType:'nightly'} });
   expect(refresh.ok(), await refresh.text()).toBeTruthy();
-  const { jobId, listed: refreshedSheets, findings } = await refresh.json() as {jobId:string;listed:number;findings:number};
-  expect(refreshedSheets).toBe(truth.sheets.length);
+  // K10: the refresh is queued for the worker; wait for it, then read what it listed.
+  const { jobId } = await refresh.json() as {jobId:string};
+  await waitForProfile(page, connectionId);
+  const refreshed = (await (await page.request.get(`/api/connections/${connectionId}/profile`)).json() as {profile:{job_id:string;listed_count:number}}).profile;
+  expect(refreshed).toMatchObject({ job_id: jobId, listed_count: truth.sheets.length });
   const { findings: recorded } = await (await page.request.get('/api/findings')).json() as {
     findings: Array<{jobId:string;connectionId:string;kind:string}>;
   };
   const workbookFindings = recorded.filter(finding => finding.jobId === jobId && finding.connectionId === connectionId);
-  expect(workbookFindings).toHaveLength(findings);
   expect(workbookFindings.filter(finding => ['schema_change','new_tables','data_anomaly'].includes(finding.kind))).toEqual([]);
 
   // Profile: every sheet profiled; sensitive columns classified from the header notes.
