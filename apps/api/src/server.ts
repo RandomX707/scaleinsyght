@@ -1150,17 +1150,19 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const result=await withTenant(options.pool,current.tenantId,async(client)=>client.query(
       `SELECT c.connection_id,c.connector_type,c.status,c.source_ref,c.display_name,c.connector_agent_id,c.dbt_import,w.display_name AS warehouse_name,
-        (SELECT state FROM profiler.jobs j WHERE j.tenant_id=c.tenant_id AND j.connection_id=c.connection_id ORDER BY created_at DESC LIMIT 1) AS last_job_state,
+        lj.state AS last_job_state,lj.updated_at AS last_job_at,lj.failure_code AS last_job_failure,lj.failed_count AS last_job_failed,lj.limited_count AS last_job_limited,
         CASE WHEN c.connector_type='tableau' THEN (SELECT jsonb_build_object('importedAt',e.captured_at,'datasources',(e.safe_metadata->>'datasources')::int,'worksheets',(e.safe_metadata->>'worksheets')::int)
           FROM graph.evidence e WHERE e.tenant_id=c.tenant_id AND e.evidence_type='tableau_workbook' AND e.safe_metadata->>'connection_id'=c.connection_id::text ORDER BY e.captured_at DESC LIMIT 1) END AS tableau_import
-       FROM registry.connections c LEFT JOIN registry.connections w ON w.tenant_id=c.tenant_id AND c.source_ref='warehouse:'||w.connection_id::text WHERE c.tenant_id=$1 ORDER BY c.created_at DESC`,[current.tenantId]));
+       FROM registry.connections c LEFT JOIN registry.connections w ON w.tenant_id=c.tenant_id AND c.source_ref='warehouse:'||w.connection_id::text
+       LEFT JOIN LATERAL (SELECT state,updated_at,failure_code,failed_count,limited_count FROM profiler.jobs j WHERE j.tenant_id=c.tenant_id AND j.connection_id=c.connection_id ORDER BY created_at DESC LIMIT 1) lj ON true
+       WHERE c.tenant_id=$1 ORDER BY c.created_at DESC`,[current.tenantId]));
     return reply.send({connections:result.rows.map((row)=>({
       connectionId:row.connection_id,
       connectorType:row.connector_type,
       displayName:row.display_name,
       status:row.status,
       agentId:row.connector_agent_id,
-      lastJobState:row.last_job_state,
+      lastJobState:row.last_job_state,lastJobAt:row.last_job_at,lastJobFailure:row.last_job_failure,lastJobFailed:row.last_job_failed,lastJobLimited:row.last_job_limited,
       dbtImport:row.dbt_import,warehouseName:row.warehouse_name,tableauImport:row.tableau_import??null,
     }))});
   });
@@ -1312,6 +1314,18 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const job=await withTenant(options.pool,current.tenantId,client=>queueDiscovery(client,current.tenantId,activated.connectionId));
     return reply.send({connectionId:activated.connectionId,agentId:activated.agentId,sourceName:row.display_name,jobId:job.jobId,jobState:job.state});
   });
+  // Bug 6: run (or retry) the profile of an active connection in the background. An open job is returned, never doubled.
+  app.post<{Params:{connectionId:string}}>('/api/connections/:connectionId/profile-jobs',async(request,reply)=>{
+    const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
+    if(!/^[0-9a-f-]{36}$/i.test(request.params.connectionId))return reply.code(404).send({error:'connection_not_found'});
+    const job=await withTenant(options.pool,current.tenantId,async(client)=>{
+      const row=(await client.query<{status:string;connector_type:string}>('SELECT status,connector_type FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2',[current.tenantId,request.params.connectionId])).rows[0];
+      if(!row||row.status!=='active'||!['postgres','sql_server','excel'].includes(row.connector_type))return null;
+      return queueDiscovery(client,current.tenantId,request.params.connectionId);
+    });
+    if(!job)return reply.code(404).send({error:'connection_not_found'});
+    return reply.code(202).send({jobId:job.jobId,jobState:job.state});
+  });
   app.post<{Params:{connectionId:string};Body:{jobType?:'profile'|'nightly'}}>('/api/connections/:connectionId/discover',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const connection=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{source_ref:string|null;status:string}>(
@@ -1327,7 +1341,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
   app.get<{Params:{connectionId:string}}>('/api/connections/:connectionId/profile',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const result=await withTenant(options.pool,current.tenantId,async(client)=>client.query(
-      `SELECT j.job_id,j.job_type,j.state,j.phase,j.planned_count,j.failure_code,j.listed_count,j.profiled_count,j.inaccessible_count,j.created_at,
+      `SELECT j.job_id,j.job_type,j.state,j.phase,j.planned_count,j.failure_code,j.limited_count,j.failed_count,j.listed_count,j.profiled_count,j.inaccessible_count,j.created_at,j.updated_at,
         count(DISTINCT a.asset_id)::int AS dataset_count,count(DISTINCT f.asset_id)::int AS field_count
        FROM profiler.jobs j LEFT JOIN graph.assets a ON a.tenant_id=j.tenant_id AND a.source_id=j.connection_id AND a.asset_type='dataset'
        LEFT JOIN graph.assets f ON f.tenant_id=j.tenant_id AND f.source_id=j.connection_id AND f.asset_type='field'
@@ -1482,7 +1496,9 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
   });
   app.delete<{Params:{connectionId:string}}>('/api/connections/:connectionId',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
-    await retireConnection(options.pool,options.artifactStore,{tenantId:current.tenantId,connectionId:request.params.connectionId,principalId:current.userId});
+    if(!/^[0-9a-f-]{36}$/i.test(request.params.connectionId))return reply.code(404).send({error:'connection_not_found'});
+    try{await retireConnection(options.pool,options.artifactStore,{tenantId:current.tenantId,connectionId:request.params.connectionId,principalId:current.userId});}
+    catch(error){if(error instanceof Error&&error.message==='active_connection_not_found')return reply.code(404).send({error:'connection_not_found'});throw error;}
     return reply.code(204).send();
   });
   app.get('/api/findings',async(request,reply)=>{

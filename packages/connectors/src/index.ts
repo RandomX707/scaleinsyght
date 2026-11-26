@@ -27,6 +27,8 @@ export interface ObjectProfile {
   assetKey: string;
   qualifiedName: string;
   version: string;
+  /** Set when the source ran out of time on this object: columns and row count are known, samples and statistics are not. */
+  limited?: 'timeout';
   columns: Array<{
     name: string;
     /** Original column text when it differs from the SQL identifier (for example a workbook header). */

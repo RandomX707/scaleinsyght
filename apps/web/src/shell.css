@@ -424,3 +424,6 @@ h3 { font-size: 14px; line-height: 1.3; }
 .home-notice small { color: var(--primary); font-weight: 600; }
 .home-updates-more { justify-self: start; }
 .notification-panel .home-notice { padding: 10px 0; border-bottom: 1px solid var(--line); }
+.profile-failure { display: grid; gap: 8px; justify-items: start; }
+.profile-failure .error { margin: 0; }
+.profile-notes { margin: 4px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px; display: grid; gap: 4px; }

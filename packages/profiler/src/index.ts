@@ -8,6 +8,7 @@ import { runIdAgent } from './id-agent.js';
 import { captureDefinitions } from './definitions.js';
 export { analyseDefinition, captureDefinitions } from './definitions.js';
 import { readProfileState, recordFindings } from './findings.js';
+import { isObjectError, sourceErrorCode } from './source-errors.js';
 import { claimDiscovery, finishDiscovery, heartbeat, holdDiscovery, reportDiscovery, StaleDiscoveryJobError, type DiscoveryJob } from './discovery-jobs.js';
 import { parseStatementLineage, statementHash, writeStatementLineage, SqlParserUnavailable, type LineageDialect, type StatementLineage } from '@scaleinsyght/graph';
 
@@ -134,14 +135,20 @@ export async function runProfile(
   const beat = job ? heartbeat(pool, job) : null;
   const discovery: DiscoveryResult = await (async () => { try { return await input.connector.discover(scope ? { mode, scope } : { mode }); } catch (error) { beat?.stop(); throw error; } })();
   const profiles: Array<{ object: DiscoveryResult['objects'][number]; profile: ObjectProfile }> = [];
+  const failed = new Map<string, string>();
   try {
     if (job) await reportDiscovery(pool, job, { phase: 'profiling', listed: discovery.coverage.listed, planned: discovery.objects.length, profiled: 0 });
     let reported = Date.now();
     for (const object of discovery.objects) {
-      profiles.push({ object, profile: await input.connector.profile(object.assetKey, scope, mode) });
+      // One slow or unreadable object does not fail the profile (bug 6): it is recorded and the others carry on. A
+      // connection-level failure (login, SSL, unreachable) still stops the job with its reason.
+      try { profiles.push({ object, profile: await input.connector.profile(object.assetKey, scope, mode) }); }
+      catch (error) { const code = sourceErrorCode(error); if (!isObjectError(code)) throw error; failed.set(object.qualifiedName, code); }
       if (job && (beat?.lost())) throw new StaleDiscoveryJobError();
-      if (job && (Date.now() - reported >= 1000 || profiles.length === discovery.objects.length)) { await reportDiscovery(pool, job, { profiled: profiles.length }); reported = Date.now(); }
+      const done = profiles.length + failed.size;
+      if (job && (Date.now() - reported >= 1000 || done === discovery.objects.length)) { await reportDiscovery(pool, job, { profiled: done }); reported = Date.now(); }
     }
+    if (discovery.objects.length && !profiles.length) throw new Error([...failed.values()][0] ?? 'discovery_failed');
   } finally { beat?.stop(); }
   const jobId = job?.jobId ?? randomUUID();
   let createdVersions = 0;
@@ -160,7 +167,9 @@ export async function runProfile(
     );
 
     const objectStates = [
-      ...discovery.objects.map((object) => ({ name: object.qualifiedName, type: object.type, mode: 'profile' as const, state: 'COMPLETED' as const, assetKey: object.assetKey })),
+      ...discovery.objects.map((object) => failed.has(object.qualifiedName)
+        ? { name: object.qualifiedName, type: object.type, mode: 'profile' as const, state: 'FAILED' as const, assetKey: null }
+        : { name: object.qualifiedName, type: object.type, mode: 'profile' as const, state: 'COMPLETED' as const, assetKey: object.assetKey }),
       ...discovery.unchangedObjects.map((object) => ({ name: object.qualifiedName, type: object.type, mode: 'profile' as const, state: 'SKIPPED' as const, assetKey: object.assetKey })),
       ...discovery.listOnlyObjects.map((object) => ({ name: object.qualifiedName, type: object.type, mode: 'list_only' as const, state: 'SKIPPED' as const, assetKey: null })),
       ...discovery.excludedObjects.map((object) => ({ name: object.qualifiedName, type: object.type, mode: 'exclude' as const, state: 'SKIPPED' as const, assetKey: null })),
@@ -287,12 +296,14 @@ export async function runProfile(
       list_only: discovery.listOnlyObjects.length,
       excluded: discovery.excludedObjects.length,
       inaccessible: discovery.coverage.inaccessible,
+      limited: profiles.filter(({ profile }) => profile.limited).length,
+      failed: failed.size,
     };
     await client.query(
       // A background job stays RUNNING while relationships, lineage and findings are mapped; it completes after them.
-      `UPDATE profiler.jobs SET state=$6,phase=CASE WHEN $6='RUNNING' THEN 'relationships' ELSE phase END,state_version=state_version+1,listed_count=$3,profiled_count=$4,inaccessible_count=$5,updated_at=clock_timestamp()
+      `UPDATE profiler.jobs SET state=$6,phase=CASE WHEN $6='RUNNING' THEN 'relationships' ELSE phase END,state_version=state_version+1,listed_count=$3,profiled_count=$4,inaccessible_count=$5,limited_count=$7,failed_count=$8,updated_at=clock_timestamp()
        WHERE tenant_id=$1 AND job_id=$2`,
-      [input.tenantId, jobId, summary.listed, summary.profiled, summary.inaccessible, job ? 'RUNNING' : 'COMPLETED'],
+      [input.tenantId, jobId, summary.listed, summary.profiled, summary.inaccessible, job ? 'RUNNING' : 'COMPLETED', summary.limited, summary.failed],
     );
     await client.query(
       `INSERT INTO profiler.events(tenant_id,job_id,sequence,event_type,safe_payload)
@@ -554,6 +565,8 @@ export async function retireConnection(
        WHERE a.tenant_id=$1 AND a.relationship_id=r.relationship_id AND source.source_id=$2`,
       [input.tenantId, input.connectionId],
     );
+    // An open profile job of a removed connection is cancelled; its worker loses the job at its next fenced write.
+    await client.query("UPDATE profiler.jobs SET state='CANCELLED',lease_expires_at=NULL,updated_at=clock_timestamp() WHERE tenant_id=$1 AND connection_id=$2 AND state IN ('QUEUED','RUNNING')", [input.tenantId, input.connectionId]);
     await client.query("UPDATE registry.connections SET status='retired' WHERE tenant_id=$1 AND connection_id=$2", [input.tenantId, input.connectionId]);
     if (row.connector_agent_id) {
       await client.query("UPDATE registry.agents SET status='retired' WHERE tenant_id=$1 AND agent_id=$2", [input.tenantId, row.connector_agent_id]);
@@ -573,6 +586,7 @@ export async function retireConnection(
 }
 
 export { runIdAgent, formatPattern, ID_FINGERPRINT_LIMIT } from './id-agent.js';
+export { isObjectError, sourceErrorCode } from './source-errors.js';
 export { claimDiscovery, finishDiscovery, latestDiscovery, queueDiscovery, StaleDiscoveryJobError, DISCOVERY_LEASE_MS, type DiscoveryJob } from './discovery-jobs.js';
 export { readProfileState, recordFindings, listFindings, decideFinding, ROW_CHANGE_SHARE, type FindingRow } from './findings.js';
 export { claimDueNightly } from './nightly.js';
@@ -594,10 +608,11 @@ export async function runNextDiscovery(pool: Pool, connectorFor: (tenantId: stri
     await runProfile(pool, { tenantId: job.tenantId, connectionId: job.connectionId, connector, jobType: 'discovery', job });
   } catch (error) {
     if (error instanceof StaleDiscoveryJobError) return true;
-    const code = error instanceof Error && /^[a-z_]{1,64}$/.test(error.message) ? error.message : 'discovery_failed';
+    const code = sourceErrorCode(error);
     const stored = await withTenant(pool, job.tenantId, (client) => client.query<{ phase: string | null }>('SELECT phase FROM profiler.jobs WHERE tenant_id=$1 AND job_id=$2', [job.tenantId, job.jobId]));
     await finishDiscovery(pool, job, { state: stored.rows[0]?.phase === 'relationships' ? 'PARTIAL' : 'FAILED', failureCode: code });
-    console.error('Discovery failed:', code);
+    // The reason code and connection only: driver messages can carry host or user names.
+    console.error(`Discovery failed for connection ${job.connectionId} (tenant ${job.tenantId}): ${code}`);
   } finally { await connector?.close?.(); }
   return true;
 }

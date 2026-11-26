@@ -117,17 +117,23 @@ export class PostgresConnector implements ReadOnlyConnector {
     const structural=columns.map(({column_name,data_type,is_nullable,comment})=>({column_name,data_type,is_nullable,comment}));
     // Bounded text samples feed the sensitivity detector only; they are discarded here and never stored or sent to a model (decision 41).
     const sampled=new Map<string,string[]>();
-    for(const column of columns)if(rowCount!==null&&!columnScope(scope,qualifiedName,column.column_name)&&['text','character varying','character'].includes(column.data_type)){const rows=await this.pool.query<{v:string}>(`SELECT ${quoteIdentifier(column.column_name)}::text AS v FROM ${quoteIdentifier(table.schema_name)}.${quoteIdentifier(table.table_name)} WHERE ${quoteIdentifier(column.column_name)} IS NOT NULL LIMIT 200`);sampled.set(column.column_name,rows.rows.map(row=>row.v));}
+    // A sampling or statistics query that runs out of time on a large table does not fail the profile (bug 6): the table
+    // keeps its columns, row count and declared tags, but gets no samples or statistics, and is reported as limited.
+    // Statistics are skipped whenever sampling was cut short, so an unsampled column can never get statistics (contract 7).
+    let limited:'timeout'|undefined;
+    for(const column of columns)if(!limited&&rowCount!==null&&!columnScope(scope,qualifiedName,column.column_name)&&['text','character varying','character'].includes(column.data_type)){let rows:{rows:Array<{v:string}>};try{rows=await this.pool.query<{v:string}>(`SELECT ${quoteIdentifier(column.column_name)}::text AS v FROM ${quoteIdentifier(table.schema_name)}.${quoteIdentifier(table.table_name)} WHERE ${quoteIdentifier(column.column_name)} IS NOT NULL LIMIT 200`);}catch(error){if(isTimeout(error)){limited='timeout';sampled.clear();continue;}throw error;}sampled.set(column.column_name,rows.rows.map(row=>row.v));}
     const classified=new Map(columns.map(column=>{const declared=column.comment?.match(/sensitivity:([a-z_]+)/g)?.map(tag=>tag.slice('sensitivity:'.length))??[];return [column.column_name,classifyColumn({name:column.column_name,declaredTags:declared,sample:sampled.get(column.column_name)??[],...(columnScope(scope,qualifiedName,column.column_name)==='mask'?{declaredTags:[...(declared??[]),'personal']}:{})})] as const;}));
     // Null rate, distinct count and average text length on untagged scalar columns, in one aggregate query per table.
-    const measurable=rowCount!==null&&rowCount>0&&rowCount<=COLUMN_STATISTICS_ROW_LIMIT?columns.filter(column=>!classified.get(column.column_name)!.tags.length&&!columnScope(scope,qualifiedName,column.column_name)&&POSTGRES_MEASURABLE.has(column.data_type)):[];
+    const measurable=!limited&&rowCount!==null&&rowCount>0&&rowCount<=COLUMN_STATISTICS_ROW_LIMIT?columns.filter(column=>!classified.get(column.column_name)!.tags.length&&!columnScope(scope,qualifiedName,column.column_name)&&POSTGRES_MEASURABLE.has(column.data_type)):[];
     const statistics=new Map<string,ColumnStatistics>();
     if(measurable.length){
       const parts=measurable.flatMap((column,index)=>{const ref=quoteIdentifier(column.column_name);return [`count(${ref}) AS n${index}`,`count(DISTINCT ${ref}) AS d${index}`,POSTGRES_TEXT.has(column.data_type)?`avg(length(${ref}))::float8 AS l${index}`:`NULL::float8 AS l${index}`];});
-      const measured=(await this.pool.query<Record<string,string|number|null>>(`SELECT ${parts.join(',')} FROM ${quoteIdentifier(table.schema_name)}.${quoteIdentifier(table.table_name)}`)).rows[0]!;
-      measurable.forEach((column,index)=>statistics.set(column.column_name,{nullRate:1-Number(measured[`n${index}`])/rowCount!,distinctCount:Number(measured[`d${index}`]),averageLength:measured[`l${index}`]===null?null:Number(measured[`l${index}`])}));
+      let measured:Record<string,string|number|null>|undefined;
+      try{measured=(await this.pool.query<Record<string,string|number|null>>(`SELECT ${parts.join(',')} FROM ${quoteIdentifier(table.schema_name)}.${quoteIdentifier(table.table_name)}`)).rows[0]!;}
+      catch(error){if(!isTimeout(error))throw error;limited='timeout';}
+      if(measured)measurable.forEach((column,index)=>statistics.set(column.column_name,{nullRate:1-Number(measured![`n${index}`])/rowCount!,distinctCount:Number(measured![`d${index}`]),averageLength:measured![`l${index}`]===null?null:Number(measured![`l${index}`])}));
     }
-    return {assetKey:key,qualifiedName,version:createHash('sha256').update(JSON.stringify(structural)).digest('hex'),rowCount,columns:columns.map(column=>{const found=classified.get(column.column_name)!;return {name:column.column_name,dataType:column.data_type,isNullable:column.is_nullable==='YES',...(columnScope(scope,qualifiedName,column.column_name)==='mask'?{sensitivityTags:[...new Set([...found.tags,'personal'])],sensitivityEvidence:[...found.evidence,{tag:'personal',detection:'declared' as const,reason:'Masked in Controls'}]}:{sensitivityTags:found.tags,sensitivityEvidence:found.evidence}),statistics:statistics.get(column.column_name)??UNMEASURED};})};
+    return {assetKey:key,qualifiedName,version:createHash('sha256').update(JSON.stringify(structural)).digest('hex'),rowCount,...(limited?{limited}:{}),columns:columns.map(column=>{const found=classified.get(column.column_name)!;return {name:column.column_name,dataType:column.data_type,isNullable:column.is_nullable==='YES',...(columnScope(scope,qualifiedName,column.column_name)==='mask'?{sensitivityTags:[...new Set([...found.tags,'personal'])],sensitivityEvidence:[...found.evidence,{tag:'personal',detection:'declared' as const,reason:'Masked in Controls'}]}:{sensitivityTags:found.tags,sensitivityEvidence:found.evidence}),statistics:statistics.get(column.column_name)??UNMEASURED};})};
   }
 
   async structuralReferences(scope?: ConnectorScope):Promise<PostgresStructuralReference[]>{
@@ -251,6 +257,9 @@ export class PostgresConnector implements ReadOnlyConnector {
 
   async close():Promise<void>{await this.pool.end();}
 }
+
+/** PostgreSQL cancelled the statement because it ran past statement_timeout (SQLSTATE 57014). */
+const isTimeout=(error:unknown)=>(error as {code?:string})?.code==='57014';
 
 export function createPostgresConnector(input:string|{connectionString:string;id?:string;name?:string;statementTimeoutMs?:number;maxRows?:number;maxCatalogRows?:number},name='PostgreSQL source'):PostgresConnector{
   const config=typeof input==='string'?{connectionString:input,name}:input;
