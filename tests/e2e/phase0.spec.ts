@@ -56,3 +56,45 @@ test('phase2_home_on_an_empty_tenant_prompts_for_a_real_source_instead_of_answer
  await expect(page.getByRole('heading',{name:'Connect a source to get started'})).toBeVisible();
  await expect(page.getByRole('button',{name:'Send question'})).toBeDisabled();
 });
+
+test('phase0_collapsed_sidebar_shows_every_item_expands_by_keyboard_and_opens_the_profile_menu_beside_it',async({page})=>{
+ await page.setViewportSize({width:1440,height:900});
+ await signInToTestWorkspace(page,'phase0-login@synthetic.example');
+ // A closed Platform group must still show its icons in the strip.
+ const platform=page.getByRole('button',{name:/^Platform/});
+ if(await platform.getAttribute('aria-expanded')==='true')await platform.click();
+ await page.getByRole('button',{name:'Collapse sidebar'}).click();
+ const expand=page.getByRole('button',{name:'Expand sidebar'});
+ await expect(expand).toBeVisible();
+ const nav=page.getByRole('navigation',{name:'Main navigation'});
+ for(const label of ['Home','Connectors','Dictionary','Lineage','Agents','BI reports','Hub integrations','Approval matrix','Controls']){
+  const link=nav.getByRole('link',{name:label,exact:true});
+  await expect(link).toBeVisible();
+  await link.hover();await expect(page.getByRole('tooltip')).toHaveText(label);
+ }
+ await expect(page.getByRole('button',{name:'New chat'})).toBeVisible();
+ // Tooltips follow keyboard focus too.
+ await nav.getByRole('link',{name:'Approval matrix'}).focus();await expect(page.getByRole('tooltip')).toHaveText('Approval matrix');
+ await page.screenshot({path:'docs/acceptance/shell/collapsed-sidebar-tooltip.png'});
+ // The profile menu opens fully beside the strip: every item is the topmost element at its own centre.
+ await page.getByRole('button',{name:/^Account menu/}).click();
+ const menu=page.getByRole('menu',{name:'Account'});
+ const strip=(await page.locator('.sidebar').boundingBox())!;const box=(await menu.boundingBox())!;
+ expect(box.x).toBeGreaterThanOrEqual(strip.x+strip.width);
+ for(const item of await menu.getByRole('menuitem').all()){
+  await expect(item).toBeInViewport({ratio:1});
+  expect(await item.evaluate(element=>{const rect=element.getBoundingClientRect();return element.contains(document.elementFromPoint(rect.left+rect.width/2,rect.top+rect.height/2));})).toBe(true);
+ }
+ await expect(menu.getByRole('menuitem').first()).toBeFocused();
+ await page.screenshot({path:'docs/acceptance/shell/collapsed-sidebar-profile-menu.png'});
+ await page.keyboard.press('Escape');await expect(menu).toBeHidden();
+ await expect(page.getByRole('button',{name:/^Account menu/})).toBeFocused();
+ // The collapsed state is remembered, and the strip expands from the keyboard.
+ await page.reload();
+ await expect(page.getByRole('button',{name:'Expand sidebar'})).toBeVisible();
+ await page.getByRole('button',{name:'Expand sidebar'}).focus();await page.keyboard.press('Enter');
+ await expect(page.getByRole('button',{name:'Collapse sidebar'})).toBeVisible();
+ await expect(nav.getByText('Agents',{exact:true})).toBeHidden(); // Platform is still closed in the full sidebar, as the person left it
+ await page.getByRole('button',{name:/^Platform/}).click();
+ await page.reload();await expect(page.getByRole('button',{name:'Collapse sidebar'})).toBeVisible();
+});
