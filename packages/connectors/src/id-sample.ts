@@ -6,14 +6,12 @@ import { createHash } from 'node:crypto';
  *   - a plain positive integer (no sign, no leading zero, at most 18 digits) is kept when it is divisible by 16;
  *   - "0" is kept;
  *   - any other text is kept when the first hex digit of the MD5 of its UTF-8 bytes is 0.
- * About 1 value in 16 is kept either way. The rule runs in the source's SQL where possible, so far less is read, and
- * again here, so the kept set is defined by this function everywhere.
+ * About 1 value in 16 is kept either way. This function defines the kept set everywhere; the SQL forms below select the
+ * same values in the source, used when a column is too large to read whole.
  */
 export const ID_SAMPLE_MODULUS = 16;
-/** Columns of tables up to this many rows are read whole. */
-export const ID_SAMPLE_MINIMUM_ROWS = 20_000;
-/** A sampled column that yields fewer values than this is read whole instead (few distinct values in a large table). */
-export const ID_SAMPLE_MINIMUM_VALUES = 50;
+/** A column with up to this many distinct values is kept whole; above it, the rule's sample is kept. */
+export const ID_SAMPLE_MINIMUM_DISTINCT = 20_000;
 
 const PLAIN_INTEGER = /^[1-9][0-9]{0,17}$/;
 

@@ -48,7 +48,7 @@ export interface ObjectProfile {
 
 /** estimated: from a sample or the database's catalog statistics, not a full scan (decision 59). */
 export type ColumnStatistics = { nullRate: number | null; distinctCount: number | null; averageLength?: number | null; estimated?: boolean };
-export { ID_SAMPLE_MINIMUM_ROWS, ID_SAMPLE_MINIMUM_VALUES, ID_SAMPLE_MODULUS, inIdSample, postgresIdSampleCondition, sqlServerIdSampleCondition } from './id-sample.js';
+export { ID_SAMPLE_MINIMUM_DISTINCT, ID_SAMPLE_MODULUS, inIdSample, postgresIdSampleCondition, sqlServerIdSampleCondition } from './id-sample.js';
 /** Large tables are sampled rather than skipped (decision 59, ./sampling.ts). */
 export { EXACT_COUNT_LIMIT, STATISTICS_SAMPLE_ROWS, SENSITIVITY_SAMPLE_ROWS, samplePercent, catalogEstimate, distinctFromCatalog } from './sampling.js';
 export const UNMEASURED: ColumnStatistics = { nullRate: null, distinctCount: null, averageLength: null };

@@ -1,4 +1,4 @@
-import { columnScope, ID_SAMPLE_MINIMUM_ROWS, ID_SAMPLE_MINIMUM_VALUES, ID_SAMPLE_MODULUS, inIdSample, type ConnectorScope } from '@scaleinsyght/connectors';
+import { columnScope, ID_SAMPLE_MINIMUM_DISTINCT, ID_SAMPLE_MODULUS, inIdSample, type ConnectorScope } from '@scaleinsyght/connectors';
 import type { Pool } from 'pg';
 import type { ReadOnlyConnector } from '@scaleinsyght/connectors';
 import { withTenant } from '@scaleinsyght/db';
@@ -13,7 +13,7 @@ const MIN_SHARED = 20;
 const MIN_CONTAINMENT = 0.98;
 const COLLECTOR = 'id-agent-v1';
 
-type Candidate = { assetId: string; name: string; table: string; column: string; tagged: boolean; declared: boolean; home: string | null; tableRows: number | null };
+type Candidate = { assetId: string; name: string; table: string; column: string; tagged: boolean; declared: boolean; home: string | null };
 
 /** Values are sorted into a coarse format so only like-shaped identifiers are compared. Computed in memory. */
 export function formatPattern(values: string[]): string {
@@ -34,9 +34,8 @@ export async function runIdAgent(pool: Pool, input: { tenantId: string; connecti
   onProgress?: (done: number, planned: number) => Promise<void> }): Promise<{ fields: number; fingerprinted: number; skipped: number; matches: number } | undefined> {
   if (!input.masterKey || input.masterKey.byteLength < 32 || !input.connector.distinctValues) return undefined;
   const candidates = await withTenant(pool, input.tenantId, async (client) => {
-    const fields = await client.query<{ asset_id: string; qualified_name: string; table_name: string; tags: string[] | null; evidence: Array<{ tag: string; detection: string }> | null; table_rows: string | null }>(
-      `SELECT f.asset_id,f.qualified_name,d.qualified_name AS table_name,p.sensitivity_tags AS tags,p.sensitivity_evidence AS evidence,
-         (SELECT v.statistics->>'row_count' FROM graph.asset_versions v WHERE v.tenant_id=d.tenant_id AND v.asset_id=d.asset_id ORDER BY v.version DESC LIMIT 1) AS table_rows FROM graph.assets f
+    const fields = await client.query<{ asset_id: string; qualified_name: string; table_name: string; tags: string[] | null; evidence: Array<{ tag: string; detection: string }> | null}>(
+      `SELECT f.asset_id,f.qualified_name,d.qualified_name AS table_name,p.sensitivity_tags AS tags,p.sensitivity_evidence AS evidence FROM graph.assets f
        JOIN graph.relationships c ON c.tenant_id=f.tenant_id AND c.to_asset_id=f.asset_id AND c.relationship_type='CONTAINS'
        JOIN graph.assets d ON d.tenant_id=c.tenant_id AND d.asset_id=c.from_asset_id AND d.active
        LEFT JOIN LATERAL(SELECT sensitivity_tags,sensitivity_evidence FROM profiler.field_profiles WHERE tenant_id=f.tenant_id AND asset_id=f.asset_id ORDER BY profile_version DESC LIMIT 1)p ON true
@@ -53,7 +52,7 @@ export async function runIdAgent(pool: Pool, input: { tenantId: string; connecti
       const split = row.qualified_name.lastIndexOf('.');
       const home = homeOf.get(row.asset_id); const homeTable = home ? byId.get(home)?.table_name ?? null : null;
       return { assetId: row.asset_id, name: row.qualified_name, table: row.table_name, column: row.qualified_name.slice(split + 1), tagged: (row.tags ?? []).includes('identifier'),
-        declared: (row.evidence ?? []).some((item) => item.tag === 'identifier' && item.detection === 'declared'), home: homeTable, tableRows: row.table_rows === null ? null : Number(row.table_rows) };
+        declared: (row.evidence ?? []).some((item) => item.tag === 'identifier' && item.detection === 'declared'), home: homeTable };
     });
   });
   // K13: each field is read, fingerprinted and written in its own transaction, as that field's complete current value
@@ -67,12 +66,16 @@ export async function runIdAgent(pool: Pool, input: { tenantId: string; connecti
     // A field whose values cannot be read in time (a very large table) is skipped and counted, never fatal (decision
     // 58): its earlier fingerprints stay as they were, because its current values are unknown. A connection-level
     // failure still stops the step.
-    let values: string[] | null; let sampled = candidate.tableRows === null || candidate.tableRows > ID_SAMPLE_MINIMUM_ROWS;
-    // Decision 61: a large table's identifier column is read through the consistent sample (about 1 value in 16, the same
-    // values in every source); a small table's is read whole, and so is a sampled column with too few values to match on.
+    // Decision 61, as measured on test_emr (445 ID columns): reading every distinct value took 197 s, while applying the
+    // rule in SQL took 410 s (a DISTINCT scan reads every row either way, and per-row hashing costs more than it saves).
+    // The hour went into fingerprinting, storing and matching 17.3 million values. So a column is read once and the
+    // consistent rule applied here: up to ID_SAMPLE_MINIMUM_DISTINCT distinct values are kept whole, larger columns keep
+    // the rule's sample. Only a column too large to read whole (over ID_FINGERPRINT_LIMIT) is sampled in SQL.
+    let values: string[] | null; let sampled = false;
     try {
-      values = await input.connector.distinctValues!(candidate.table, candidate.column, ID_FINGERPRINT_LIMIT, { sample: sampled });
-      if (sampled && values && values.length < ID_SAMPLE_MINIMUM_VALUES) { sampled = false; values = await input.connector.distinctValues!(candidate.table, candidate.column, ID_FINGERPRINT_LIMIT); }
+      values = await input.connector.distinctValues!(candidate.table, candidate.column, ID_FINGERPRINT_LIMIT);
+      if (values && values.length > ID_SAMPLE_MINIMUM_DISTINCT) { values = values.filter(inIdSample); sampled = true; }
+      else if (!values) { values = await input.connector.distinctValues!(candidate.table, candidate.column, ID_FINGERPRINT_LIMIT, { sample: true }); sampled = Boolean(values); }
     }
     catch (error) { if (!isObjectError(sourceErrorCode(error))) throw error; skipped++; await step(); continue; }
     const format = values ? formatPattern(values) : 'too_many_values';
