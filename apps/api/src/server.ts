@@ -9,7 +9,7 @@ import { recordAgentRun, tenantAgent } from '@scaleinsyght/registry';
 import { activateConnection, approveGovernedVersion, createConnectionDraft, createGovernedDraft, deletePersonalMemory, getApprovedGovernedVersion, getPersonalMemory, moveConnectionToGroup, putPersonalMemory, type ConnectorType, type PersonalMemoryData } from '@scaleinsyght/registry';
 import { decryptConnectionSecret, encryptConnectionSecret, createExcelConnector, createPostgresConnector, createSqlServerConnector, type ReadOnlyConnector, type Routine, type SourceConnectorType } from '@scaleinsyght/connectors';
 import { EncryptedArtifactStore } from '@scaleinsyght/artifacts';
-import { decideFinding, getNotifications, latestDiscovery, listFindings, queueDiscovery, markNotificationRead, readConnectionScope, readWorkbook, retireConnection, runProfile, saveConnectionScope, storeWorkbook } from '@scaleinsyght/profiler';
+import { decideFinding, getNotifications, latestDiscovery, listFindings, queueDiscovery, queueProfileJob, markNotificationRead, readConnectionScope, readWorkbook, retireConnection, saveConnectionScope, storeWorkbook } from '@scaleinsyght/profiler';
 import { applyPersonalContext, createAnalyticPlan, parseLineageRequest, startAnalyticRun, submitFeedback, type StructuredAnswer } from '@scaleinsyght/analytic';
 import { eventsAfter } from '@scaleinsyght/runner';
 import { AnalyticPlanSchema, FlowSpecSchema, hashPlan, parseQueryIntent, type QueryIntent } from '@scaleinsyght/contracts';
@@ -1332,11 +1332,11 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
       'SELECT source_ref,status FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2',[current.tenantId,request.params.connectionId]));
     const row=connection.rows[0];if(!row||row.status!=='active')return reply.code(404).send({error:'active_connection_not_found'});
     if(request.body?.jobType&&!['profile','nightly'].includes(request.body.jobType))return reply.code(400).send({error:'invalid_job_type'});
-    let connector:ReadOnlyConnector;
-    try{connector=await connectorForConnection(current.tenantId,request.params.connectionId);}
+    // K10: checked up front (a missing workbook file is answered at once), then queued for the worker; never run in the request.
+    try{await connectorForConnection(current.tenantId,request.params.connectionId);}
     catch(error){if(error instanceof Error&&error.message==='artifact_file_missing')return reply.code(409).send(WORKBOOK_FILE_MISSING);throw error;}
-    const result=await runProfile(options.pool,{tenantId:current.tenantId,connectionId:request.params.connectionId,connector,jobType:request.body?.jobType??'profile'});
-    return reply.send(result);
+    const job=await withTenant(options.pool,current.tenantId,client=>queueProfileJob(client,current.tenantId,request.params.connectionId,request.body?.jobType??'profile'));
+    return reply.code(202).send({jobId:job.jobId,jobState:job.state,jobType:job.jobType,queued:job.queued});
   });
   app.get<{Params:{connectionId:string}}>('/api/connections/:connectionId/profile',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});

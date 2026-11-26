@@ -125,14 +125,16 @@ export async function runProfile(
   pool: Pool,
   input: { tenantId: string; connectionId: string; connector: ReadOnlyConnector; jobType: 'discovery' | 'profile' | 'nightly'; scheduled?: boolean;
     /** A claimed background discovery job (decision 57): progress is written as it goes and every write is fenced. */
-    job?: DiscoveryJob },
+    job?: DiscoveryJob;
+    /** The job's lease heartbeat, kept by the caller until the job is finished (relationships and findings included). */
+    beat?: { stop: () => void; lost: () => boolean } },
 ): Promise<ProfileSummary> {
   const started = performance.now();
   const scope = await readEffectiveScope(pool, input.tenantId, input.connectionId);
   const mode = input.jobType === 'nightly' ? 'nightly' : 'profile';
   const before = await readProfileState(pool, input.tenantId, input.connectionId);
   const job = input.job;
-  const beat = job ? heartbeat(pool, job) : null;
+  const ownBeat = job && !input.beat ? heartbeat(pool, job) : null; const beat = input.beat ?? ownBeat;
   const discovery: DiscoveryResult = await (async () => { try { return await input.connector.discover(scope ? { mode, scope } : { mode }); } catch (error) { beat?.stop(); throw error; } })();
   const profiles: Array<{ object: DiscoveryResult['objects'][number]; profile: ObjectProfile }> = [];
   const failed = new Map<string, string>();
@@ -149,7 +151,7 @@ export async function runProfile(
       if (job && (Date.now() - reported >= 1000 || done === discovery.objects.length)) { await reportDiscovery(pool, job, { profiled: done }); reported = Date.now(); }
     }
     if (discovery.objects.length && !profiles.length) throw new Error([...failed.values()][0] ?? 'discovery_failed');
-  } finally { beat?.stop(); }
+  } finally { ownBeat?.stop(); }
   const jobId = job?.jobId ?? randomUUID();
   let createdVersions = 0;
 
@@ -587,9 +589,10 @@ export async function retireConnection(
 
 export { runIdAgent, formatPattern, ID_FINGERPRINT_LIMIT } from './id-agent.js';
 export { isObjectError, sourceErrorCode } from './source-errors.js';
+export { queueProfileJob, type ProfileJobType } from './discovery-jobs.js';
 export { claimDiscovery, finishDiscovery, latestDiscovery, queueDiscovery, StaleDiscoveryJobError, DISCOVERY_LEASE_MS, type DiscoveryJob } from './discovery-jobs.js';
 export { readProfileState, recordFindings, listFindings, decideFinding, ROW_CHANGE_SHARE, type FindingRow } from './findings.js';
-export { claimDueNightly } from './nightly.js';
+export { claimDueNightly, queueDueNightly } from './nightly.js';
 export { connectorForConnection } from './connector-for.js';
 
 export { getControls, saveControls, listControlChanges, decideControlChange } from './controls.js';
@@ -599,21 +602,24 @@ export { getControls, saveControls, listControlChanges, decideControlChange } fr
  * the job by code: FAILED before anything was written, PARTIAL when the profile was stored but relationships, lineage
  * or findings could not be mapped. A job this worker no longer holds is left to its new owner.
  */
-export async function runNextDiscovery(pool: Pool, connectorFor: (tenantId: string, connectionId: string) => Promise<ReadOnlyConnector>, onlyTenant?: string): Promise<boolean> {
-  const job = await claimDiscovery(pool, undefined, onlyTenant);
+export async function runNextDiscovery(pool: Pool, connectorFor: (tenantId: string, connectionId: string) => Promise<ReadOnlyConnector>, onlyTenant?: string, leaseMs?: number): Promise<boolean> {
+  const job = await claimDiscovery(pool, leaseMs, onlyTenant);
   if (!job) return false;
   let connector: ReadOnlyConnector | undefined;
+  // The lease is renewed for the whole job, through relationships, lineage, the ID agent and findings, which can take
+  // minutes on a large source; otherwise another worker could reclaim a job that is still running.
+  const beat = heartbeat(pool, job, leaseMs);
   try {
     connector = await connectorFor(job.tenantId, job.connectionId);
-    await runProfile(pool, { tenantId: job.tenantId, connectionId: job.connectionId, connector, jobType: 'discovery', job });
+    await runProfile(pool, { tenantId: job.tenantId, connectionId: job.connectionId, connector, jobType: job.jobType ?? 'discovery', job, beat });
   } catch (error) {
     if (error instanceof StaleDiscoveryJobError) return true;
     const code = sourceErrorCode(error);
     const stored = await withTenant(pool, job.tenantId, (client) => client.query<{ phase: string | null }>('SELECT phase FROM profiler.jobs WHERE tenant_id=$1 AND job_id=$2', [job.tenantId, job.jobId]));
     await finishDiscovery(pool, job, { state: stored.rows[0]?.phase === 'relationships' ? 'PARTIAL' : 'FAILED', failureCode: code });
     // The reason code and connection only: driver messages can carry host or user names.
-    console.error(`Discovery failed for connection ${job.connectionId} (tenant ${job.tenantId}): ${code}`);
-  } finally { await connector?.close?.(); }
+    console.error(`Profile (${job.jobType ?? 'discovery'}) failed for connection ${job.connectionId} (tenant ${job.tenantId}): ${code}`);
+  } finally { beat.stop(); await connector?.close?.(); }
   return true;
 }
 

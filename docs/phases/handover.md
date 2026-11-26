@@ -1,6 +1,6 @@
 # Handover, 26 Nov 2026
 
-Updated by Claude Code after #49. The bug fixes from testing on 4284 (#45 to #49) are merged. The review app on 4284 runs `main` at `7fb2105` (the notification fix in this PR follows).
+Updated by Claude Code after #51 (bug 6). The review app on 4284 runs `main` at `a3e2ca0`; K10 follows. 4284 logs now append across redeploys.
 
 ## Merged to `main` today
 
@@ -34,10 +34,12 @@ Updated by Claude Code after #49. The bug fixes from testing on 4284 (#45 to #49
 | #47 | 75a2d37 | Bug 2: Lineage page has only Lineage and ID trace tabs; Show impact in the detail panel |
 | #48 | 46aa4cd | Bug 5: activation queues the discovery profile and returns at once; worker profiling loop; live progress ring; plain-language errors (decision 57, migration 041) |
 | #49 | 7fb2105 | Bug 4: notifications and Home cards name the source, say what changed with a time, link to the details and group repeats; quiet nights notify no one |
+| #50 | 63ef5fd | Grouped profiling notifications show the latest run's size; handover |
+| #51 | a3e2ca0 | Bug 6: a slow or unreadable table no longer fails a profile; failed profiles say why with Retry; Run profile now and Remove on cards (decision 58, migration 042) |
 
 ## Review app on 4284 and riverside-health
 
-- **4284 runs `main` at `7fb2105`** (redeployed 26 Nov, evening IST) from `../scaleinsyght-review` (detached): API 3000, worker 3001, web 4284, sqlparse 8011, started with `nohup` by Claude Code (logs in its scratchpad). `scale_insyght` is migrated to 041; backups were taken before the 035, 036, 037, 039, 040 and 041 migrations and before K6 (Claude Code's scratchpad). Riverside-health's procedure and view SQL appears in the Dictionary after its next profile or nightly refresh, which captures definitions. Riverside-health now has its ID and ID trace agents. Its workbook refresh and ID trace (3 systems) were checked by running the same code; a browser check needs the riverside-health password.
+- **4284 runs `main` at `a3e2ca0`** (redeployed 26 Nov, 20:45 IST) from `../scaleinsyght-review` (detached): API 3000, worker 3001, web 4284, sqlparse 8011, started with `nohup` by Claude Code (logs in its scratchpad). `scale_insyght` is migrated to 042; backups were taken before the 035, 036, 037, 039, 040, 041 and 042 migrations and before K6 (Claude Code's scratchpad). Riverside-health's procedure and view SQL appears in the Dictionary after its next profile or nightly refresh, which captures definitions. Riverside-health now has its ID and ID trace agents. Its workbook refresh and ID trace (3 systems) were checked by running the same code; a browser check needs the riverside-health password.
 - **riverside-health password:** Yashaswi's password (`yashaswi@riverside-health.test`) was reset with `pnpm tenant:reset-password` at about 06:40 IST and given to Yashaswi once in the chat at handover. It is not in the repo. If it is lost, reset it again with the same command.
 - **riverside-health sources:** PostgreSQL (`pgs`) and SQL Server (`sql`) were already connected by Yashaswi; the Operations workbook was added through Add connector, and PostgreSQL and SQL Server were re-profiled so display labels work. No dbt project, no Tableau and no nightly refresh have been run there yet (`profiler.nightly_schedules` is backfilled by migration 032 when 4284 is migrated). Drafts Yashaswi created were left alone.
 - `../scaleinsyght/.env` was changed: `MODEL_DAILY_COST_CAP_USD=5`, `MODEL_DAILY_USER_COST_CAP_USD=1`, token cap removed (backup in my scratchpad as `main-env-backup`).
@@ -64,11 +66,13 @@ Updated by Claude Code after #49. The bug fixes from testing on 4284 (#45 to #49
 
 ## Claude Code queue (in the user's order; Codex is out of limits, so Claude Code holds all work)
 
-1. **K10**: move `/discover` (Run a profile, on-demand nightly) onto the background job queue, same cause as bug 5.
-2. **Agents, My agent, Usage and BI reports** matched to the prototype, one PR each. Agents is built on `agents-screen` (worktree `../scaleinsyght-cc-controls`); it needs a rebase on main (the shell and Lineage changed), screenshots, gates and testbed runs.
-3. **Remaining Dictionary items**: keys and indexes, Back buttons, encrypted procedure dependencies, agent schedules ("Run by"), ER grid.
-4. **Cross-source row joins** (the design's collate step): spec first, for the user's approval.
-5. Then: K11 (worker nightly runs re-profile every table), migration backfill safety, a model-spend ledger that test resets don't wipe, per-table profiling time, planner pre-model catalog reads.
+1. **K10**: every profile runs as a background job (this PR).
+2. **Profiling large tables** (user, 27 Nov): instead of skipping statistics when a sample query times out, use the database's sampling (TABLESAMPLE SYSTEM in PostgreSQL and SQL Server, with a fixed row cap), take row counts from catalog statistics (`pg_class.reltuples`, `sys.partitions`) for very large tables, and label estimated figures as estimates. Target: on test_emr all 272 tables get statistics and the profile finishes in under 8 minutes. Includes K13: the ID agent commits per table and reports progress, instead of one transaction of 27 minutes or more.
+3. **K12 as a planner fix** (user, 27 Nov): for "each <dimension>" questions the plan counts from the dimension table so groups with zero appear as 0, still under the small-count rule (0 shows as 0, 1 to 10 as "<11"). Not a verifier change. Development set only, 0 wrong.
+4. **Agents, My agent, Usage and BI reports** matched to the prototype, one PR each (Agents is built on `agents-screen`; needs a rebase, screenshots, gates and testbed runs).
+5. **Remaining Dictionary items**: keys and indexes, Back buttons, encrypted procedure dependencies, agent schedules ("Run by"), ER grid.
+6. **Cross-source row joins**: spec first, for the user's approval.
+7. Then: K11 (worker nightly runs re-profile every table), migration backfill safety, a model-spend ledger that test resets don't wipe, per-table profiling time, planner pre-model catalog reads.
 
 ## Codex continuation
 

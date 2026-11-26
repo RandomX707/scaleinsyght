@@ -27,7 +27,7 @@ export async function runQueuedDiscoveries(tenantId: string, artifactStore?: Enc
     };
     while (await runNextDiscovery(pool, connectorFor, tenantId)) { /* until none is queued */ }
     const unfinished = await withTenant(pool, tenantId, (client) => client.query<{ state: string; failure_code: string | null }>(
-      "SELECT state,failure_code FROM profiler.jobs WHERE tenant_id=$1 AND job_type='discovery' AND state<>'COMPLETED'", [tenantId]));
+      "SELECT job_type,state,failure_code FROM profiler.jobs WHERE tenant_id=$1 AND phase IS NOT NULL AND state<>'COMPLETED'", [tenantId]));
     if (unfinished.rowCount) throw new Error(`discovery did not complete: ${JSON.stringify(unfinished.rows)}`);
   } finally { await pool.end(); }
 }

@@ -15,7 +15,7 @@ import { OpenAIModelGateway } from '@scaleinsyght/model-gateway';
 import { authorise } from '@scaleinsyght/policy';
 import { checkStepAgent } from '@scaleinsyght/registry';
 import { answerLineageRequest } from '@scaleinsyght/graph';
-import { claimDueNightly, connectorForConnection, checkQueryScope, OutOfScopeError, runNextDiscovery, runProfile } from '@scaleinsyght/profiler';
+import { connectorForConnection, checkQueryScope, OutOfScopeError, queueDueNightly, runNextDiscovery } from '@scaleinsyght/profiler';
 import { claimDueSchedule, markScheduleSlotSkipped, markScheduleSlotStarted, persistReportSnapshot, startScheduledReportRun } from '@scaleinsyght/reports';
 
 config({path:fileURLToPath(new URL('../../../.env',import.meta.url))});
@@ -28,14 +28,11 @@ const healthServer=createServer((request,response)=>{if(request.url==='/health')
 await new Promise<void>((resolve,reject)=>{healthServer.once('error',reject);healthServer.listen(Number(process.env.WORKER_HEALTH_PORT??3001),process.env.WORKER_HEALTH_HOST??'127.0.0.1',resolve);});
 let stopping=false;
 for(const signal of ['SIGINT','SIGTERM'] as const)process.on(signal,()=>{stopping=true;});
-/** Runs one due nightly refresh (decision 48): re-profiles the connection, compares it with the previous state and
- * records findings for the Approval matrix. A failure is logged by code and the connection waits for its next slot. */
+/** A due nightly refresh (decision 48) is queued as a background job (K10) and runs like any other profile: leased,
+ * fenced and resumable. If the connection already has a profile queued or running, that one stands for tonight. */
 async function dispatchDueNightly():Promise<boolean>{
- const due=await claimDueNightly(pool);if(!due)return false;
- let connector:ReadOnlyConnector|undefined;
- try{connector=await connectorForConnection(pool,due.tenantId,due.connectionId,artifactStore??undefined);await runProfile(pool,{tenantId:due.tenantId,connectionId:due.connectionId,connector,jobType:'nightly',scheduled:true});}
- catch(error){console.error('Nightly refresh failed:',error instanceof Error&&/^[a-z_]+$/.test(error.message)?error.message:'nightly_refresh_failed');}
- finally{await connector?.close?.();}
+ try{const job=await queueDueNightly(pool);if(!job)return false;if(!job.queued)console.error(`Nightly refresh for connection ${job.connectionId} skipped: a profile is already ${job.state.toLowerCase()}`);}
+ catch(error){console.error('Nightly refresh could not be queued:',error instanceof Error&&/^[a-z_]+$/.test(error.message)?error.message:'nightly_refresh_failed');}
  return true;
 }
 async function dispatchDueSchedule():Promise<boolean>{
