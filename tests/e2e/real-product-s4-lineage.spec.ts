@@ -92,7 +92,9 @@ test('s4_dbt_upload_view_sql_and_lineage_graph_columns_gaps_and_chat_answers_mat
   visit(source);
   expect(impacted.has('analytics.mart_department_orders')).toBe(true);
   await page.getByRole('button', { name: 'Clear' }).click();
-  await page.getByRole('button', { name: `${source}, show columns` }).click();
+  // Tracing the column above opened the tables on its path, so this one shows its columns: click its header row (the
+  // middle of an open table is one of its column rows). After Clear, a click selects the table either way.
+  await page.getByRole('button', { name: new RegExp(`^${source.replaceAll('.', '\\.')}, (show|hide) columns$`) }).click({ position: { x: 24, y: 12 } });
   await page.getByRole('button', { name: 'Show impact' }).click();
   const impact = page.getByRole('region', { name: `Impact of a change to ${source}` });
   await expect(impact.getByRole('heading', { name: `If ${source} changes` })).toBeVisible();
