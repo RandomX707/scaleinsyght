@@ -88,9 +88,9 @@ test('s4_dbt_upload_view_sql_and_lineage_graph_columns_gaps_and_chat_answers_mat
   for (const views of Object.values(truth.views)) for (const [view, spec] of Object.entries(views)) readsOf.set(view, spec.reads);
   for (const [model, spec] of Object.entries(truth.dbt.models)) readsOf.set(model, [...(readsOf.get(model) ?? []), ...spec.declaredReads]);
   const source = truth.dbt.models['analytics.mart_department_orders']!.declaredReads[0]!;
-  const downstream = new Set<string>(); const visit = (name: string) => { for (const [object, reads] of readsOf) if (reads.includes(name) && !downstream.has(object)) { downstream.add(object); visit(object); } };
+  const impacted = new Set<string>(); const visit = (name: string) => { for (const [object, reads] of readsOf) if (reads.includes(name) && !impacted.has(object)) { impacted.add(object); visit(object); } };
   visit(source);
-  expect(downstream.has('analytics.mart_department_orders')).toBe(true);
+  expect(impacted.has('analytics.mart_department_orders')).toBe(true);
   await page.getByRole('button', { name: 'Clear' }).click();
   await page.getByRole('button', { name: `${source}, show columns` }).click();
   await page.getByRole('button', { name: 'Show impact' }).click();
@@ -98,7 +98,7 @@ test('s4_dbt_upload_view_sql_and_lineage_graph_columns_gaps_and_chat_answers_mat
   await expect(impact.getByRole('heading', { name: `If ${source} changes` })).toBeVisible();
   const listed = impact.locator('div').filter({ has: page.getByText(/^Tables and views \(/) }).locator('li code');
   await expect(listed.first()).toBeVisible();
-  expect(new Set(await listed.allInnerTexts())).toEqual(downstream);
+  expect(new Set(await listed.allInnerTexts())).toEqual(impacted);
   await page.screenshot({ path: 'docs/acceptance/s4/lineage-impact.png', fullPage: true });
 
   // The gap: billing.claims is visible to dbt but not to the product's read-only login.
