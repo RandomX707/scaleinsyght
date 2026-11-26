@@ -181,6 +181,28 @@ function InviteAcceptPage(){
   return <main className="login"><form onSubmit={event=>void accept(event)}><div className="login-brand"><Logo/><span>insyght</span></div><p className="login-product">Scale Data Hub</p><h1>Accept invitation</h1><p>Set your name and password to join this workspace.</p><label>Your name<Input aria-label="Your name" required maxLength={120} value={displayName} onChange={event=>setDisplayName(event.target.value)}/></label><label>Create a password<Input aria-label="Create a password" type="password" minLength={12} required value={password} onChange={event=>setPassword(event.target.value)}/></label>{error&&<p role="alert" className="error">{uiCopy(error)}</p>}<Button variant="primary" type="submit" disabled={!tenantId||!token}>Accept invitation</Button></form><PoweredBy/></main>;
 }
 
+/** The collapsed sidebar is remembered per browser; a narrow screen starts collapsed when nothing is stored. */
+const NAV_SECTIONS: Array<{ id: 'workspace' | 'platform'; label: string; items: Array<{ href: string; label: string; icon: string; current: (path: string) => boolean }> }> = [
+  { id: 'workspace', label: 'Workspace', items: [
+    { href: '/', label: 'Home', icon: '⌂', current: (path) => path === '/' },
+    { href: '/connectors', label: 'Connectors', icon: '♧', current: (path) => path.startsWith('/connectors') },
+    { href: '/dictionary', label: 'Dictionary', icon: '▤', current: (path) => path.startsWith('/dictionary') },
+    { href: '/lineage', label: 'Lineage', icon: '⌘', current: (path) => path.startsWith('/lineage') || path.startsWith('/er') },
+  ] },
+  { id: 'platform', label: 'Platform', items: [
+    { href: '/agents', label: 'Agents', icon: '♙', current: (path) => path.startsWith('/agents') },
+    { href: '/bi-reports', label: 'BI reports', icon: '▧', current: (path) => path.startsWith('/bi-reports') },
+    { href: '/hub', label: 'Hub integrations', icon: '◈', current: (path) => path.startsWith('/hub') },
+    { href: '/approval-matrix', label: 'Approval matrix', icon: '✓', current: (path) => path.startsWith('/approval-matrix') },
+    { href: '/controls', label: 'Controls', icon: '⚙', current: (path) => path.startsWith('/controls') },
+  ] },
+];
+
+function loadCollapsed(): boolean {
+  try { const stored = localStorage.getItem('nav-collapsed'); if (stored !== null) return stored === 'true'; } catch { /* storage unavailable */ }
+  return typeof window !== 'undefined' && window.innerWidth <= 760;
+}
+
 function loadGroups(): NavGroups {
   try { return { workspace: localStorage.getItem('nav-workspace') !== 'false', platform: localStorage.getItem('nav-platform') !== 'false', recent: localStorage.getItem('nav-recent') !== 'false' }; }
   catch { return { workspace: true, platform: true, recent: true }; }
@@ -519,7 +541,13 @@ function App() {
   const [recentQuestions, setRecentQuestions] = useState<Array<{planId:string;question:string}>>([]);
   const [conversations,setConversations]=useState<ConversationSummary[]>([]);
   const [chatInstance, setChatInstance] = useState(0);const [chatKey,setChatKey]=useState('chat-0');
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(loadCollapsed);
+  const [tip, setTip] = useState<{ text: string; top: number; left: number } | null>(null);
+  const profileRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { try { localStorage.setItem('nav-collapsed', String(sidebarCollapsed)); } catch { /* storage unavailable: the state still works for this visit */ } setTip(null); }, [sidebarCollapsed]);
+  useEffect(() => { if (!profileOpen) return; profileRef.current?.querySelector<HTMLElement>('[role=menuitem]')?.focus();
+    const close = (event: MouseEvent | KeyboardEvent) => { if (event instanceof KeyboardEvent ? event.key === 'Escape' : !profileRef.current?.contains(event.target as Node)) { setProfileOpen(false); if (event instanceof KeyboardEvent) profileRef.current?.querySelector<HTMLElement>('[aria-haspopup=menu]')?.focus(); } };
+    document.addEventListener('keydown', close); document.addEventListener('mousedown', close); return () => { document.removeEventListener('keydown', close); document.removeEventListener('mousedown', close); }; }, [profileOpen]);
   const [error, setError] = useState('');
   async function reloadConnections() { const result = await api<{ connections: Connection[] }>('/api/connections'); setConnections(result.connections); }
   async function reloadNotifications() { const result = await api<{ notifications: Notification[] }>('/api/notifications'); setNotifications(result.notifications); }
@@ -565,19 +593,27 @@ function App() {
   else page = <AnalyticWorkspace key={chatKey} connections={connections} navigate={navigate} notifications={notifications} recentQuestions={recentQuestions} refreshConversations={refreshConversations} markRead={markRead} userName={user?.displayName??''}/>;
 
   const unreadCount=notifications.filter(item=>!item.readAt).length;
-  return <div className={`app${sidebarCollapsed?' app--collapsed':''}`}><aside className="sidebar">
-    <div className="brand"><Logo /><b>Scale Insyght</b><Button className="collapse-sidebar" variant="ghost" aria-label={sidebarCollapsed?'Expand sidebar':'Collapse sidebar'} onClick={()=>setSidebarCollapsed(value=>!value)}>◧</Button></div>
-    <Button className="new-chat" variant="secondary" onClick={newChat}><span aria-hidden="true">＋</span> New chat</Button>
-    <Button className="nav-notifications" variant="ghost" aria-expanded={notificationsOpen} onClick={() => { setNotificationsOpen(value => !value); if (!notificationsOpen) void reloadNotifications(); }}><span aria-hidden="true">♧</span><span>Notifications</span>{unreadCount>0&&<span className="nav-count">{unreadCount}</span>}</Button>
+  function showTip(target: EventTarget) {
+    const element = target instanceof Element ? target.closest<HTMLElement>('[data-tip]') : null;
+    if (!element || !sidebarCollapsed) { setTip(null); return; }
+    const rect = element.getBoundingClientRect(); setTip({ text: element.dataset.tip ?? '', top: rect.top + rect.height / 2, left: rect.right + 10 });
+  }
+  return <div className={`app${sidebarCollapsed?' app--collapsed':''}`}><aside className="sidebar" onMouseOver={event=>showTip(event.target)} onFocus={event=>showTip(event.target)} onMouseLeave={()=>setTip(null)} onBlur={()=>setTip(null)}>
+    <div className="brand"><Logo /><b>Scale Insyght</b><Button className="collapse-sidebar" variant="ghost" aria-label={sidebarCollapsed?'Expand sidebar':'Collapse sidebar'} aria-expanded={!sidebarCollapsed} data-tip={sidebarCollapsed?'Expand sidebar':undefined} onClick={()=>setSidebarCollapsed(value=>!value)}><span aria-hidden="true">{sidebarCollapsed?'»':'◧'}</span></Button></div>
+    <Button className="new-chat" variant="secondary" aria-label={sidebarCollapsed?'New chat':undefined} data-tip={sidebarCollapsed?'New chat':undefined} onClick={newChat}><span aria-hidden="true">＋</span><span className="nav-label">New chat</span></Button>
+    <Button className="nav-notifications" variant="ghost" aria-label={sidebarCollapsed?`Notifications${unreadCount?`, ${unreadCount} unread`:''}`:undefined} data-tip={sidebarCollapsed?'Notifications':undefined} aria-expanded={notificationsOpen} onClick={() => { setNotificationsOpen(value => !value); if (!notificationsOpen) void reloadNotifications(); }}><span aria-hidden="true">◍</span><span className="nav-label">Notifications</span>{unreadCount>0&&<span className="nav-count">{unreadCount}</span>}</Button>
     <nav aria-label="Main navigation">
-      <Button className="section-toggle" aria-expanded={groups.workspace} onClick={() => toggle('workspace')}>Workspace <span aria-hidden="true">{groups.workspace ? '⌄' : '›'}</span></Button>
-      {groups.workspace && <div className="nav-items"><a href="/" aria-current={path === '/' ? 'page' : undefined} onClick={event => { event.preventDefault(); navigate('/'); }}><span aria-hidden="true">⌂</span><span>Home</span>{recentQuestions.length>0&&<span className="nav-count">{recentQuestions.length}</span>}</a><a href="/connectors" aria-current={path.startsWith('/connectors') ? 'page' : undefined} onClick={event => { event.preventDefault(); navigate('/connectors'); }}><span aria-hidden="true">♧</span><span>Connectors</span></a><a href="/dictionary" aria-current={path.startsWith('/dictionary') ? 'page' : undefined} onClick={event => { event.preventDefault(); navigate('/dictionary'); }}><span aria-hidden="true">▤</span><span>Dictionary</span></a><a href="/lineage" aria-current={path.startsWith('/lineage') || path.startsWith('/er') ? 'page' : undefined} onClick={event => { event.preventDefault(); navigate('/lineage'); }}><span aria-hidden="true">⌘</span><span>Lineage</span></a></div>}
-      <Button className="section-toggle" aria-expanded={groups.platform} onClick={() => toggle('platform')}>Platform <span aria-hidden="true">{groups.platform ? '⌄' : '›'}</span></Button>
-      {groups.platform && <div className="nav-items"><a href="/agents" onClick={event=>{event.preventDefault();navigate('/agents');}}><span aria-hidden="true">♙</span><span>Agents</span></a><a href="/bi-reports" onClick={event=>{event.preventDefault();navigate('/bi-reports');}}><span aria-hidden="true">▧</span><span>BI reports</span></a><a href="/hub" onClick={event=>{event.preventDefault();navigate('/hub');}}><span aria-hidden="true">◈</span><span>Hub integrations</span></a><a href="/approval-matrix" onClick={event => { event.preventDefault(); navigate('/approval-matrix'); }}><span aria-hidden="true">✓</span><span>Approval matrix</span></a><a href="/controls" onClick={event => { event.preventDefault(); navigate('/controls'); }}><span aria-hidden="true">⚙</span><span>Controls</span></a></div>}
+      {NAV_SECTIONS.map(section=><React.Fragment key={section.id}>
+        {!sidebarCollapsed&&<Button className="section-toggle" aria-expanded={groups[section.id]} onClick={() => toggle(section.id)}>{section.label} <span aria-hidden="true">{groups[section.id] ? '⌄' : '›'}</span></Button>}
+        {(sidebarCollapsed||groups[section.id])&&<div className="nav-items" role={sidebarCollapsed?'group':undefined} aria-label={sidebarCollapsed?section.label:undefined}>{section.items.map(item=>{
+          const count=item.href==='/'?recentQuestions.length:0;
+          return <a key={item.href} href={item.href} aria-current={item.current(path)?'page':undefined} aria-label={sidebarCollapsed?item.label:undefined} data-tip={sidebarCollapsed?item.label:undefined} onClick={event=>{event.preventDefault();navigate(item.href);}}><span aria-hidden="true">{item.icon}</span><span className="nav-label">{item.label}</span>{count>0&&<span className="nav-count">{count}</span>}</a>;
+        })}</div>}
+      </React.Fragment>)}
     </nav>
     <div className="recent"><Button className="section-toggle" aria-expanded={groups.recent} onClick={() => toggle('recent')}>Recent conversations <span aria-hidden="true">{groups.recent ? '⌄' : '›'}</span></Button>{groups.recent&&<div className="recent-list">{conversations.length?conversations.slice(0,8).map(item=><Button key={item.conversationId} variant="ghost" title={item.title} onClick={()=>void startRecentConversation(item.conversationId)}><span aria-hidden="true">◌</span>{item.title}</Button>):<p>No conversations yet. Start a question and your threads will appear here.</p>}</div>}</div>
-    <div className="profile"><Button variant="ghost" aria-haspopup="menu" aria-expanded={profileOpen} onClick={() => setProfileOpen(value => !value)}><span className="avatar">{initials(user?.displayName)}</span><span className="profile-name"><b>{user?.displayName||'Account'}</b></span><span aria-hidden="true">⌃</span></Button>{profileOpen && <div role="menu"><Button variant="ghost" role="menuitem" onClick={() => navigate('/my-agent')}>My agent</Button><Button variant="ghost" role="menuitem" onClick={() => navigate('/invites')}>Invite members</Button><Button variant="ghost" role="menuitem" onClick={() => navigate('/reports')}>Reports</Button><Button variant="ghost" role="menuitem" onClick={() => navigate('/usage')}>Usage</Button><Button variant="ghost" role="menuitem" onClick={signOut}>Sign out</Button></div>}</div>
-  </aside><main className="main"><header className="topbar"><span>Scale Insyght</span></header><div className="view" id="main-content">{error && <p className="error" role="alert">{error}</p>}{page}</div>{notificationsOpen && <NotificationPanel notifications={notifications} close={() => setNotificationsOpen(false)} markRead={markRead} />}</main></div>;
+    <div className="profile" ref={profileRef}><Button variant="ghost" aria-haspopup="menu" aria-expanded={profileOpen} aria-label={sidebarCollapsed?`Account menu for ${user?.displayName||"your account"}`:undefined} data-tip={sidebarCollapsed&&!profileOpen?(user?.displayName||"Account"):undefined} onClick={() => setProfileOpen(value => !value)}><span className="avatar">{initials(user?.displayName)}</span><span className="profile-name"><b>{user?.displayName||'Account'}</b></span><span aria-hidden="true">⌃</span></Button>{profileOpen && <div role="menu" aria-label="Account"><Button variant="ghost" role="menuitem" onClick={() => navigate('/my-agent')}>My agent</Button><Button variant="ghost" role="menuitem" onClick={() => navigate('/invites')}>Invite members</Button><Button variant="ghost" role="menuitem" onClick={() => navigate('/reports')}>Reports</Button><Button variant="ghost" role="menuitem" onClick={() => navigate('/usage')}>Usage</Button><Button variant="ghost" role="menuitem" onClick={signOut}>Sign out</Button></div>}</div>
+  </aside><main className="main"><header className="topbar"><span>Scale Insyght</span></header><div className="view" id="main-content">{error && <p className="error" role="alert">{error}</p>}{page}</div>{tip&&<div className="strip-tip" role="tooltip" style={{top:tip.top,left:tip.left}}>{tip.text}</div>}{notificationsOpen && <NotificationPanel notifications={notifications} close={() => setNotificationsOpen(false)} markRead={markRead} />}</main></div>;
 }
 
 createRoot(document.getElementById('root')!).render(<App />);
