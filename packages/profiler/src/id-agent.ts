@@ -28,7 +28,9 @@ export function formatPattern(values: string[]): string {
  * key columns joined to them), stores each distinct value only as a keyed fingerprint (HMAC with a per-tenant key,
  * non-negotiable 6), and proposes probable SAME_AS matches with other connections' identifier fields from fingerprint
  * overlap. Raw values are read, fingerprinted and dropped in this process; none is stored, logged or sent to a model. */
-export async function runIdAgent(pool: Pool, input: { tenantId: string; connectionId: string; connector: ReadOnlyConnector; masterKey?: Uint8Array; scope?:ConnectorScope }): Promise<{ fields: number; fingerprinted: number; matches: number } | undefined> {
+export async function runIdAgent(pool: Pool, input: { tenantId: string; connectionId: string; connector: ReadOnlyConnector; masterKey?: Uint8Array; scope?:ConnectorScope;
+  /** K13: called after each step (a field fingerprinted, then a field matched), so a long run shows progress. */
+  onProgress?: (done: number, planned: number) => Promise<void> }): Promise<{ fields: number; fingerprinted: number; matches: number } | undefined> {
   if (!input.masterKey || input.masterKey.byteLength < 32 || !input.connector.distinctValues) return undefined;
   const candidates = await withTenant(pool, input.tenantId, async (client) => {
     const fields = await client.query<{ asset_id: string; qualified_name: string; table_name: string; tags: string[] | null; evidence: Array<{ tag: string; detection: string }> | null }>(
@@ -52,30 +54,35 @@ export async function runIdAgent(pool: Pool, input: { tenantId: string; connecti
         declared: (row.evidence ?? []).some((item) => item.tag === 'identifier' && item.detection === 'declared'), home: homeTable };
     });
   });
-  const read: Array<{ candidate: Candidate; format: string; fingerprints: Buffer[] | null }> = [];
-  for (const candidate of candidates) {
-    if(columnScope(input.scope,candidate.table,candidate.column))continue;
-    const values = await input.connector.distinctValues(candidate.table, candidate.column, ID_FINGERPRINT_LIMIT);
-    read.push({ candidate, format: values ? formatPattern(values) : 'too_many_values', fingerprints: values ? values.map((value) => Buffer.from(fingerprintIdentifier(input.masterKey!, input.tenantId, value), 'hex')) : null });
-  }
-  return withTenant(pool, input.tenantId, async (client) => {
-    let fingerprinted = 0;
-    for (const item of read) {
-      const { candidate } = item;
+  // K13: each field is read, fingerprinted and written in its own transaction, as that field's complete current value
+  // set (replaced atomically, never mixed across runs); matching then runs field by field. Nothing waits for one long
+  // transaction at the end, and progress is reported after every step.
+  const fields = candidates.filter((candidate) => !columnScope(input.scope, candidate.table, candidate.column));
+  const planned = fields.length * 2; let done = 0; let fingerprinted = 0;
+  const step = async () => { done++; await input.onProgress?.(done, planned); };
+  await input.onProgress?.(0, planned);
+  for (const candidate of fields) {
+    const values = await input.connector.distinctValues!(candidate.table, candidate.column, ID_FINGERPRINT_LIMIT);
+    const format = values ? formatPattern(values) : 'too_many_values';
+    const fingerprints = values ? values.map((value) => Buffer.from(fingerprintIdentifier(input.masterKey!, input.tenantId, value), 'hex')) : null;
+    await withTenant(pool, input.tenantId, async (client) => {
       await client.query(
         `INSERT INTO graph.id_fields(tenant_id,asset_id,field_name,entity_hint,format_pattern,detection,confidence,active) VALUES($1,$2,$3,$4,$5,$6,$7,true)
          ON CONFLICT(tenant_id,asset_id,field_name) DO UPDATE SET entity_hint=EXCLUDED.entity_hint,format_pattern=EXCLUDED.format_pattern,detection=EXCLUDED.detection,confidence=EXCLUDED.confidence,active=true,detected_at=clock_timestamp()`,
-        [input.tenantId, candidate.assetId, candidate.name, candidate.home ?? candidate.table, item.format, candidate.declared ? 'declared' : 'inferred', candidate.tagged ? 1 : 0.9]);
+        [input.tenantId, candidate.assetId, candidate.name, candidate.home ?? candidate.table, format, candidate.declared ? 'declared' : 'inferred', candidate.tagged ? 1 : 0.9]);
       // Fingerprints are the field's current value set: replaced on every profile, never mixed across runs.
       await client.query('DELETE FROM graph.id_fingerprints WHERE tenant_id=$1 AND asset_id=$2 AND field_name=$3', [input.tenantId, candidate.assetId, candidate.name]);
-      if (item.fingerprints?.length) {
-        for (let start = 0; start < item.fingerprints.length; start += 5_000) {
+      if (fingerprints?.length) {
+        for (let start = 0; start < fingerprints.length; start += 5_000) {
           await client.query(`INSERT INTO graph.id_fingerprints(tenant_id,asset_id,field_name,fingerprint,key_version) SELECT $1,$2,$3,unnest($4::bytea[]),1 ON CONFLICT DO NOTHING`,
-            [input.tenantId, candidate.assetId, candidate.name, item.fingerprints.slice(start, start + 5_000)]);
+            [input.tenantId, candidate.assetId, candidate.name, fingerprints.slice(start, start + 5_000)]);
         }
         fingerprinted++;
       }
-    }
+    });
+    await step();
+  }
+  return withTenant(pool, input.tenantId, async (client) => {
     await client.query(`UPDATE graph.id_fields i SET active=false FROM graph.assets a WHERE i.tenant_id=$1 AND a.tenant_id=i.tenant_id AND a.asset_id=i.asset_id AND a.source_id=$2 AND NOT (i.asset_id=ANY($3::uuid[]))`,
       [input.tenantId, input.connectionId, candidates.map((candidate) => candidate.assetId)]);
     // Probable matches with other connections, from shared fingerprints only. With no identifier fields in any other
@@ -84,7 +91,11 @@ export async function runIdAgent(pool: Pool, input: { tenantId: string; connecti
     const others = (await client.query<{ ids: string[] | null }>(
       `SELECT array_agg(i.asset_id) AS ids FROM graph.id_fields i JOIN graph.assets a ON a.tenant_id=i.tenant_id AND a.asset_id=i.asset_id AND a.active
        WHERE i.tenant_id=$1 AND i.active AND a.source_id<>$2`, [input.tenantId, input.connectionId])).rows[0]?.ids ?? [];
-    const overlaps = !others.length ? { rows: [] as Array<{ here: string; there: string; there_source: string; shared: string; here_count: string; there_count: string; here_format: string; there_format: string }> } : await client.query<{ here: string; there: string; there_source: string; shared: string; here_count: string; there_count: string; here_format: string; there_format: string }>(
+    // Matched one field at a time (K13): the same lookup, narrowed to the field, so a source with many identifier fields
+    // and millions of values reports progress instead of running one query for an hour.
+    const overlaps: { rows: Array<{ here: string; there: string; there_source: string; shared: string; here_count: string; there_count: string; here_format: string; there_format: string }> } = { rows: [] };
+    for (const candidate of fields) {
+      if (others.length) overlaps.rows.push(...(await client.query<{ here: string; there: string; there_source: string; shared: string; here_count: string; there_count: string; here_format: string; there_format: string }>(
       `WITH fields AS(SELECT i.asset_id,a.source_id,i.format_pattern FROM graph.id_fields i JOIN graph.assets a ON a.tenant_id=i.tenant_id AND a.asset_id=i.asset_id AND a.active WHERE i.tenant_id=$1 AND i.active),
          sizes AS(SELECT f.asset_id,count(*) AS n FROM graph.id_fingerprints f JOIN fields USING(asset_id) WHERE f.tenant_id=$1 GROUP BY f.asset_id),
          -- Each fingerprint of this source looks up its matches by (tenant_id, fingerprint). The rows were written in this
@@ -95,10 +106,12 @@ export async function runIdAgent(pool: Pool, input: { tenantId: string; connecti
            FROM fields h
            JOIN graph.id_fingerprints hf ON hf.tenant_id=$1 AND hf.asset_id=h.asset_id
            CROSS JOIN LATERAL (SELECT t.asset_id FROM graph.id_fingerprints t WHERE t.tenant_id=$1 AND t.fingerprint=hf.fingerprint AND t.asset_id=ANY($3::uuid[]) OFFSET 0) tf
-           WHERE h.source_id=$2 AND tf.asset_id IN (SELECT asset_id FROM fields WHERE source_id<>$2)
+           WHERE h.source_id=$2 AND h.asset_id=$4 AND tf.asset_id IN (SELECT asset_id FROM fields WHERE source_id<>$2)
            GROUP BY h.asset_id,tf.asset_id)
        SELECT s.here,s.there,t.source_id AS there_source,s.n::text AS shared,hs.n::text AS here_count,ts.n::text AS there_count,h.format_pattern AS here_format,t.format_pattern AS there_format
-       FROM shared s JOIN fields h ON h.asset_id=s.here JOIN fields t ON t.asset_id=s.there JOIN sizes hs ON hs.asset_id=s.here JOIN sizes ts ON ts.asset_id=s.there`, [input.tenantId, input.connectionId, others]);
+       FROM shared s JOIN fields h ON h.asset_id=s.here JOIN fields t ON t.asset_id=s.there JOIN sizes hs ON hs.asset_id=s.here JOIN sizes ts ON ts.asset_id=s.there`, [input.tenantId, input.connectionId, others, candidate.assetId])).rows);
+      await step();
+    }
     // One best match per field and other source: almost all of the smaller set matched, then the closest set size.
     const best = new Map<string, { here: string; there: string; shared: number; hereCount: number; thereCount: number; containment: number; jaccard: number }>();
     for (const row of overlaps.rows) {

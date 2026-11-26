@@ -1341,7 +1341,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
   app.get<{Params:{connectionId:string}}>('/api/connections/:connectionId/profile',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const result=await withTenant(options.pool,current.tenantId,async(client)=>client.query(
-      `SELECT j.job_id,j.job_type,j.state,j.phase,j.planned_count,j.failure_code,j.limited_count,j.failed_count,j.listed_count,j.profiled_count,j.inaccessible_count,j.created_at,j.updated_at,
+      `SELECT j.job_id,j.job_type,j.state,j.phase,j.planned_count,j.failure_code,j.limited_count,j.failed_count,j.id_steps_planned,j.id_steps_done,j.listed_count,j.profiled_count,j.inaccessible_count,j.created_at,j.updated_at,
         count(DISTINCT a.asset_id)::int AS dataset_count,count(DISTINCT f.asset_id)::int AS field_count
        FROM profiler.jobs j LEFT JOIN graph.assets a ON a.tenant_id=j.tenant_id AND a.source_id=j.connection_id AND a.asset_type='dataset'
        LEFT JOIN graph.assets f ON f.tenant_id=j.tenant_id AND f.source_id=j.connection_id AND f.asset_type='field'

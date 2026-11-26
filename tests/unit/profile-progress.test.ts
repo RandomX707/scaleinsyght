@@ -15,6 +15,11 @@ describe('profile progress', () => {
     expect(half.steps.map((step) => step.state)).toEqual(['done', 'done', 'now', 'todo']);
     expect(half.steps[2]!.label).toBe('Profiling tables, views and columns: 600 of 1,200 objects');
     expect(profileProgress({ state: 'RUNNING', phase: 'relationships', planned_count: 3, profiled_count: 3 }).percent).toBe(92);
+    // K13: the ID agent's steps move the ring from 90% to 99% and show on the last step.
+    const ids = profileProgress({ state: 'RUNNING', phase: 'relationships', planned_count: 3, profiled_count: 3, id_steps_planned: 80, id_steps_done: 20 });
+    expect(ids.percent).toBe(92);
+    expect(ids.steps[3]).toEqual({ label: 'Mapping relationships, lineage and IDs: IDs 25% done', state: 'now' });
+    expect(profileProgress({ state: 'RUNNING', phase: 'relationships', id_steps_planned: 80, id_steps_done: 80 }).percent).toBe(99);
   });
   it('is green and complete at the end, including jobs written before background profiling', () => {
     expect(profileProgress({ state: 'COMPLETED', phase: 'done' })).toMatchObject({ percent: 100, running: false, complete: true, message: null });

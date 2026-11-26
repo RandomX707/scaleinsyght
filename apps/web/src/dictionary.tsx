@@ -19,12 +19,12 @@ type Summary = {
 type ListItem = { name: string; kind: string; columns: number | null; matchedColumns?: number };
 type Group = { key: string; label: string; total: number; items: ListItem[]; nextOffset: number | null };
 type ObjectList = { tab: 'standard' | 'custom'; hasVendorDictionary: boolean; counts: { standard: number; custom: number }; sqlCoverage: { routines: number; captured: number; encrypted: number } | null; groups: Group[]; sqlHits: Array<{ name: string; kind: string; matches: number; lines: Array<{ line: number; text: string }> }> };
-type Column = { name: string; label: string | null; dataType: string | null; nullable: boolean | null; tags: string[]; inferredTags?: string[]; key: boolean; statsWithheld: boolean; withheldReason?: string; nullRate: number | null; distinctCount: number | null; description: string | null; usedBy: number };
+type Column = { statisticsEstimated?: boolean; name: string; label: string | null; dataType: string | null; nullable: boolean | null; tags: string[]; inferredTags?: string[]; key: boolean; statsWithheld: boolean; withheldReason?: string; nullRate: number | null; distinctCount: number | null; description: string | null; usedBy: number };
 type Detail = {
   source: { connectionId: string; name: string; type: string };
   name: string; kind: string; custom: boolean; procedureKind: string | null;
   description: { text: string; origin: 'imported' | 'dbt' | 'drafted' | 'approved' | 'edited'; by?: string | null; at?: string | null } | null;
-  stats: { rows: number | null; lastProfiled: string | null; dependentReports: number; builtBy: string[] } | null;
+  stats: { rows: number | null; rowsEstimated?: boolean; lastProfiled: string | null; dependentReports: number; builtBy: string[] } | null;
   columns: Column[]; keys: Array<{ column: string; references: string; evidence: string }>;
   joins: Array<{ column: string; otherTable: string; otherColumn: string; direction: string; evidenceMethod: string; reviewStatus: string; verification: string | null; confidence: number | null; probable: boolean }>;
   tests: Array<{ column: string | null; test: string }>;
@@ -276,7 +276,7 @@ function ObjectView(props: { detail: Detail; base: string; isOpen: (id: string) 
   const isTableLike = !definition || ['view', 'materialized_view'].includes(definition.kind);
   const stats: Array<[string, string]> = definition && !['view', 'materialized_view', 'calculated_field'].includes(definition.kind)
     ? [[definition.encrypted ? 'Unknown' : number(definition.reads.length), definition.reads.length === 1 ? 'table it reads' : 'tables it reads'], [definition.encrypted ? 'Unknown' : number(definition.writes.length), definition.writes.length === 1 ? 'table it writes' : 'tables it writes'], [number(definition.calledBy.length), 'called by'], [detail.custom ? 'Your team' : 'Vendor', 'built by']]
-    : detail.stats && !['calculated_field', 'worksheet'].includes(detail.kind) ? [[detail.stats.rows === null ? '—' : number(detail.stats.rows), 'rows'], [detail.stats.lastProfiled ? new Date(detail.stats.lastProfiled).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—', 'last profiled'],
+    : detail.stats && !['calculated_field', 'worksheet'].includes(detail.kind) ? [[detail.stats.rows === null ? '—' : `${detail.stats.rowsEstimated ? '≈ ' : ''}${number(detail.stats.rows)}`, detail.stats.rowsEstimated ? 'rows (estimated)' : 'rows'], [detail.stats.lastProfiled ? new Date(detail.stats.lastProfiled).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—', 'last profiled'],
       [number(detail.stats.dependentReports), detail.stats.dependentReports === 1 ? 'report depends on it' : 'reports depend on it'], [detail.stats.builtBy.length ? detail.stats.builtBy.map(shortName).join(', ') : detail.custom ? 'Your team' : detail.source.type === 'dbt' ? 'dbt' : 'Source', 'built by']] : [];
   const defTabs = definition && definition.kind !== 'calculated_field' ? [
     { id: 'overview', label: 'Overview' }, { id: 'parameters', label: `Parameters ${definition.parameters.length}` }, { id: 'tables', label: `Tables and columns ${definition.tablesAndColumns.length}` }, { id: 'calls', label: 'Calls' }, { id: 'sql', label: 'SQL' },
@@ -366,11 +366,12 @@ function ObjectView(props: { detail: Detail; base: string; isOpen: (id: string) 
             {detail.tests.filter((test) => test.column === column.name).map((test) => <Badge key={test.test} tone="muted">{test.test}</Badge>)}</td>
           <td className="mono">{column.dataType ?? '—'}{column.nullable === false ? ' not null' : ''}</td>
           {detail.columns.some((item) => item.label && item.label !== item.name) && <td>{column.label && column.label !== column.name ? column.label : ''}</td>}
-          <td>{column.statsWithheld ? <span title={column.withheldReason}>Withheld</span> : column.nullRate === null ? '—' : `${(column.nullRate * 100).toLocaleString('en-US', { maximumFractionDigits: column.nullRate < 0.01 && column.nullRate > 0 ? 2 : 1 })}%`}</td>
-          <td>{column.statsWithheld ? <span title={column.withheldReason}>Withheld</span> : column.distinctCount === null ? '—' : number(column.distinctCount)}</td>
+          <td>{column.statsWithheld ? <span title={column.withheldReason}>Withheld</span> : column.nullRate === null ? '—' : <>{estimate(column)}{`${(column.nullRate * 100).toLocaleString('en-US', { maximumFractionDigits: column.nullRate < 0.01 && column.nullRate > 0 ? 2 : 1 })}%`}</>}</td>
+          <td>{column.statsWithheld ? <span title={column.withheldReason}>Withheld</span> : column.distinctCount === null ? '—' : <>{estimate(column)}{number(column.distinctCount)}</>}</td>
           <td>{column.usedBy ? `${number(column.usedBy)}` : '—'}</td>
           <td className="dict-cell-actions">{column.tags.map((tag) => <Badge key={tag} tone="bad">{tag.charAt(0).toUpperCase() + tag.slice(1).replaceAll('_', ' ')}{column.inferredTags?.includes(tag) ? ' · inferred' : ''}</Badge>)}<Button size="small" onClick={() => props.navigate('/lineage/columns')}>Lineage</Button></td>
         </tr>)}</tbody></table> : <p>No columns recorded.</p>}
+      {detail.columns.some((column) => column.statisticsEstimated) && <p className="dict-note">Figures marked ≈ are estimates: this table is large, so null rates come from a sample of its rows and distinct counts from the database’s own statistics.</p>}
       {detail.columns.some((column) => column.statsWithheld) && <p className="dict-note">Withheld: tagged columns are never sampled, so their statistics are not collected.</p>}
     </Section>}
     {(isTableLike || detail.usedBy.length > 0) && <Section id="used" title={`Used by ${detail.usedBy.length}`} open={props.isOpen('used')} onToggle={props.toggle}>
@@ -418,4 +419,9 @@ function ExportNotice(props: { open: boolean; sources: Source[]; current: string
       <div className="dict-actions"><Button variant="primary" disabled={busy} onClick={() => void run()}>{busy ? 'Exporting…' : 'Export'}</Button><Button onClick={props.onClose}>Cancel</Button></div>
     </div>
   </Modal>;
+}
+
+/** Decision 59: a figure from a sample or the database's statistics is marked as an estimate, in words for screen readers. */
+function estimate(column: { statisticsEstimated?: boolean }) {
+  return column.statisticsEstimated ? <span className="dict-estimate" title="Estimated from a sample of this large table">≈ <span className="sr-only">about </span></span> : null;
 }

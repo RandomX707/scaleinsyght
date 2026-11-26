@@ -190,7 +190,7 @@ export async function runProfile(
       const datasetId = await ensureAsset(client, input.tenantId, input.connectionId, object.assetKey, 'dataset', object.qualifiedName);
       tableAssets.set(object.qualifiedName, datasetId);
       const structural = { object_type: object.type, columns: profile.columns.map(({ name, dataType, isNullable }) => ({ name, data_type: dataType, nullable: isNullable })) };
-      const statistics = { row_count: profile.rowCount };
+      const statistics = { row_count: profile.rowCount, ...(profile.rowCountEstimated ? { row_count_estimated: true } : {}) };
       const version = await ensureAssetVersion(client, input.tenantId, datasetId, structural, statistics);
       if (version.created) createdVersions += 1;
       for (const column of profile.columns) {
@@ -205,16 +205,16 @@ export async function runProfile(
         // Measured statistics are part of the field version: a changed measurement writes a new version and profile row,
         // never overwriting history. Unmeasured and tagged columns keep an empty statistics object.
         const measured = column.statistics.distinctCount === null && column.statistics.nullRate === null ? {}
-          : { null_rate: column.statistics.nullRate, distinct_count: column.statistics.distinctCount, average_length: column.statistics.averageLength ?? null };
+          : { null_rate: column.statistics.nullRate, distinct_count: column.statistics.distinctCount, average_length: column.statistics.averageLength ?? null, ...(column.statistics.estimated ? { estimated: true } : {}) };
         const fieldVersion = await ensureAssetVersion(client, input.tenantId, fieldAssetId, fieldStructural, measured);
         if (fieldVersion.created) createdVersions += 1;
         await client.query(
-          `INSERT INTO profiler.field_profiles(tenant_id,asset_id,profile_version,field_name,data_type,is_nullable,sensitivity_tags,null_rate,distinct_count,display_name,sensitivity_evidence,average_length)
-           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12)
+          `INSERT INTO profiler.field_profiles(tenant_id,asset_id,profile_version,field_name,data_type,is_nullable,sensitivity_tags,null_rate,distinct_count,display_name,sensitivity_evidence,average_length,statistics_estimated)
+           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13)
            ON CONFLICT(tenant_id,asset_id,profile_version,field_name) DO NOTHING`,
           [input.tenantId, fieldAssetId, fieldVersion.version, column.name, column.dataType, column.isNullable,
             tags, column.statistics.nullRate, column.statistics.distinctCount,
-            column.label && column.label !== column.name ? column.label : null, JSON.stringify(evidence.filter((item) => keep(item.tag))), column.statistics.averageLength ?? null],
+            column.label && column.label !== column.name ? column.label : null, JSON.stringify(evidence.filter((item) => keep(item.tag))), column.statistics.averageLength ?? null, column.statistics.estimated === true],
         );
         await client.query(
           `INSERT INTO graph.relationships(tenant_id,family,relationship_type,from_asset_id,to_asset_id,granularity)
@@ -323,7 +323,8 @@ export async function runProfile(
   if(input.jobType==='nightly'&&scope?.policy?.newObjects==='approve'){
     await queueNewObjectReview(pool,input.tenantId,input.connectionId,discovery.listOnlyObjects.map(object=>object.qualifiedName));
   }
-  const ids = await runIdAgent(pool, { ...input, ...(scope?{scope}:{}), ...(masterKey ? { masterKey } : {}) });
+  const ids = await runIdAgent(pool, { ...input, ...(scope?{scope}:{}), ...(masterKey ? { masterKey } : {}),
+    ...(job ? { onProgress: (done: number, planned: number) => reportDiscovery(pool, job, { idDone: done, idPlanned: planned }) } : {}) });
   const findings: number = await recordFindings(pool, { tenantId: input.tenantId, connectionId: input.connectionId, jobId, before, inventory:new Set([...discovery.objects,...discovery.unchangedObjects,...discovery.excludedObjects,...discovery.listOnlyObjects,...discovery.inaccessibleObjects].map(object=>object.qualifiedName)), checked: discovery.objects.length + discovery.unchangedObjects.length, scannedObjects: new Set(profiles.map(({ object }) => object.qualifiedName)) });
   if (input.jobType === 'nightly' && findings > 0) {
     const summary = { listed: discovery.coverage.listed, profiled: profiles.length, unchanged: discovery.unchanged, findings };

@@ -29,6 +29,8 @@ export interface ObjectProfile {
   version: string;
   /** Set when the source ran out of time on this object: columns and row count are known, samples and statistics are not. */
   limited?: 'timeout';
+  /** The row count is the database's catalog estimate, not an exact count (decision 59). */
+  rowCountEstimated?: boolean;
   columns: Array<{
     name: string;
     /** Original column text when it differs from the SQL identifier (for example a workbook header). */
@@ -44,9 +46,10 @@ export interface ObjectProfile {
   rowCount: number | null;
 }
 
-export type ColumnStatistics = { nullRate: number | null; distinctCount: number | null; averageLength?: number | null };
-/** Tables above this row count are profiled for structure and row count only; their column statistics stay unmeasured. */
-export const COLUMN_STATISTICS_ROW_LIMIT = 10_000_000;
+/** estimated: from a sample or the database's catalog statistics, not a full scan (decision 59). */
+export type ColumnStatistics = { nullRate: number | null; distinctCount: number | null; averageLength?: number | null; estimated?: boolean };
+/** Large tables are sampled rather than skipped (decision 59, ./sampling.ts). */
+export { EXACT_COUNT_LIMIT, STATISTICS_SAMPLE_ROWS, SENSITIVITY_SAMPLE_ROWS, samplePercent, catalogEstimate, distinctFromCatalog } from './sampling.js';
 export const UNMEASURED: ColumnStatistics = { nullRate: null, distinctCount: null, averageLength: null };
 
 /** Inferred references: at least this share of non-null values must match a unique target key to be proposed as a

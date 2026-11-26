@@ -406,14 +406,14 @@ export async function erNeighbourhood(client: PoolClient, input: { tenantId: str
   };
 }
 
-type ColumnRow = { name: string; label: string | null; data_type: string | null; is_nullable: boolean | null; tags: string[] | null; tag_evidence: Array<{ tag: string; detection: string }> | null; null_rate: string | null; distinct_count: string | null; description: string | null; used_by: number; field_id: string };
+type ColumnRow = { name: string; label: string | null; data_type: string | null; is_nullable: boolean | null; statistics_estimated?: boolean | null; tags: string[] | null; tag_evidence: Array<{ tag: string; detection: string }> | null; null_rate: string | null; distinct_count: string | null; description: string | null; used_by: number; field_id: string };
 
 async function objectDetail(client: PoolClient, tenantId: string, connectionId: string, name: string) {
   const source = await sourceFor(client, tenantId, connectionId); if (!source) return null;
   const objects = await listObjects(client, tenantId, source);
   const listed = objects.find((object) => object.name === name); if (!listed) return null;
   const datasetSource = source.connector_type === 'dbt' && source.source_ref?.startsWith('warehouse:') ? source.source_ref.slice('warehouse:'.length) : connectionId;
-  const dataset = (await client.query<{ asset_id: string; asset_type: string; statistics: { row_count?: number } | null; structural: { columns?: Array<{ name: string }> } | null; first_seen_at: Date }>(
+  const dataset = (await client.query<{ asset_id: string; asset_type: string; statistics: { row_count?: number; row_count_estimated?: boolean } | null; structural: { columns?: Array<{ name: string }> } | null; first_seen_at: Date }>(
     `SELECT a.asset_id,a.asset_type,v.statistics,v.structural_attributes AS structural,a.first_seen_at FROM graph.assets a
        LEFT JOIN LATERAL(SELECT statistics,structural_attributes FROM graph.asset_versions WHERE tenant_id=a.tenant_id AND asset_id=a.asset_id ORDER BY version DESC LIMIT 1)v ON true
      WHERE a.tenant_id=$1 AND a.source_id=ANY($2::uuid[]) AND a.qualified_name=$3 AND a.active AND a.asset_type IN ('dataset','report','field')
@@ -435,11 +435,11 @@ async function objectDetail(client: PoolClient, tenantId: string, connectionId: 
   let flowUsers: Array<{ name: string; source: string; type: string }> = []; let dependentReports = 0; let lastProfiled: Date | null = null;
   if (dataset) {
     const columnRows = (await client.query<ColumnRow>(
-      `SELECT f.qualified_name AS name,p.display_name AS label,p.data_type,p.is_nullable,p.sensitivity_tags AS tags,p.sensitivity_evidence AS tag_evidence,p.null_rate::text,p.distinct_count::text,f.asset_id AS field_id,
+      `SELECT f.qualified_name AS name,p.display_name AS label,p.data_type,p.is_nullable,p.sensitivity_tags AS tags,p.sensitivity_evidence AS tag_evidence,p.null_rate::text,p.distinct_count::text,p.statistics_estimated,f.asset_id AS field_id,
          (SELECT description FROM graph.dictionary_descriptions dd WHERE dd.tenant_id=f.tenant_id AND dd.source_id=$3 AND dd.table_name=$4 AND dd.column_name=split_part(f.qualified_name,'.',array_length(string_to_array(f.qualified_name,'.'),1))) AS description,
          (SELECT count(*) FROM graph.relationships u WHERE u.tenant_id=f.tenant_id AND u.family='data_flow' AND u.from_asset_id=f.asset_id)::int AS used_by
        FROM graph.relationships c JOIN graph.assets f ON f.tenant_id=c.tenant_id AND f.asset_id=c.to_asset_id AND f.active
-       LEFT JOIN LATERAL(SELECT display_name,data_type,is_nullable,sensitivity_tags,sensitivity_evidence,null_rate,distinct_count,captured_at FROM profiler.field_profiles WHERE tenant_id=f.tenant_id AND asset_id=f.asset_id ORDER BY profile_version DESC LIMIT 1)p ON true
+       LEFT JOIN LATERAL(SELECT display_name,data_type,is_nullable,sensitivity_tags,sensitivity_evidence,null_rate,distinct_count,statistics_estimated,captured_at FROM profiler.field_profiles WHERE tenant_id=f.tenant_id AND asset_id=f.asset_id ORDER BY profile_version DESC LIMIT 1)p ON true
        WHERE c.tenant_id=$1 AND c.family='structural' AND c.relationship_type='CONTAINS' AND c.from_asset_id=$2`, [tenantId, dataset.asset_id, connectionId, name])).rows;
     // Columns in the order the source declares them; fields without a recorded order follow by name.
     const order = new Map((dataset.structural?.columns ?? []).map((column, index) => [column.name, index]));
@@ -460,7 +460,7 @@ async function objectDetail(client: PoolClient, tenantId: string, connectionId: 
       const tags = row.tags ?? []; const withheld = tags.length > 0;
       return { name: own(row.name) || row.name, label: row.label, dataType: row.data_type, nullable: row.is_nullable, tags, inferredTags: (row.tag_evidence ?? []).filter((item) => item.detection === 'inferred').map((item) => item.tag), key: keyed.has(row.name),
         statsWithheld: withheld, ...(withheld ? { withheldReason } : {}), nullRate: withheld || row.null_rate === null ? null : Number(row.null_rate), distinctCount: withheld || row.distinct_count === null ? null : Number(row.distinct_count),
-        description: row.description, usedBy: row.used_by };
+        ...(!withheld && row.statistics_estimated ? { statisticsEstimated: true } : {}), description: row.description, usedBy: row.used_by };
     });
     keys = references.filter((ref) => ref.evidence_method === 'declared' && ref.from_table === name).map((ref) => ({ column: ref.from_name.slice(name.length + 1), references: ref.to_name, evidence: 'declared' }));
     joins = references.map((ref) => {
@@ -522,7 +522,7 @@ async function objectDetail(client: PoolClient, tenantId: string, connectionId: 
     source: { connectionId, name: source.name, type: source.connector_type },
     name, kind: listed.kind, custom: listed.custom, procedureKind: listed.procedureKind,
     description,
-    stats: dataset ? { rows: typeof dataset.statistics?.row_count === 'number' ? dataset.statistics.row_count : null, lastProfiled, dependentReports, builtBy: builtBy.map((item) => item.name) } : null,
+    stats: dataset ? { rows: typeof dataset.statistics?.row_count === 'number' ? dataset.statistics.row_count : null, ...(dataset.statistics?.row_count_estimated ? { rowsEstimated: true } : {}), lastProfiled, dependentReports, builtBy: builtBy.map((item) => item.name) } : null,
     columns, keys, joins, tests,
     usedBy: [...readBy.map((item) => ({ name: item.name, kind: item.kind, how: 'reads', source: source.name })), ...builtBy.map((item) => ({ name: item.name, kind: item.kind, how: `writes (${item.mode})`, source: source.name })),
       ...flowUsers.map((item) => ({ name: item.name, kind: item.type === 'report' ? 'report' : 'dataset', how: 'data flows into it', source: item.source }))],
