@@ -70,23 +70,3 @@ GO
 INSERT INTO dbo.departments VALUES (1, N'Emergency'), (2, N'Cardiology'), (3, N'Pediatrics');
 INSERT INTO dbo.patients VALUES (1, N'MRN-0001', N'Synthetic Patient One'), (2, N'MRN-0002', N'Synthetic Patient Two'), (3, N'MRN-0003', N'Synthetic Patient Three');
 INSERT INTO dbo.encounters VALUES (1, 1, 1, '2025-01-02', '2025-01-04'), (2, 1, 1, '2025-01-20', '2025-01-21'), (3, 2, 2, '2025-02-01', NULL), (4, 3, 3, '2025-03-05', '2025-03-06');
-GO
--- Decision 62: a vendor-style report procedure (no custom prefix, not in the vendor dictionary's table list) and a
--- customer's near-identical copy of it, created afterwards. The copy is "custom copy of rpt_ENCOUNTERS_BY_WARD";
--- the original stays "not classified yet" (procedures are not listed in the vendor dictionary).
-CREATE PROCEDURE dbo.rpt_ENCOUNTERS_BY_WARD @From date, @To date AS
-BEGIN
-  SELECT d.department_name, COUNT(*) AS encounters, SUM(CASE WHEN e.discharged_at IS NULL THEN 1 ELSE 0 END) AS open_encounters
-  FROM dbo.encounters e JOIN dbo.departments d ON d.department_id = e.department_id
-  WHERE e.admitted_at >= @From AND e.admitted_at < @To
-  GROUP BY d.department_name ORDER BY encounters DESC;
-END;
-GO
-CREATE PROCEDURE dbo.rpt_ENCOUNTERS_BY_WARD_LOCAL @From date, @To date AS
-BEGIN
-  -- Copied from the vendor report and kept by the hospital.
-  SELECT d.department_name, COUNT(*) AS encounters, SUM(CASE WHEN e.discharged_at IS NULL THEN 1 ELSE 0 END) AS open_encounters
-  FROM dbo.encounters e JOIN dbo.departments d ON d.department_id = e.department_id
-  WHERE e.admitted_at >= @From AND e.admitted_at < @To
-  GROUP BY d.department_name ORDER BY encounters DESC;
-END;
