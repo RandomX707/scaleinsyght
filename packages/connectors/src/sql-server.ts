@@ -1,5 +1,6 @@
 import { columnScope, objectScope } from './scope.js';
 import { CATALOG_ROW_LIMIT } from './limits.js';
+import { inIdSample, sqlServerIdSampleCondition } from './id-sample.js';
 import { DEFAULT_SAMPLING, SENSITIVITY_MIN_VALUES, SENSITIVITY_VALUES, type SamplingLimits, catalogEstimate, samplePercent } from './sampling.js';
 import { createHash } from 'node:crypto';
 import sql from 'mssql';
@@ -195,12 +196,14 @@ export class SqlServerConnector implements ReadOnlyConnector {
     return references;
   }
 
-  async distinctValues(qualifiedName: string, column: string, limit: number): Promise<string[] | null> {
+  /** Distinct values for the ID agent; with sample, only values the consistent rule keeps (decision 61), selected in SQL. */
+  async distinctValues(qualifiedName: string, column: string, limit: number, options: { sample?: boolean } = {}): Promise<string[] | null> {
     const object = this.objects.get(qualifiedName); if (!object) throw new Error('asset_not_found');
     if (!(await this.columns(object)).some((item) => item.column_name === column)) throw new Error('column_not_found');
     const ref = quote(column);
-    const result = await (await this.request()).query<{ v: string }>(`SELECT DISTINCT TOP (${limit + 1}) CAST(${ref} AS nvarchar(400)) AS v FROM ${quote(object.schema_name)}.${quote(object.object_name)} WHERE ${ref} IS NOT NULL`);
-    return result.recordset.length > limit ? null : result.recordset.map((row) => row.v);
+    const result = await (await this.request()).query<{ v: string }>(`SELECT DISTINCT TOP (${limit + 1}) CAST(${ref} AS nvarchar(400)) AS v FROM ${quote(object.schema_name)}.${quote(object.object_name)} WHERE ${ref} IS NOT NULL${options.sample ? ` AND ${sqlServerIdSampleCondition(`CAST(${ref} AS nvarchar(400))`)}` : ''}`);
+    const rows = options.sample ? result.recordset.filter((row) => inIdSample(row.v)) : result.recordset;
+    return result.recordset.length > limit ? null : rows.map((row) => row.v);
   }
 
   async viewDefinitions(): Promise<Array<{ qualifiedName: string; schema: string; definition: string | null }>> {

@@ -48,6 +48,7 @@ export interface ObjectProfile {
 
 /** estimated: from a sample or the database's catalog statistics, not a full scan (decision 59). */
 export type ColumnStatistics = { nullRate: number | null; distinctCount: number | null; averageLength?: number | null; estimated?: boolean };
+export { ID_SAMPLE_MINIMUM_DISTINCT, ID_SAMPLE_MODULUS, inIdSample, postgresIdSampleCondition, sqlServerIdSampleCondition } from './id-sample.js';
 /** Large tables are sampled rather than skipped (decision 59, ./sampling.ts). */
 export { EXACT_COUNT_LIMIT, STATISTICS_SAMPLE_ROWS, SENSITIVITY_SAMPLE_ROWS, samplePercent, catalogEstimate, distinctFromCatalog } from './sampling.js';
 export const UNMEASURED: ColumnStatistics = { nullRate: null, distinctCount: null, averageLength: null };
@@ -85,7 +86,7 @@ export interface ReadOnlyConnector {
   /** Distinct non-null values of one column, as text, for keyed fingerprinting by the ID agent. Values stay in memory:
    * they are fingerprinted and discarded, never stored, logged or sent to a model (non-negotiable 6). Returns null
    * when the column has more than limit distinct values. */
-  distinctValues?(qualifiedName:string,column:string,limit:number):Promise<string[]|null>;
+  distinctValues?(qualifiedName:string,column:string,limit:number,options?:{sample?:boolean}):Promise<string[]|null>;
   executeQueryIntent?(intent:unknown,includeCellSize?:boolean):Promise<{sql:string;rows:Array<Record<string,unknown>>}>;
   /** Original text of a column (for example a workbook header) when it differs from its SQL identifier. */
   categoryValues?(table: string, column: string): Promise<{sql: string; values: string[]} | undefined>;

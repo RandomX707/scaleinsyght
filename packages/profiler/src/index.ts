@@ -163,8 +163,10 @@ export async function runProfile(
       [input.tenantId, jobId, input.connectionId, input.jobType, input.scheduled ?? false],
     );
     await client.query(
+      // A background job reclaimed after an earlier attempt saved its profile reruns this step: it must not collide
+      // with that attempt's rows (test_emr, 27 Nov 2026).
       `INSERT INTO profiler.events(tenant_id,job_id,sequence,event_type,safe_payload)
-       VALUES($1,$2,1,'profile_started',$3::jsonb)`,
+       VALUES($1,$2,1,'profile_started',$3::jsonb) ON CONFLICT (tenant_id,job_id,sequence) DO NOTHING`,
       [input.tenantId, jobId, JSON.stringify({ connector_type: input.connector.type, job_type: input.jobType })],
     );
 
@@ -286,7 +288,8 @@ export async function runProfile(
       const assetId = row.assetKey ? tableAssets.get(row.name) ?? null : null;
       await client.query(
         `INSERT INTO profiler.job_objects(tenant_id,job_id,object_name,object_type,scope_mode,state,asset_id)
-         VALUES($1,$2,$3,$4,$5,$6,$7)`,
+         VALUES($1,$2,$3,$4,$5,$6,$7)
+         ON CONFLICT (tenant_id,job_id,object_name) DO UPDATE SET object_type=EXCLUDED.object_type,scope_mode=EXCLUDED.scope_mode,state=EXCLUDED.state,asset_id=EXCLUDED.asset_id`,
         [input.tenantId, jobId, row.name, row.type, row.mode, row.state, assetId],
       );
     }
@@ -309,7 +312,7 @@ export async function runProfile(
     );
     await client.query(
       `INSERT INTO profiler.events(tenant_id,job_id,sequence,event_type,safe_payload)
-       VALUES($1,$2,2,$3,$4::jsonb)`,
+       VALUES($1,$2,2,$3,$4::jsonb) ON CONFLICT (tenant_id,job_id,sequence) DO NOTHING`,
       [input.tenantId, jobId, input.jobType === 'nightly' ? 'schema_changed' : 'profile_completed', JSON.stringify(summary)],
     );
 
