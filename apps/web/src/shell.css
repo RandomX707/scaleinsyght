@@ -46,7 +46,7 @@ h3 { font-size: 14px; line-height: 1.3; }
 .app--collapsed { grid-template-columns: 64px minmax(0,1fr); }
 .app--collapsed .sidebar { padding-right: 8px; padding-left: 8px; }
 .app--collapsed .brand { justify-content: center; padding-right: 0; padding-left: 0; }
-.app--collapsed .brand b,.app--collapsed .collapse-sidebar,.app--collapsed .new-chat:not(:focus),.app--collapsed .nav-notifications span:not(:first-child),.app--collapsed .section-toggle,.app--collapsed .nav-items a span:nth-child(2),.app--collapsed .nav-items a .nav-count,.app--collapsed .recent,.app--collapsed .profile-name,.app--collapsed .profile>button>span:last-child { display: none; }
+.app--collapsed .brand b,.app--collapsed .nav-label,.app--collapsed .nav-items a .nav-count,.app--collapsed .recent,.app--collapsed .profile-name,.app--collapsed .profile>button>span:last-child { display: none; }
 .app--collapsed .nav-items a { justify-content: center; padding: 8px 4px; }
 .main { position: relative; min-width: 0; min-height: 0; height: 100%; display: flex; flex-direction: column; overflow: hidden; }
 .main > .topbar { z-index: 2; flex: none; height: 48px; display: flex; align-items: center; gap: 12px; padding: 8px 24px; border-bottom: 1px solid var(--line); background: var(--surface); }
@@ -296,7 +296,7 @@ h3 { font-size: 14px; line-height: 1.3; }
 @media(max-width:900px){.connector-grid{grid-template-columns:repeat(2,minmax(0,1fr));}.connector-type-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
 @media(max-width:560px){.connector-grid,.connector-type-grid{grid-template-columns:1fr;}}
 @media(max-width:760px) { .profile-overview { gap:18px; padding:16px; }.profile-ring { width:112px;height:112px; }.profile-ring>div { width:90px;height:90px; }.profile-categories { grid-template-columns:1fr; }.dictionary-summary { grid-template-columns:1fr; }.profile-stats { grid-template-columns:1fr 1fr; } }
-@media(max-width:760px) { .app { grid-template-columns: 64px minmax(0,1fr); } .sidebar { padding: 12px 8px; } .brand b,.collapse-sidebar,.sidebar .new-chat:not(:focus),.nav-notifications span:not(:first-child),.section-toggle,.nav-items a span:nth-child(2),.recent,.profile-name,.profile>button>span:last-child { display:none; } .brand { justify-content:center; padding-right:0;padding-left:0; } .nav-items a { justify-content:center;padding:8px 4px; } .main>.topbar { padding:8px 14px; } .view { padding:18px 14px; } .lineage-layout { grid-template-columns:1fr; } .phase3-toolbar label { width:100%; } }
+@media(max-width:760px) { .main>.topbar { padding:8px 14px; } .view { padding:18px 14px; } .lineage-layout { grid-template-columns:1fr; } .phase3-toolbar label { width:100%; } }
 
 .er-node--view { border-style: dashed !important; border-color: var(--primary) !important; }
 .er-link text { fill: var(--muted); font-size: 10px; }
@@ -400,3 +400,20 @@ h3 { font-size: 14px; line-height: 1.3; }
 @keyframes profile-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .profile-steps li.is-now > span:first-child { animation: none; border-top-color: #EA580C; } }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
+/* "Show impact" in the lineage detail panel. */
+.lineage-impact { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.lineage-impact-result { display: grid; gap: 8px; }
+.lineage-impact-result h3 { margin: 0; font-size: 14px; }
+.lineage-impact-result p { margin: 0; }
+.lineage-impact-result ul { margin: 4px 0 0; padding-left: 18px; display: grid; gap: 2px; }
+/* Collapsed sidebar: an icon strip with every item, a visible expand button, tooltips and a profile menu beside it. */
+.app--collapsed .brand { flex-direction: column; gap: 6px; }
+.app--collapsed .collapse-sidebar { display: inline-flex; width: 40px; height: 32px; justify-content: center; }
+.app--collapsed .new-chat,.app--collapsed .nav-notifications { position: relative; justify-content: center; width: 44px; margin: 0 auto; padding: 8px 0; }
+.app--collapsed .nav-notifications .nav-count { position: absolute; top: 2px; right: 2px; min-width: 16px; height: 16px; padding: 0 4px; font-size: 10px; }
+.app--collapsed nav .nav-items + .nav-items { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+.app--collapsed .nav-items a { width: 44px; margin: 0 auto; }
+.app--collapsed .profile > .ui-button { justify-content: center; padding: 6px 0; }
+.app--collapsed .profile [role=menu] { position: fixed; right: auto; bottom: 12px; left: 72px; width: 220px; }
+.strip-tip { position: fixed; z-index: 40; transform: translateY(-50%); padding: 4px 8px; border-radius: 6px; background: var(--ink); color: #fff; font-size: 12px; white-space: nowrap; pointer-events: none; }
+.app--collapsed .profile { margin-top: auto; }

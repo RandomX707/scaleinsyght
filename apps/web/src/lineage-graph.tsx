@@ -9,6 +9,11 @@ export type LineageGraphData = {
   tableEdges: Edge[]; columnEdges: Edge[]; gaps: Array<{ gapId: string; assetId: string; reason: string }>;
 };
 type Filter = Method | 'gap';
+/** What changes downstream if this object changes: GET /api/lineage/:assetId/impact. */
+export type Impact = {
+  path: { asset_ids: string[]; assets: Array<{ asset_id: string; qualified_name: string; asset_type: string; active: boolean }>; gaps: Array<{ gap_id?: string; reason?: string }> };
+  reports: Array<{ asset_id: string; name: string; tool: string | null; safe_path: string | null }>;
+};
 
 /** Evidence colours are fixed everywhere (CLAUDE.md section 11). */
 const EVIDENCE: Record<Filter, { label: string; color: string; dash: string }> = {
@@ -47,7 +52,7 @@ function closure(start: string, edges: Edge[]) {
   return { up, down, nodes: new Set([start, ...up, ...down]), edges: used };
 }
 
-export function LineageGraph(props: { data: LineageGraphData; onAsk: (question: string) => void; onOpenDictionary: (sourceId: string) => void }) {
+export function LineageGraph(props: { data: LineageGraphData; onAsk: (question: string) => void; onOpenDictionary: (sourceId: string) => void; loadImpact: (assetId: string) => Promise<Impact> }) {
   const { data } = props;
   const [off, setOff] = useState<Partial<Record<Filter, boolean>>>({});
   const [open, setOpen] = useState<Record<string, boolean>>({});
@@ -55,6 +60,19 @@ export function LineageGraph(props: { data: LineageGraphData; onAsk: (question: 
   const [column, setColumn] = useState<string | null>(null);
   const [edgeId, setEdgeId] = useState<string | null>(null);
   const [query, setQuery] = useState(''); const [find, setFind] = useState('');
+  const [impact, setImpact] = useState<{ assetId: string; state: 'loading' | 'error' | Impact } | null>(null);
+  async function showImpact(assetId: string) {
+    setImpact({ assetId, state: 'loading' });
+    try { const result = await props.loadImpact(assetId); setImpact((current) => current?.assetId === assetId ? { assetId, state: result } : current); }
+    catch { setImpact((current) => current?.assetId === assetId ? { assetId, state: 'error' } : current); }
+  }
+  const impactPanel = (assetId: string, name: string) => {
+    const current = impact?.assetId === assetId ? impact.state : null;
+    if (!current) return <Button size="small" onClick={() => void showImpact(assetId)}>Show impact</Button>;
+    if (current === 'loading') return <p role="status">Finding what depends on {name}…</p>;
+    if (current === 'error') return <p role="alert" className="error">The impact could not be loaded. <Button size="small" onClick={() => void showImpact(assetId)}>Try again</Button></p>;
+    return <ImpactSummary name={name} assetId={assetId} impact={current} />;
+  };
 
   const layout = useMemo(() => {
     const lane = new Map<string, number>();
@@ -180,6 +198,7 @@ export function LineageGraph(props: { data: LineageGraphData; onAsk: (question: 
     const gaps = ordered.flatMap((id) => gapsFor(id));
     detail = <article className="lineage-detail"><div className="lineage-detail-head"><div><p className="faint">Column flow · {dataset.sourceName}</p><h2><code>{dataset.name}.{field.name}</code></h2></div>
       <div className="lineage-actions"><Button size="small" onClick={() => props.onAsk(`Where does ${dataset.name}.${field.name} come from?`)}>Ask where it comes from</Button><Button size="small" onClick={() => props.onAsk(`What breaks if ${dataset.name}.${field.name} changes?`)}>Ask what depends on it</Button></div></div>
+      <div className="lineage-impact">{impactPanel(column, `${dataset.name}.${field.name}`)}</div>
       <div className="lineage-stats"><div><b>{sources.length}</b><span>source columns</span></div><div><b>{ordered.length - 1}</b><span>columns on its path</span></div><div><b>{gaps.length}</b><span>missing links</span></div></div>
       <Table caption="Every column on its path" headers={['System', 'Column', '', 'How it gets its value']} rows={ordered.map((id) => {
         const inputs = columnEdges.filter((item) => item.to === id && columnClosure.edges.has(item));
@@ -200,7 +219,8 @@ export function LineageGraph(props: { data: LineageGraphData; onAsk: (question: 
       <div><h3>Direct inputs</h3><ul className="lineage-inputs">{tableEdges.filter((item) => item.to === selected).map((item) => <li key={item.relationshipId}><b>{label(item.from)}</b> {methodChip(item.method)}<div className="faint">{item.explanations.join(' ')}</div></li>)}
         {gaps.map((gap) => <li key={gap.gapId}>{methodChip('gap')}<div className="faint">{gap.reason}</div></li>)}
         {!tableEdges.some((item) => item.to === selected) && !gaps.length && <li className="faint">Nothing upstream: this is where the data starts.</li>}</ul></div>
-      <div className="lineage-actions"><Button size="small" onClick={() => props.onOpenDictionary(dataset.sourceId)}>Open in Dictionary</Button></div></article>
+      <div className="lineage-actions"><Button size="small" onClick={() => props.onOpenDictionary(dataset.sourceId)}>Open in Dictionary</Button></div>
+      <div className="lineage-impact">{impactPanel(selected, dataset.name)}</div></article>
       <article className="lineage-detail"><h2>Columns and where they come from</h2><Table caption={`Columns of ${dataset.name}`} headers={['Column', 'Type', 'Comes from']} rows={columns.map((field) => {
         const inputs = data.columnEdges.filter((item) => item.to === field.assetId);
         return [<Button variant="ghost" size="small" key="c" className="lineage-link" onClick={() => chooseColumn(field.assetId)}><code>{field.name}</code></Button>, field.dataType ?? '', <div key="s">{inputs.map((item) => <div key={item.relationshipId}>{methodChip(item.method)} <code>{label(item.from)}</code></div>)}{gapsFor(field.assetId).map((gap) => <div key={gap.gapId}>{methodChip('gap')} <span className="muted">{gap.reason}</span></div>)}{!inputs.length && !gapsFor(field.assetId).length && <span className="faint">Starts here</span>}</div>];
@@ -248,4 +268,38 @@ export function LineageAnswer(props: { lineage: LineageAnswerData; onOpen: () =>
     {lineage.gaps.map((gap, index) => <p key={index} className="graph-gap"><span className="lineage-method" style={{ color: EVIDENCE.gap.color, background: `${EVIDENCE.gap.color}1a` }}>Missing</span> <code>{gap.asset}</code>: {gap.reason}</p>)}
     <div className="lineage-actions"><Button size="small" onClick={props.onOpen}>Open in Lineage</Button></div>
   </div>;
+}
+
+const IMPACT_KIND: Record<string, string> = { dataset: 'Tables and views', field: 'Columns', report: 'Reports', metric: 'Metrics' };
+/** What a change to one object affects: downstream objects by kind (not the object itself, not systems), each report once,
+ * and an honest note when a missing link means the impact may be wider. */
+export function impactSummary(assetId: string, impact: Impact) {
+  const reportIds = new Set(impact.reports.map((report) => report.asset_id));
+  const downstream = impact.path.assets.filter((asset) => asset.asset_id !== assetId && asset.asset_type !== 'system' && !reportIds.has(asset.asset_id));
+  const groups: Array<{ kind: string; label: string; assets: typeof downstream }> = [];
+  for (const asset of downstream) {
+    let group = groups.find((item) => item.kind === asset.asset_type);
+    if (!group) { group = { kind: asset.asset_type, label: IMPACT_KIND[asset.asset_type] ?? asset.asset_type, assets: [] }; groups.push(group); }
+    group.assets.push(asset);
+  }
+  const total = downstream.length + impact.reports.length;
+  const gaps = impact.path.gaps;
+  return {
+    total, groups, reports: impact.reports,
+    headline: total ? `${total.toLocaleString('en-US')} ${total === 1 ? 'object depends' : 'objects depend'} on it downstream.` : 'Nothing downstream depends on it in the connected sources.',
+    gapNote: gaps.length ? `${gaps.length === 1 ? 'One link on this path is missing' : `${gaps.length} links on this path are missing`}, so the impact may be wider than shown.` : null,
+    gapReasons: gaps.map((gap) => gap.reason).filter((reason): reason is string => Boolean(reason)),
+  };
+}
+
+/** Everything downstream of one table or column, the reports that use it, and any missing link that could hide more. */
+export function ImpactSummary(props: { name: string; assetId: string; impact: Impact }) {
+  const summary = impactSummary(props.assetId, props.impact);
+  return <section className="lineage-impact-result" aria-label={`Impact of a change to ${props.name}`}>
+    <h3>If {props.name} changes</h3>
+    <p>{summary.headline}</p>
+    {summary.groups.map((group) => <div key={group.kind}><p className="faint">{group.label} ({group.assets.length})</p><ul>{group.assets.map((asset) => <li key={asset.asset_id}><code>{asset.qualified_name}</code>{!asset.active && <Badge tone="muted">No longer active</Badge>}</li>)}</ul></div>)}
+    {summary.reports.length > 0 && <div><p className="faint">Reports ({summary.reports.length})</p><ul>{summary.reports.map((report) => <li key={report.asset_id}><b>{report.name}</b>{report.tool && <span className="faint"> · {connectorLabel[report.tool] ?? report.tool}</span>}{report.safe_path && /^https?:\/\//i.test(report.safe_path) && <> <a href={report.safe_path} target="_blank" rel="noreferrer" aria-label={`Open ${report.name}`}>Open ↗</a></>}</li>)}</ul></div>}
+    {summary.gapNote && <p className="graph-gap">{summary.gapNote}{summary.gapReasons.map((reason, index) => <span key={index} className="faint"> {reason}</span>)}</p>}
+  </section>;
 }

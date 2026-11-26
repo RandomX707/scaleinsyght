@@ -10,7 +10,7 @@ import './phase3.css';
 import './phase5.css';
 import './shell.css';
 import './lineage.css';
-import { LineageAnswer, LineageGraph, type LineageGraphData } from './lineage-graph.js';
+import { LineageAnswer, LineageGraph, type Impact, type LineageGraphData } from './lineage-graph.js';
 import { IdTrace, type IdEntity } from './id-trace.js';
 import { FindingsPanel, type Findings } from './findings.js';
 import { errorCopy } from './error-copy.js';
@@ -27,11 +27,7 @@ function notificationCopy(item:Notification){
   if(item.type==='nightly')return {title:'Nightly profile completed',detail:profiled?`${profiled.toLocaleString()} objects profiled from ${listed.toLocaleString()} listed.`:'Overnight profiling and lineage checks are complete.'};
   return {title:'Your workspace was updated',detail:profiled?`${profiled.toLocaleString()} objects profiled and available for analysis.`:'A recent profile or review has new information.'};
 }
-type IdentifierField = { asset_id: string; field_name: string; entity_hint: string | null; format_pattern: string; detection: string; confidence: number; assertion_id: string | null };
-type GraphView = { asset_ids: string[]; assets: Array<{ asset_id: string; qualified_name: string; asset_type: string; active: boolean }>; edges: Array<{ relationship_id: string; from_asset_id: string; to_asset_id: string; granularity: string }>; assertions: Array<{ assertion_id: string; relationship_id: string; evidence_method: string; review_status: string; verification: string; confidence_score: number | null; evidence_ids: string[]; explanation: string | null }>; gaps: Array<{ gap_id: string; reason: string }>; coverage: number; observable: boolean };
 type GraphReport = { asset_id: string; name: string; tool: string | null; safe_path: string | null; lineage_assertions: number };
-type GraphSnapshot = { snapshot_id: string; captured_at: string; event_cursor: number; asset_count: number };
-type GraphAsset = { asset_id: string; qualified_name: string; asset_type: string; active: boolean };
 type ErRelationship = { relationship_type: string; granularity: string; from_name: string; to_name: string; from_label?: string; to_label?: string; evidence_method: string; review_status: string; verification: string; confidence_score:number|null; explanation:string|null; evidence_ids:string[]; low_confidence?:boolean };
 type ErTable={qualified_name:string;object_type:string|null;more_links?:number;columns:Array<{name:string;label?:string;data_type:string|null;is_nullable:boolean|null}>};
 type ConversationSummary={conversationId:string;title:string;updatedAt:string;turnCount:number};
@@ -41,7 +37,6 @@ function uiCopy(value:string) {
 }
 function displayAssetName(value:string) { return value; }
 function initials(name:string|undefined) { return name?.trim().split(/\s+/).filter(Boolean).slice(0,2).map(part=>part[0]?.toUpperCase()).join('')??''; }
-function assetTypeLabel(value:string) { return ({dataset:'Table',field:'Column',report:'Report',metric:'Measure'} as Record<string,string>)[value]??'Connected object'; }
 function adapterDisplayName(value:string) { return uiCopy(value); }
 function connectorTypeLabel(type:string) {
   const labels: Record<string,string> = {
@@ -53,65 +48,41 @@ function connectorTypeLabel(type:string) {
 function connectionDisplayName(connection:Connection) { return connection.displayName || 'Connected source'; }
 
 function LineageWorkspace(props: { path: string; navigate: (path: string) => void }) {
-  const [lineage,setLineage]=useState<GraphView|null>(null);
-  const [assets,setAssets]=useState<GraphAsset[]>([]);
-  const [reports,setReports]=useState<GraphReport[]>([]); const [snapshots,setSnapshots]=useState<GraphSnapshot[]>([]);
-  const [selected,setSelected]=useState(''); const [direction]=useState<'both'|'upstream'|'downstream'>('both');
-  const [fromSnapshot,setFromSnapshot]=useState(''); const [toSnapshot,setToSnapshot]=useState(''); const [changes,setChanges]=useState<Array<{event_type:string;asset_id:string|null}>>([]);
+  const [reports,setReports]=useState<GraphReport[]>([]);
   const [message]=useState(''); const [error,setError]=useState('');
   const [lineageGraph,setLineageGraph]=useState<LineageGraphData|null>(null);
   const [erRelationships,setErRelationships]=useState<ErRelationship[]>([]);const [showPossible,setShowPossible]=useState(false);const [erTables,setErTables]=useState<ErTable[]>([]);
   // ER explorer at scale (spec 2.8): one table and its neighbours, never the whole catalog.
   const [erFocus,setErFocus]=useState<string>(()=>new URLSearchParams(location.search).get('focus')??'');const [erDepth,setErDepth]=useState(1);const [erHidden,setErHidden]=useState(0);
   const [erQuery,setErQuery]=useState('');const [erMatches,setErMatches]=useState<Array<{name:string;links:number}>>([]);
-  const selectedRef=useRef('');const lineageRequestRef=useRef(0);
-  const view=props.path.startsWith('/bi-reports')?'reports':props.path.startsWith('/er')?'er':props.path.includes('/columns')?'columns':props.path.includes('/ids')?'ids':props.path.includes('/compare')?'compare':props.path.includes('/impact/')?'impact':'lineage';
-  useEffect(()=>{if(view!=='lineage'&&view!=='columns')return;void api<LineageGraphData>('/api/lineage/graph').then(setLineageGraph).catch(reason=>setError(reason instanceof Error?reason.message:'Lineage could not be loaded.'));},[view]);
+  const view=props.path.startsWith('/bi-reports')?'reports':props.path.startsWith('/er')?'er':props.path.includes('/ids')?'ids':'lineage';
+  useEffect(()=>{if(view!=='lineage')return;void api<LineageGraphData>('/api/lineage/graph').then(setLineageGraph).catch(reason=>setError(reason instanceof Error?reason.message:'Lineage could not be loaded.'));},[view]);
   const [idEntities,setIdEntities]=useState<IdEntity[]|null>(null);
   useEffect(()=>{if(view!=='ids')return;void api<{entities:IdEntity[]}>('/api/ids/entities').then(result=>setIdEntities(result.entities)).catch(reason=>setError(reason instanceof Error?reason.message:'Identifiers could not be loaded.'));},[view]);
-  async function reload(){
-    const requestId=++lineageRequestRef.current;
-    const [identifierData,reportData,snapshotData,assetData]=await Promise.all([
-      api<{fields:IdentifierField[]}>('/api/ids'),api<{reports:GraphReport[]}>('/api/reports'),api<{snapshots:GraphSnapshot[]}>('/api/lineage/snapshots'),api<{assets:GraphAsset[]}>('/api/lineage/assets'),
-    ]);
-    setReports(reportData.reports);setSnapshots(snapshotData.snapshots);setAssets(assetData.assets);
-    const currentSelection=selectedRef.current||selected;
-    const defaultAsset=assetData.assets.find(asset=>asset.asset_type==='dataset')?.asset_id??assetData.assets[0]?.asset_id??identifierData.fields[0]?.asset_id??'';
-    const active=(currentSelection&&assetData.assets.some(asset=>asset.asset_id===currentSelection))?currentSelection:defaultAsset;
-    if(active){selectedRef.current=active;setSelected(active);}
-    if(active&&requestId===lineageRequestRef.current){const data=await api<GraphView>(`/api/lineage?assetId=${encodeURIComponent(active)}&direction=${direction}`);if(requestId===lineageRequestRef.current)setLineage(data);}
-    if(!fromSnapshot&&snapshotData.snapshots[0])setFromSnapshot(snapshotData.snapshots[0].snapshot_id);
-    if(!toSnapshot&&snapshotData.snapshots.at(-1))setToSnapshot(snapshotData.snapshots.at(-1)!.snapshot_id);
-  }
-  // Assets, reports and snapshots are only used by the impact, compare and BI reports views; the ER explorer and the
-  // lineage graph load their own data, so a 5,000-table catalog is not downloaded for them (spec 2.8).
-  const needsCatalog=view==='impact'||view==='compare'||view==='reports';
+  async function reload(){setReports((await api<{reports:GraphReport[]}>('/api/reports')).reports);}
+  // Only the BI reports page needs the report list; the ER explorer and the lineage graph load their own data (spec 2.8).
+  const needsCatalog=view==='reports';
   useEffect(()=>{if(!needsCatalog)return;void reload().catch(reason=>setError(reason instanceof Error?reason.message:'Lineage could not be loaded.'));},[needsCatalog]);
   const erConnection=new URLSearchParams(location.search).get('connection')??'';
   useEffect(()=>{if(view!=='er'||!erConnection)return;const query=new URLSearchParams({depth:String(erDepth),...(erFocus?{focus:erFocus}:{}),...(showPossible?{possible:'true'}:{})});void api<{focus:string;hiddenTables:number;relationships:ErRelationship[];tables:ErTable[]}>(`/api/connections/${encodeURIComponent(erConnection)}/er/neighbourhood?${query}`).then(result=>{setErRelationships(result.relationships);setErTables([...result.tables].sort((a,b)=>Number(b.qualified_name===result.focus)-Number(a.qualified_name===result.focus)||a.qualified_name.localeCompare(b.qualified_name)));setErHidden(result.hiddenTables);if(!erFocus)setErFocus(result.focus);}).catch(reason=>setError(reason instanceof Error?reason.message:'Entity relationships could not be loaded.'));},[view,erConnection,showPossible,erFocus,erDepth]);
   useEffect(()=>{if(view!=='er'||!erConnection||!erQuery.trim()){setErMatches([]);return;}const timer=setTimeout(()=>{void api<{tables:Array<{name:string;links:number}>}>(`/api/connections/${encodeURIComponent(erConnection)}/er/tables?q=${encodeURIComponent(erQuery.trim())}`).then(result=>setErMatches(result.tables)).catch(()=>setErMatches([]));},250);return()=>clearTimeout(timer);},[view,erConnection,erQuery]);
   function focusEr(table:string){setErFocus(table);setErDepth(1);setErQuery('');setErMatches([]);}
-  async function chooseAsset(assetId:string){selectedRef.current=assetId;setSelected(assetId);const requestId=++lineageRequestRef.current;try{const data=await api<GraphView>(`/api/lineage?assetId=${encodeURIComponent(assetId)}&direction=${direction}`);if(requestId===lineageRequestRef.current)setLineage(data);}catch(reason){setError(reason instanceof Error?reason.message:'Lineage could not be loaded.');}}
-  async function compare(){if(!fromSnapshot||!toSnapshot)return;try{const result=await api<{changes:typeof changes}>(`/api/lineage/snapshots/${fromSnapshot}/compare/${toSnapshot}`);setChanges(result.changes);}catch(reason){setError(reason instanceof Error?reason.message:'Snapshots could not be compared.');}}
   const diagramInset=Math.max(140,erRelationships.length*14+48);
   const erNodes=erTables.map((item,index)=>({table:item.qualified_name,objectType:item.object_type,columns:item.columns,moreLinks:item.more_links??0,x:diagramInset,y:24+index*280}));
   const erTableFor=(name:string)=>erNodes.map(node=>node.table).sort((a,b)=>b.length-a.length).find(table=>name===table||name.startsWith(`${table}.`));
   const erLinks=erRelationships.map(item=>{const from=erTableFor(item.from_name),to=erTableFor(item.to_name);return from&&to?{from,to,type:item.relationship_type,evidence:item.evidence_method,confidence:item.confidence_score,lowConfidence:item.low_confidence===true,explanation:item.explanation,fromField:item.from_label??item.from_name,toField:item.to_label??item.to_name}:null;}).filter((item):item is NonNullable<typeof item>=>Boolean(item));
   const erWidth=diagramInset+300;
   const erHeight=Math.max(320,erNodes.length*280+40);
-  return <section className="phase3-workspace"><div className="page-heading"><div><p className="eyebrow">{view==='er'?'Relationships':'Data connections'}</p><h1>{view==='ids'?'ID trace':view==='impact'?'Impact analysis':view==='compare'?'Snapshot compare':view==='reports'?'BI reports':view==='er'?'ER explorer':view==='columns'?'Column lineage':'Lineage workspace'}</h1></div></div>
-    <nav className="phase3-tabs" aria-label="Lineage workspace views"><a href="/lineage" aria-current={view==='lineage'?'page':undefined} onClick={event=>{event.preventDefault();props.navigate('/lineage');}}>Lineage</a><a href="/lineage/columns" aria-current={view==='columns'?'page':undefined} onClick={event=>{event.preventDefault();props.navigate('/lineage/columns');}}>Columns</a><a href="/er" aria-current={view==='er'?'page':undefined} onClick={event=>{event.preventDefault();props.navigate('/er');}}>ER explorer</a><a href="/lineage/ids" aria-current={view==='ids'?'page':undefined} onClick={event=>{event.preventDefault();props.navigate('/lineage/ids');}}>ID trace</a><a href="/lineage/impact" aria-current={view==='impact'?'page':undefined} onClick={event=>{event.preventDefault();props.navigate('/lineage/impact');}}>Impact</a><a href="/lineage/compare" aria-current={view==='compare'?'page':undefined} onClick={event=>{event.preventDefault();props.navigate('/lineage/compare');}}>Snapshot compare</a><a href="/bi-reports" aria-current={view==='reports'?'page':undefined} onClick={event=>{event.preventDefault();props.navigate('/bi-reports');}}>BI reports</a></nav>
+  return <section className="phase3-workspace"><div className="page-heading"><div><p className="eyebrow">{view==='er'?'Relationships':'Data connections'}</p><h1>{view==='reports'?'BI reports':view==='er'?'ER explorer':view==='ids'?'ID trace':'Lineage'}</h1></div></div>
+    {(view==='lineage'||view==='ids')&&<nav className="phase3-tabs" aria-label="Lineage workspace views"><a href="/lineage" aria-current={view==='lineage'?'page':undefined} onClick={event=>{event.preventDefault();props.navigate('/lineage');}}>Lineage</a><a href="/lineage/ids" aria-current={view==='ids'?'page':undefined} onClick={event=>{event.preventDefault();props.navigate('/lineage/ids');}}>ID trace</a></nav>}
     {view==='ids'&&(idEntities?<IdTrace entities={idEntities} lookup={async value=>(await api<{matches:Array<{assetId:string;field:string;sourceName:string}>}>('/api/ids/lookup',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({value})})).matches}/>:<p role="status">Loading identifiers…</p>)}
-    {view!=='er'&&view!=='lineage'&&view!=='columns'&&view!=='ids'&&<div className="phase3-toolbar"><label>Graph asset<Select aria-label="Graph asset" value={selected} onChange={event=>void chooseAsset(event.target.value)}><option value="">Choose an asset</option>{(assets.map(asset=>({asset_id:asset.asset_id,label:`${displayAssetName(asset.qualified_name)} · ${assetTypeLabel(asset.asset_type)}`}))).map(item=><option key={`${item.asset_id}-${item.label}`} value={item.asset_id}>{item.label}</option>)}</Select></label></div>}
     {error&&<p className="error" role="alert">{error}</p>}{message&&<p role="status">{message}</p>}
-    {(view==='lineage'||view==='columns')&&(lineageGraph?<LineageGraph data={lineageGraph} onAsk={question=>props.navigate(`/?ask=${encodeURIComponent(question)}`)} onOpenDictionary={sourceId=>props.navigate(`/dictionary?connection=${sourceId}`)}/>:<p role="status">Loading lineage…</p>)}
+    {view==='lineage'&&(lineageGraph?<LineageGraph data={lineageGraph} onAsk={question=>props.navigate(`/?ask=${encodeURIComponent(question)}`)} onOpenDictionary={sourceId=>props.navigate(`/dictionary?connection=${sourceId}`)} loadImpact={assetId=>api<Impact>(`/api/lineage/${encodeURIComponent(assetId)}/impact`)}/>:<p role="status">Loading lineage…</p>)}
     {view==='er'&&<article className="er-explorer"><div className="page-heading"><div><h2>Entity relationships</h2><p>{showPossible?'Declared foreign keys, inferred links above 0.90 confidence, and possible links below it, marked low confidence.':'Declared foreign keys and inferred links above 0.90 confidence.'}</p></div><div className="er-heading-actions"><label className="er-possible-toggle"><Input type="checkbox" checked={showPossible} onChange={event=>setShowPossible(event.target.checked)}/>Show possible relationships</label><strong>{erRelationships.length} relationships</strong></div></div>
       <div className="er-toolbar"><label className="er-search">Find a table<Input type="search" aria-label="Find a table" placeholder="Search tables" value={erQuery} onChange={event=>setErQuery(event.target.value)}/>{erMatches.length>0&&<ul className="er-matches" role="listbox" aria-label="Matching tables">{erMatches.map(match=><li key={match.name}><Button variant="ghost" size="small" className="er-match" role="option" aria-selected={match.name===erFocus} onClick={()=>focusEr(match.name)}><span>{match.name}</span><small>{match.links} {match.links===1?'link':'links'}</small></Button></li>)}</ul>}</label>
         <p>Showing <strong>{erFocus||'…'}</strong> and {erDepth===1?'its direct neighbours':'neighbours two steps away'}{erHidden?`; ${erHidden} more ${erHidden===1?'table is':'tables are'} linked but not drawn, search to open them`:''}.</p>
         {erDepth===1?<Button size="small" onClick={()=>setErDepth(2)}>Expand neighbours</Button>:<Button size="small" onClick={()=>setErDepth(1)}>Direct neighbours only</Button>}</div>
       {erNodes.length?<><div className="er-canvas-scroll"><div className="er-canvas" style={{width:erWidth,height:erHeight}}><svg className="er-links" viewBox={`0 0 ${erWidth} ${erHeight}`} role="img" aria-label="Entity relationship links"><defs><marker id="er-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" /></marker></defs>{erLinks.map((link,index)=>{const from=erNodes.find(node=>node.table===link.from)!,to=erNodes.find(node=>node.table===link.to)!,y1=from.y+84,y2=to.y+(from===to?106:84),lane=24+index*14;const kind=link.lowConfidence?'possible':link.evidence==='inferred'?'inferred':'declared';return <g key={`${link.fromField}-${link.toField}`} className={`er-link er-link--${kind}`}><path d={`M${from.x},${y1} H${lane} V${y2} H${to.x}`} markerEnd="url(#er-arrow)"/><text x={lane+4} y={(y1+y2)/2-3}>{kind==='possible'?`Low confidence · ${link.confidence??0}`:kind==='inferred'?`${link.confidence??0} confidence`:kind}</text><title>{link.fromField} to {link.toField} · {link.evidence} · {link.confidence??1} · {link.explanation??'Declared by the source schema'}</title></g>;})}</svg>{erNodes.map(node=><article className={`er-node er-node--${node.objectType==='view'?'view':'table'}`} key={node.table} style={{left:node.x,top:node.y}}><h3>{node.table}</h3>{node.table===erFocus&&<Badge tone="good">Focus</Badge>}<Badge tone={node.objectType==='view'?'primary':'muted'}>{node.objectType==='view'?'View':'Table'}</Badge><ul>{node.columns.slice(0,6).map(column=><li key={column.name}><span>{column.label??column.name.split('.').at(-1)??column.name}</span><small>{column.data_type??'Unknown type'}</small></li>)}</ul>{node.columns.length>6&&<small className="er-more">+{node.columns.length-6} more columns</small>}{node.table!==erFocus&&(node.moreLinks??0)>0&&<Button variant="ghost" size="small" onClick={()=>focusEr(node.table)}>Focus here · {node.moreLinks} more {node.moreLinks===1?'link':'links'}</Button>}<Button variant="ghost" size="small" onClick={()=>props.navigate(`/dictionary?connection=${erConnection}&object=${encodeURIComponent(node.table)}`)}>Open in Dictionary</Button></article>)}</div></div><div className="er-legend"><span><i className="er-legend-declared"/>Declared</span><span><i className="er-legend-inferred"/>Inferred · confidence shown</span>{showPossible&&<span><i className="er-legend-possible"/>Possible · low confidence, not used in answers</span>}</div><Table caption="Relationship evidence" headers={['From','To','Method','Confidence','Evidence']} rows={erLinks.map(link=>[link.fromField,link.toField,link.lowConfidence?'Inferred · low confidence':link.evidence,String(link.confidence??1),link.explanation??'Declared by the source schema'])}/></>:<EmptyState title="No entity relationships yet" description="Profile a connected source to discover declared and probable table relationships." action={<Button onClick={()=>props.navigate('/connectors')}>View connectors</Button>}/>}</article>}
-    {view==='impact'&&<article><h2>Downstream impact</h2>{lineage?.gaps.map(gap=><p className="graph-gap" key={gap.gap_id}>Incomplete path · {gap.reason}</p>)}{reports.map(report=><p key={report.asset_id}>{report.name} · {report.tool??'BI'} · {report.lineage_assertions} linked flow(s)</p>)}</article>}
-    {view==='compare'&&<article><h2>Graph changes</h2><div className="snapshot-selects"><label>Earlier snapshot<Select aria-label="Earlier snapshot" value={fromSnapshot} onChange={event=>setFromSnapshot(event.target.value)}>{snapshots.map((snapshot,index)=><option key={snapshot.snapshot_id} value={snapshot.snapshot_id}>Snapshot {index+1} · {new Date(snapshot.captured_at).toLocaleString()} · {snapshot.asset_count} assets</option>)}</Select></label><label>Later snapshot<Select aria-label="Later snapshot" value={toSnapshot} onChange={event=>setToSnapshot(event.target.value)}>{snapshots.map((snapshot,index)=><option key={snapshot.snapshot_id} value={snapshot.snapshot_id}>Snapshot {index+1} · {new Date(snapshot.captured_at).toLocaleString()} · {snapshot.asset_count} assets</option>)}</Select></label><Button onClick={()=>void compare()}>Compare snapshots</Button></div><ul>{changes.map((change,index)=><li key={`${change.event_type}-${index}`}>{change.event_type.replaceAll('_',' ').toLowerCase()} · {change.asset_id?'A connected object changed':'Workspace structure changed'}</li>)}</ul>{snapshots.length===0&&<EmptyState title="No snapshots yet" description="Snapshots appear after your connected data has been profiled."/>}</article>}
     {view==='reports'&&<article><h2>Reports and lineage status</h2>{reports.map(report=><div className="report-row" key={report.asset_id}><div><strong>{displayAssetName(report.name)}</strong><p>{report.tool?connectorTypeLabel(report.tool):'BI report'} · {report.lineage_assertions} linked flow(s)</p></div>{report.safe_path&&/^https?:\/\//i.test(report.safe_path)?<a href={report.safe_path} target="_blank" rel="noreferrer" aria-label={`Open ${displayAssetName(report.name)} in ${report.tool?connectorTypeLabel(report.tool):'the BI tool'}`}>Open ↗</a>:<span className="faint">From an uploaded file</span>}</div>)}{reports.length===0&&<EmptyState title="No reports connected" description="Connect your reporting catalog to trace reports back to their source data." action={<Button onClick={()=>props.navigate('/connectors')}>Open Connectors</Button>} />}</article>}
   </section>;
 }
@@ -181,6 +152,28 @@ function InviteAcceptPage(){
   async function accept(event:React.FormEvent){event.preventDefault();setError('');try{await api('/api/auth/invites/accept',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({tenantId,token,displayName,password})});setAccepted(true);}catch(reason){setError(reason instanceof Error?reason.message:'Invitation could not be accepted.');}}
   if(accepted)return <main className="login"><section><h1>Workspace access ready</h1><p>Your account is ready. Sign in to continue.</p><Button variant="primary" onClick={()=>location.assign(`/login?tenant=${encodeURIComponent(tenantId)}`)}>Go to sign in</Button></section><PoweredBy/></main>;
   return <main className="login"><form onSubmit={event=>void accept(event)}><div className="login-brand"><Logo/><span>insyght</span></div><p className="login-product">Scale Data Hub</p><h1>Accept invitation</h1><p>Set your name and password to join this workspace.</p><label>Your name<Input aria-label="Your name" required maxLength={120} value={displayName} onChange={event=>setDisplayName(event.target.value)}/></label><label>Create a password<Input aria-label="Create a password" type="password" minLength={12} required value={password} onChange={event=>setPassword(event.target.value)}/></label>{error&&<p role="alert" className="error">{uiCopy(error)}</p>}<Button variant="primary" type="submit" disabled={!tenantId||!token}>Accept invitation</Button></form><PoweredBy/></main>;
+}
+
+/** The collapsed sidebar is remembered per browser; a narrow screen starts collapsed when nothing is stored. */
+const NAV_SECTIONS: Array<{ id: 'workspace' | 'platform'; label: string; items: Array<{ href: string; label: string; icon: string; current: (path: string) => boolean }> }> = [
+  { id: 'workspace', label: 'Workspace', items: [
+    { href: '/', label: 'Home', icon: '⌂', current: (path) => path === '/' },
+    { href: '/connectors', label: 'Connectors', icon: '♧', current: (path) => path.startsWith('/connectors') },
+    { href: '/dictionary', label: 'Dictionary', icon: '▤', current: (path) => path.startsWith('/dictionary') },
+    { href: '/lineage', label: 'Lineage', icon: '⌘', current: (path) => path.startsWith('/lineage') || path.startsWith('/er') },
+  ] },
+  { id: 'platform', label: 'Platform', items: [
+    { href: '/agents', label: 'Agents', icon: '♙', current: (path) => path.startsWith('/agents') },
+    { href: '/bi-reports', label: 'BI reports', icon: '▧', current: (path) => path.startsWith('/bi-reports') },
+    { href: '/hub', label: 'Hub integrations', icon: '◈', current: (path) => path.startsWith('/hub') },
+    { href: '/approval-matrix', label: 'Approval matrix', icon: '✓', current: (path) => path.startsWith('/approval-matrix') },
+    { href: '/controls', label: 'Controls', icon: '⚙', current: (path) => path.startsWith('/controls') },
+  ] },
+];
+
+function loadCollapsed(): boolean {
+  try { const stored = localStorage.getItem('nav-collapsed'); if (stored !== null) return stored === 'true'; } catch { /* storage unavailable */ }
+  return typeof window !== 'undefined' && window.innerWidth <= 760;
 }
 
 function loadGroups(): NavGroups {
@@ -531,7 +524,13 @@ function App() {
   const [recentQuestions, setRecentQuestions] = useState<Array<{planId:string;question:string}>>([]);
   const [conversations,setConversations]=useState<ConversationSummary[]>([]);
   const [chatInstance, setChatInstance] = useState(0);const [chatKey,setChatKey]=useState('chat-0');
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(loadCollapsed);
+  const [tip, setTip] = useState<{ text: string; top: number; left: number } | null>(null);
+  const profileRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { try { localStorage.setItem('nav-collapsed', String(sidebarCollapsed)); } catch { /* storage unavailable: the state still works for this visit */ } setTip(null); }, [sidebarCollapsed]);
+  useEffect(() => { if (!profileOpen) return; profileRef.current?.querySelector<HTMLElement>('[role=menuitem]')?.focus();
+    const close = (event: MouseEvent | KeyboardEvent) => { if (event instanceof KeyboardEvent ? event.key === 'Escape' : !profileRef.current?.contains(event.target as Node)) { setProfileOpen(false); if (event instanceof KeyboardEvent) profileRef.current?.querySelector<HTMLElement>('[aria-haspopup=menu]')?.focus(); } };
+    document.addEventListener('keydown', close); document.addEventListener('mousedown', close); return () => { document.removeEventListener('keydown', close); document.removeEventListener('mousedown', close); }; }, [profileOpen]);
   const [error, setError] = useState('');
   async function reloadConnections() { const result = await api<{ connections: Connection[] }>('/api/connections'); setConnections(result.connections); }
   async function reloadNotifications() { const result = await api<{ notifications: Notification[] }>('/api/notifications'); setNotifications(result.notifications); }
@@ -577,19 +576,27 @@ function App() {
   else page = <AnalyticWorkspace key={chatKey} connections={connections} navigate={navigate} notifications={notifications} recentQuestions={recentQuestions} refreshConversations={refreshConversations} markRead={markRead} userName={user?.displayName??''}/>;
 
   const unreadCount=notifications.filter(item=>!item.readAt).length;
-  return <div className={`app${sidebarCollapsed?' app--collapsed':''}`}><aside className="sidebar">
-    <div className="brand"><Logo /><b>Scale Insyght</b><Button className="collapse-sidebar" variant="ghost" aria-label={sidebarCollapsed?'Expand sidebar':'Collapse sidebar'} onClick={()=>setSidebarCollapsed(value=>!value)}>◧</Button></div>
-    <Button className="new-chat" variant="secondary" onClick={newChat}><span aria-hidden="true">＋</span> New chat</Button>
-    <Button className="nav-notifications" variant="ghost" aria-expanded={notificationsOpen} onClick={() => { setNotificationsOpen(value => !value); if (!notificationsOpen) void reloadNotifications(); }}><span aria-hidden="true">♧</span><span>Notifications</span>{unreadCount>0&&<span className="nav-count">{unreadCount}</span>}</Button>
+  function showTip(target: EventTarget) {
+    const element = target instanceof Element ? target.closest<HTMLElement>('[data-tip]') : null;
+    if (!element || !sidebarCollapsed) { setTip(null); return; }
+    const rect = element.getBoundingClientRect(); setTip({ text: element.dataset.tip ?? '', top: rect.top + rect.height / 2, left: rect.right + 10 });
+  }
+  return <div className={`app${sidebarCollapsed?' app--collapsed':''}`}><aside className="sidebar" onMouseOver={event=>showTip(event.target)} onFocus={event=>showTip(event.target)} onMouseLeave={()=>setTip(null)} onBlur={()=>setTip(null)}>
+    <div className="brand"><Logo /><b>Scale Insyght</b><Button className="collapse-sidebar" variant="ghost" aria-label={sidebarCollapsed?'Expand sidebar':'Collapse sidebar'} aria-expanded={!sidebarCollapsed} data-tip={sidebarCollapsed?'Expand sidebar':undefined} onClick={()=>setSidebarCollapsed(value=>!value)}><span aria-hidden="true">{sidebarCollapsed?'»':'◧'}</span></Button></div>
+    <Button className="new-chat" variant="secondary" aria-label={sidebarCollapsed?'New chat':undefined} data-tip={sidebarCollapsed?'New chat':undefined} onClick={newChat}><span aria-hidden="true">＋</span><span className="nav-label">New chat</span></Button>
+    <Button className="nav-notifications" variant="ghost" aria-label={sidebarCollapsed?`Notifications${unreadCount?`, ${unreadCount} unread`:''}`:undefined} data-tip={sidebarCollapsed?'Notifications':undefined} aria-expanded={notificationsOpen} onClick={() => { setNotificationsOpen(value => !value); if (!notificationsOpen) void reloadNotifications(); }}><span aria-hidden="true">◍</span><span className="nav-label">Notifications</span>{unreadCount>0&&<span className="nav-count">{unreadCount}</span>}</Button>
     <nav aria-label="Main navigation">
-      <Button className="section-toggle" aria-expanded={groups.workspace} onClick={() => toggle('workspace')}>Workspace <span aria-hidden="true">{groups.workspace ? '⌄' : '›'}</span></Button>
-      {groups.workspace && <div className="nav-items"><a href="/" aria-current={path === '/' ? 'page' : undefined} onClick={event => { event.preventDefault(); navigate('/'); }}><span aria-hidden="true">⌂</span><span>Home</span>{recentQuestions.length>0&&<span className="nav-count">{recentQuestions.length}</span>}</a><a href="/connectors" aria-current={path.startsWith('/connectors') ? 'page' : undefined} onClick={event => { event.preventDefault(); navigate('/connectors'); }}><span aria-hidden="true">♧</span><span>Connectors</span></a><a href="/dictionary" aria-current={path.startsWith('/dictionary') ? 'page' : undefined} onClick={event => { event.preventDefault(); navigate('/dictionary'); }}><span aria-hidden="true">▤</span><span>Dictionary</span></a><a href="/lineage" aria-current={path.startsWith('/lineage') || path.startsWith('/er') ? 'page' : undefined} onClick={event => { event.preventDefault(); navigate('/lineage'); }}><span aria-hidden="true">⌘</span><span>Lineage</span></a></div>}
-      <Button className="section-toggle" aria-expanded={groups.platform} onClick={() => toggle('platform')}>Platform <span aria-hidden="true">{groups.platform ? '⌄' : '›'}</span></Button>
-      {groups.platform && <div className="nav-items"><a href="/agents" onClick={event=>{event.preventDefault();navigate('/agents');}}><span aria-hidden="true">♙</span><span>Agents</span></a><a href="/bi-reports" onClick={event=>{event.preventDefault();navigate('/bi-reports');}}><span aria-hidden="true">▧</span><span>BI reports</span></a><a href="/hub" onClick={event=>{event.preventDefault();navigate('/hub');}}><span aria-hidden="true">◈</span><span>Hub integrations</span></a><a href="/approval-matrix" onClick={event => { event.preventDefault(); navigate('/approval-matrix'); }}><span aria-hidden="true">✓</span><span>Approval matrix</span></a><a href="/controls" onClick={event => { event.preventDefault(); navigate('/controls'); }}><span aria-hidden="true">⚙</span><span>Controls</span></a></div>}
+      {NAV_SECTIONS.map(section=><React.Fragment key={section.id}>
+        {!sidebarCollapsed&&<Button className="section-toggle" aria-expanded={groups[section.id]} onClick={() => toggle(section.id)}>{section.label} <span aria-hidden="true">{groups[section.id] ? '⌄' : '›'}</span></Button>}
+        {(sidebarCollapsed||groups[section.id])&&<div className="nav-items" role={sidebarCollapsed?'group':undefined} aria-label={sidebarCollapsed?section.label:undefined}>{section.items.map(item=>{
+          const count=item.href==='/'?recentQuestions.length:0;
+          return <a key={item.href} href={item.href} aria-current={item.current(path)?'page':undefined} aria-label={sidebarCollapsed?item.label:undefined} data-tip={sidebarCollapsed?item.label:undefined} onClick={event=>{event.preventDefault();navigate(item.href);}}><span aria-hidden="true">{item.icon}</span><span className="nav-label">{item.label}</span>{count>0&&<span className="nav-count">{count}</span>}</a>;
+        })}</div>}
+      </React.Fragment>)}
     </nav>
     <div className="recent"><Button className="section-toggle" aria-expanded={groups.recent} onClick={() => toggle('recent')}>Recent conversations <span aria-hidden="true">{groups.recent ? '⌄' : '›'}</span></Button>{groups.recent&&<div className="recent-list">{conversations.length?conversations.slice(0,8).map(item=><Button key={item.conversationId} variant="ghost" title={item.title} onClick={()=>void startRecentConversation(item.conversationId)}><span aria-hidden="true">◌</span>{item.title}</Button>):<p>No conversations yet. Start a question and your threads will appear here.</p>}</div>}</div>
-    <div className="profile"><Button variant="ghost" aria-haspopup="menu" aria-expanded={profileOpen} onClick={() => setProfileOpen(value => !value)}><span className="avatar">{initials(user?.displayName)}</span><span className="profile-name"><b>{user?.displayName||'Account'}</b></span><span aria-hidden="true">⌃</span></Button>{profileOpen && <div role="menu"><Button variant="ghost" role="menuitem" onClick={() => navigate('/my-agent')}>My agent</Button><Button variant="ghost" role="menuitem" onClick={() => navigate('/invites')}>Invite members</Button><Button variant="ghost" role="menuitem" onClick={() => navigate('/reports')}>Reports</Button><Button variant="ghost" role="menuitem" onClick={() => navigate('/usage')}>Usage</Button><Button variant="ghost" role="menuitem" onClick={signOut}>Sign out</Button></div>}</div>
-  </aside><main className="main"><header className="topbar"><span>Scale Insyght</span></header><div className="view" id="main-content">{error && <p className="error" role="alert">{error}</p>}{page}</div>{notificationsOpen && <NotificationPanel notifications={notifications} close={() => setNotificationsOpen(false)} markRead={markRead} />}</main></div>;
+    <div className="profile" ref={profileRef}><Button variant="ghost" aria-haspopup="menu" aria-expanded={profileOpen} aria-label={sidebarCollapsed?`Account menu for ${user?.displayName||"your account"}`:undefined} data-tip={sidebarCollapsed&&!profileOpen?(user?.displayName||"Account"):undefined} onClick={() => setProfileOpen(value => !value)}><span className="avatar">{initials(user?.displayName)}</span><span className="profile-name"><b>{user?.displayName||'Account'}</b></span><span aria-hidden="true">⌃</span></Button>{profileOpen && <div role="menu" aria-label="Account"><Button variant="ghost" role="menuitem" onClick={() => navigate('/my-agent')}>My agent</Button><Button variant="ghost" role="menuitem" onClick={() => navigate('/invites')}>Invite members</Button><Button variant="ghost" role="menuitem" onClick={() => navigate('/reports')}>Reports</Button><Button variant="ghost" role="menuitem" onClick={() => navigate('/usage')}>Usage</Button><Button variant="ghost" role="menuitem" onClick={signOut}>Sign out</Button></div>}</div>
+  </aside><main className="main"><header className="topbar"><span>Scale Insyght</span></header><div className="view" id="main-content">{error && <p className="error" role="alert">{error}</p>}{page}</div>{tip&&<div className="strip-tip" role="tooltip" style={{top:tip.top,left:tip.left}}>{tip.text}</div>}{notificationsOpen && <NotificationPanel notifications={notifications} close={() => setNotificationsOpen(false)} markRead={markRead} />}</main></div>;
 }
 
 createRoot(document.getElementById('root')!).render(<App />);
