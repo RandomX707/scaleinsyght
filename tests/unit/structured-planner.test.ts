@@ -148,6 +148,27 @@ describe('display labels for key columns (decision 45)', () => {
       declared:{...perDepartment.declared,grouping_column:'dbo.departments.department_id'}};
     expect(decode(byKey).intent).toMatchObject({kind:'grouped_join',groupByTable:'right',groupBy:'department_name',groupKey:'department_id'});
   });
+  // K12: "each department" counts from the departments table, so a department with no orders shows 0.
+  const every = (item: Record<string, unknown>, known: PlannerFacts = facts(), relations = joins) => decodePlannerOutput(wrap(item,{...declaration,grouping:'department',every_group:true}), catalog, relations, known).steps[0]!;
+  it('counts from the dimension table when the question asks for every group (K12)', () => {
+    const decoded = every(perDepartment);
+    expect(decoded.intent).toMatchObject({kind:'grouped_join',leftTable:'dbo.orders',rightTable:'dbo.departments',groupByTable:'right',groupBy:'department_name',groupKey:'department_id',emptyGroups:'zero'});
+    expect(describePlan([decoded], catalog)).toBe('SQL Server hospital: the number of dbo.orders records, for each department_id, including every dbo.departments record with none, counted as 0');
+    // Without the declaration the plan is unchanged.
+    expect(decode(perDepartment).intent).not.toHaveProperty('emptyGroups');
+  });
+  it('counts from the dimension key when there is no display name to show (K12)', () => {
+    const noName = facts(); noName[0]!['dbo.departments']!.columns.department_name = stat(9, 9); noName[0]!['dbo.departments']!.columns.department_code = stat(9, 5);
+    expect(every(perDepartment, noName).intent).toMatchObject({kind:'grouped_join',groupByTable:'right',groupBy:'department_id',emptyGroups:'zero'});
+  });
+  it('leaves the plan alone without a trusted relationship or a unique dimension key (K12)', () => {
+    const inferred = [{...joins[0]!,evidence_method:'inferred',confidence_score:0.95}];
+    expect(every(perDepartment, facts(), inferred).intent).not.toHaveProperty('emptyGroups');
+    const repeatedKey = facts(); repeatedKey[0]!['dbo.departments']!.columns.department_id = stat(10);
+    expect(every(perDepartment, repeatedKey).intent).not.toHaveProperty('emptyGroups');
+    // A top-N question keeps its plan: the groups with none are not among the top.
+    expect(every({...perDepartment,order:'desc',limit:3}).intent).not.toHaveProperty('emptyGroups');
+  });
   it('attaches the join key when a grouped join groups by a unique name of the referenced table ("each department")', () => {
     const byName = {...perDepartment,kind:'grouped_join',join:'dbo.orders.department_id = dbo.departments.department_id',groupBy:'dbo.departments.department_name',
       declared:{...perDepartment.declared,grouping_column:'dbo.departments.department_name'}};
