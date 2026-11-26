@@ -90,6 +90,26 @@ describe('S6 nightly refresh, findings and review', () => {
     expect(JSON.stringify(result)).not.toContain('@example.test');
   });
 
+  // Bug 4: a notification names its source, says what changed by count with a time, and a quiet night creates none.
+  it('s6_the_nightly_notification_names_the_source_and_what_changed_and_a_quiet_night_adds_none', async () => {
+    type Item = { type: string; sourceName: string; createdAt: string; connectionId: string; counts: Record<string, number> };
+    const notifications = async () => (await server.inject({ method: 'GET', url: '/api/notifications', headers: { cookie } })).json<{ notifications: Item[] }>().notifications;
+    const nightly = (await notifications()).filter((item) => item.type === 'nightly');
+    expect(nightly).toHaveLength(1);
+    expect(nightly[0]).toMatchObject({ connectionId, sourceName: 'Shop database', createdAt: expect.any(String),
+      counts: { total: 5, tablesChanged: 1, newColumns: 1, removedColumns: 0, retypedColumns: 0, newTables: 1, tablesDropped: 1, rowCountChanges: 1, probableRelationships: 1, idMatches: 0 } });
+    expect(JSON.stringify(nightly)).not.toMatch(/shop_orders|returns|legacy_codes|@example/);
+    // Nothing changed since: the refresh runs, records no findings and notifies no one.
+    const connector = await connectorForConnection(workerPool, tenantId, connectionId);
+    try { await runProfile(workerPool, { tenantId, connectionId, connector, jobType: 'nightly' }); } finally { await connector.close?.(); }
+    const quiet = await withTenant(adminPool, tenantId, (db) => db.query<{ findings: number }>(
+      "SELECT (SELECT count(*)::int FROM profiler.findings f WHERE f.tenant_id=j.tenant_id AND f.job_id=j.job_id) AS findings FROM profiler.jobs j WHERE j.tenant_id=$1 AND j.job_type='nightly' ORDER BY j.created_at DESC LIMIT 1", [tenantId]));
+    expect(quiet.rows[0]!.findings).toBe(0);
+    expect((await notifications()).filter((item) => item.type === 'nightly')).toHaveLength(1);
+    const stored = await withTenant(adminPool, tenantId, (db) => db.query("SELECT 1 FROM core.notifications WHERE tenant_id=$1 AND notification_type='nightly'", [tenantId]));
+    expect(stored.rowCount).toBe(nightly.length * (await withTenant(adminPool, tenantId, (db) => db.query('SELECT 1 FROM core.users WHERE tenant_id=$1 AND is_active', [tenantId]))).rowCount!);
+  });
+
   it('s6_dismissing_an_inferred_tag_is_audited_and_survives_the_next_refresh', async () => {
     const sensitive = (await findings()).findings.find((item) => item.kind === 'sensitive_column')!;
     expect((await server.inject({ method: 'POST', url: `/api/findings/${sensitive.findingId}/decision`, headers: { cookie }, payload: { decision: 'rejected' } })).json()).toEqual({ status: 'rejected' });
