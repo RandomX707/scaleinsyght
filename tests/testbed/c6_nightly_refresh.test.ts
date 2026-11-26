@@ -106,8 +106,17 @@ describe('S6 nightly refresh, findings and review', () => {
       "SELECT (SELECT count(*)::int FROM profiler.findings f WHERE f.tenant_id=j.tenant_id AND f.job_id=j.job_id) AS findings FROM profiler.jobs j WHERE j.tenant_id=$1 AND j.job_type='nightly' ORDER BY j.created_at DESC LIMIT 1", [tenantId]));
     expect(quiet.rows[0]!.findings).toBe(0);
     expect((await notifications()).filter((item) => item.type === 'nightly')).toHaveLength(1);
-    const stored = await withTenant(adminPool, tenantId, (db) => db.query("SELECT 1 FROM core.notifications WHERE tenant_id=$1 AND notification_type='nightly'", [tenantId]));
-    expect(stored.rowCount).toBe(nightly.length * (await withTenant(adminPool, tenantId, (db) => db.query('SELECT 1 FROM core.users WHERE tenant_id=$1 AND is_active', [tenantId]))).rowCount!);
+    // The API hides empty nightly notifications, so check storage too: no row was written for the quiet night.
+    // Notifications are visible only to their owner (RLS), so count as each active user.
+    const stored = await withTenant(adminPool, tenantId, async (db) => {
+      let total = 0;
+      for (const user of (await db.query<{ user_id: string }>('SELECT user_id FROM core.users WHERE tenant_id=$1 AND is_active', [tenantId])).rows) {
+        await db.query("SELECT set_config('app.principal_id',$1,true)", [user.user_id]);
+        total += (await db.query("SELECT 1 FROM core.notifications WHERE tenant_id=$1 AND user_id=$2 AND notification_type='nightly'", [tenantId, user.user_id])).rowCount!;
+      }
+      return total;
+    });
+    expect(stored).toBe(1);
   });
 
   it('s6_dismissing_an_inferred_tag_is_audited_and_survives_the_next_refresh', async () => {
