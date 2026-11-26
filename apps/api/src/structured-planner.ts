@@ -87,13 +87,14 @@ export function plannerSchema(catalog: PlannerCatalog, joins: PlannerJoin[], lin
       grouping: nullable({type:'string',description:'The dimension the answer is broken down by, or null for a single value per source.'}),
       conditions: {type:'array',items:{type:'string'},description:'Each condition the question applies, in a few words.'},
       comparison: {type:'boolean',description:'True when the question asks for values from two or more sources.'},
+      every_group: {type:'boolean',description:'True when the question asks for a value for each member of the grouping (each department, every provider), so members with none should appear with 0.'},
       answerable: {type:'boolean',description:'False when the catalog has no table for the subject; then intents is empty.'},
     }),
     intents: branches.length ? {type:'array',items:{anyOf:branches}} : {type:'array',items:{type:'null'},maxItems:0},
   });
 }
 
-export type PlanDeclaration = {subject: string; grouping: string | null; conditions: string[]; comparison: boolean; answerable: boolean};
+export type PlanDeclaration = {subject: string; grouping: string | null; conditions: string[]; comparison: boolean; answerable: boolean; every_group?: boolean};
 export type LineageRequest = {index: number; asset: string; direction: 'upstream' | 'downstream'};
 /** intent is what runs; planned is the model's plan before the display-label rule, which is what verification checks. */
 type DecodedStep = {index: number; intent: QueryIntent; planned?: QueryIntent; display?: DisplayLabel | null};
@@ -234,14 +235,40 @@ export function decodePlannerOutput(text: string, catalog: PlannerCatalog, joins
     const typed = validated.data as QueryIntent;
     rejectSingleRecordGroups(typed, facts[index]);
     const display = displayLabelFor(typed, index, source, joins, facts[index]);
-    const shown = attachEntityKey(display ? applyDisplayLabel(typed, display) : typed, source, facts[index]);
-    checkDisplayLabel(shown, display);
+    const labelled = attachEntityKey(display ? applyDisplayLabel(typed, display) : typed, source, facts[index]);
+    checkDisplayLabel(labelled, display);
+    const shown = declaration.every_group ? includeEmptyGroups(labelled, index, joins, facts[index]) : labelled;
     return {index,intent:shown,planned:typed,display};
   });
   return {declaration, steps};
 }
 
 const TRUSTED_COVERAGE = 0.999;
+
+/** K12: "How many orders does each department have" asks for every department, including those with none. When the
+ * question declares that (every_group) and the plan counts or sums a table grouped by a related table's key, the plan
+ * counts from the related (dimension) table, so a department with no orders shows 0. Only through a trusted relationship
+ * (declared, or inferred with full measured coverage) onto a key that is unique in the dimension table, so no dimension
+ * row is counted twice. Decided by code from profile facts; small-cell disclosure still applies (0 shows as 0). */
+export function includeEmptyGroups(intent: QueryIntent, index: number, joins: PlannerJoin[], facts: PlannerFacts[number] | undefined): QueryIntent {
+  // A plain group-by on the key (no display label, so no join yet) becomes a grouped join onto the dimension's key.
+  if (intent.kind === 'group_by' && !intent.limit) {
+    const reference = joins.find(candidate => candidate.source_index === index && candidate.from_name === intent.table + '.' + intent.groupBy);
+    if (!reference) return intent;
+    const [rightTable, rightColumn] = field(reference.to_name);
+    const joined = QueryIntentSchema.parse({kind:'grouped_join', leftTable:intent.table, rightTable, leftColumn:intent.groupBy, rightColumn, groupByTable:'right', groupBy:rightColumn,
+      aggregate:intent.aggregate, filters:(intent.filters ?? []).map(filter => ({...filter, table:'left' as const})), order:intent.order ?? 'desc', limit:100});
+    const widened = includeEmptyGroups(joined, index, joins, facts);
+    return widened === joined ? intent : widened;
+  }
+  // A top or bottom N keeps its plan: the question asks for a ranking, not for every group.
+  if (intent.kind !== 'grouped_join' || intent.groupByTable !== 'right' || intent.limit < 100) return intent;
+  const join = joins.find(candidate => candidate.source_index === index && candidate.from_name === intent.leftTable + '.' + intent.leftColumn && candidate.to_name === intent.rightTable + '.' + intent.rightColumn);
+  if (!join || !(join.evidence_method === 'declared' || Number(join.confidence_score) >= TRUSTED_COVERAGE)) return intent;
+  const dimension = facts?.[intent.rightTable]; const key = dimension?.columns[intent.rightColumn];
+  if (!dimension?.rowCount || !key || key.distinctCount !== dimension.rowCount || key.nullRate !== 0) return intent;
+  return {...intent, emptyGroups: 'zero'};
+}
 
 /** Grouping a table by a column that is unique in it makes every group one record: the answer would list single
  * records (row-level data), and small-cell disclosure would withhold every cell. Plan over the table the records come
@@ -339,6 +366,7 @@ export function describePlan(steps: DecodedStep[], catalog: PlannerCatalog): str
       const groupTable = plan.groupByTable === 'right' ? String(plan.rightTable) : subject;
       parts.push(`for each ${label(index, groupTable, String(plan.groupBy))}`);
     }
+    if ((intent as {emptyGroups?: string}).emptyGroups === 'zero') parts.push(`including every ${String((intent as {rightTable: string}).rightTable)} record with none, counted as 0`);
     const conditions = [...(plan.kind === 'filtered_count' ? [plan] : []), ...(Array.isArray(plan.filters) ? plan.filters as Array<Record<string, unknown>> : [])]
       .map(filter => `${String(filter.column)} ${String(filter.operator).replaceAll('_',' ')}${filter.value === undefined ? '' : ` ${JSON.stringify(filter.value)}`}${filter.upperExclusive === undefined ? '' : ` and before ${JSON.stringify(filter.upperExclusive)}`}`);
     if (conditions.length) parts.push(`where ${conditions.join(' and ')}`);
