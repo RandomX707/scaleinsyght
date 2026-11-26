@@ -142,7 +142,16 @@
     "sqlSearch": {
       "query": "LookbackDays",
       "object": "dbo.usp_X_LOAD_READMIT_FLAGS"
-    }
+    },
+    "copiedProcedures": [
+      {
+        "copy": "dbo.rpt_ENCOUNTERS_BY_WARD_LOCAL",
+        "original": "dbo.rpt_ENCOUNTERS_BY_WARD"
+      }
+    ],
+    "unclassifiedProcedures": [
+      "dbo.rpt_ENCOUNTERS_BY_WARD"
+    ]
   },
   "dbt": {
     "models": [

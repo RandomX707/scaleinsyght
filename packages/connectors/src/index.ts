@@ -1,5 +1,5 @@
 import type { ControlsPolicy } from './scope.js';
-export { objectScope, columnScope, type ControlsPolicy } from './scope.js';
+export { objectScope, columnScope, DEFAULT_CLASSIFICATION, type ClassificationRules, type ControlsPolicy } from './scope.js';
 export type SourceConnectorType = 'sql_server' | 'postgres' | 'snowflake' | 'excel' | 'lake' | 'crm';
 export type AssetType = 'table' | 'view';
 export type ScopeMode = 'profile' | 'list_only' | 'exclude';
@@ -11,6 +11,8 @@ export interface DiscoveredObject {
   scopeMode: ScopeMode;
 }
 
+/** createdOrder only orders objects within one source (PostgreSQL object id; SQL Server creation time in seconds). */
+export type ObjectOrigin = {qualifiedName:string;owner:string|null;createdOrder:number|null};
 export type Routine = {qualifiedName:string;kind:'function'|'procedure';definition:string|null;encrypted:boolean;parameters:Array<{name:string;dataType:string;mode:'in'|'out'|'inout'}>};
 
 export interface DiscoveryResult {
@@ -81,6 +83,9 @@ export interface ReadOnlyConnector {
   /** Procedures and functions: definition text as the source returns it (null when withheld), whether the source
    *  encrypts it, and the declared parameters. Callers scrub the text before storing it (decision 53). */
   routines?():Promise<Routine[]>;
+  /** Who owns each table, view, procedure and function, and the order they were created (decision 62): used to tell
+   *  customer-built objects from vendor-delivered ones and which of two near-identical routines is the copy. */
+  objectOrigins?():Promise<ObjectOrigin[]>;
   /** View definitions for SQL lineage parsing. definition is null when the source hides it (for example an encrypted module). */
   viewDefinitions?():Promise<Array<{qualifiedName:string;schema:string;definition:string|null}>>;
   /** Distinct non-null values of one column, as text, for keyed fingerprinting by the ID agent. Values stay in memory:
