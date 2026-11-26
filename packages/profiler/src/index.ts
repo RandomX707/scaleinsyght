@@ -300,15 +300,8 @@ export async function runProfile(
       [input.tenantId, jobId, input.jobType === 'nightly' ? 'schema_changed' : 'profile_completed', JSON.stringify(summary)],
     );
 
-    const users = await client.query<{ user_id: string }>('SELECT user_id FROM core.users WHERE tenant_id=$1 AND is_active=true', [input.tenantId]);
-    for (const user of users.rows) {
-      await client.query("SELECT set_config('app.principal_id',$1,true)", [user.user_id]);
-      await client.query(
-        `INSERT INTO core.notifications(tenant_id,user_id,connection_id,job_id,notification_type,safe_summary)
-         VALUES($1,$2,$3,$4,$5,$6::jsonb) ON CONFLICT(tenant_id,user_id,job_id,notification_type) DO NOTHING`,
-        [input.tenantId, user.user_id, input.connectionId, jobId, input.jobType === 'nightly' ? 'nightly' : 'discovery', JSON.stringify(summary)],
-      );
-    }
+    // A nightly refresh notifies only once its findings are recorded, and only if it found something (below).
+    if (input.jobType !== 'nightly') await notifyUsers(client, input.tenantId, input.connectionId, jobId, 'discovery', summary);
   });
 
   const lineage = await collectViewLineage(pool, input);
@@ -318,7 +311,11 @@ export async function runProfile(
     await queueNewObjectReview(pool,input.tenantId,input.connectionId,discovery.listOnlyObjects.map(object=>object.qualifiedName));
   }
   const ids = await runIdAgent(pool, { ...input, ...(scope?{scope}:{}), ...(masterKey ? { masterKey } : {}) });
-  const findings = await recordFindings(pool, { tenantId: input.tenantId, connectionId: input.connectionId, jobId, before, inventory:new Set([...discovery.objects,...discovery.unchangedObjects,...discovery.excludedObjects,...discovery.listOnlyObjects,...discovery.inaccessibleObjects].map(object=>object.qualifiedName)), checked: discovery.objects.length + discovery.unchangedObjects.length, scannedObjects: new Set(profiles.map(({ object }) => object.qualifiedName)) });
+  const findings: number = await recordFindings(pool, { tenantId: input.tenantId, connectionId: input.connectionId, jobId, before, inventory:new Set([...discovery.objects,...discovery.unchangedObjects,...discovery.excludedObjects,...discovery.listOnlyObjects,...discovery.inaccessibleObjects].map(object=>object.qualifiedName)), checked: discovery.objects.length + discovery.unchangedObjects.length, scannedObjects: new Set(profiles.map(({ object }) => object.qualifiedName)) });
+  if (input.jobType === 'nightly' && findings > 0) {
+    const summary = { listed: discovery.coverage.listed, profiled: profiles.length, unchanged: discovery.unchanged, findings };
+    await withTenant(pool, input.tenantId, (client) => notifyUsers(client, input.tenantId, input.connectionId, jobId, 'nightly', summary));
+  }
   // Every profiled database or workbook connection is refreshed nightly; the first refresh is a day after activation.
   await withTenant(pool, input.tenantId, (client) => client.query(
     `INSERT INTO profiler.nightly_schedules(tenant_id,connection_id,next_run_at) SELECT $1,$2,clock_timestamp()+interval '1 day'
@@ -433,16 +430,45 @@ async function ensureAssetVersion(
   return { version, created: true };
 }
 
-export async function getNotifications(pool: Pool, tenantId: string, userId: string): Promise<Array<{ notificationId: string; type: string; summary: Record<string, unknown>; readAt: string | null }>> {
+/** What a notification's job found, by kind: counts only, never names or values. */
+export type NotificationCounts = { total: number; tablesChanged: number; tablesDropped: number; newTables: number; newColumns: number; removedColumns: number; retypedColumns: number;
+  rowCountChanges: number; countsUnavailable: number; sensitiveColumns: number; probableRelationships: number; idMatches: number };
+export type NotificationView = { notificationId: string; type: string; summary: Record<string, unknown>; readAt: string | null; createdAt: string;
+  connectionId: string | null; sourceName: string | null; connectorType: string | null; counts: NotificationCounts };
+
+/**
+ * A person's notifications, each naming its source and what its run found (counts by kind from that job's findings),
+ * with its time. A nightly refresh that found nothing is never shown, including ones stored before this rule.
+ */
+export async function getNotifications(pool: Pool, tenantId: string, userId: string): Promise<NotificationView[]> {
   return withTenant(pool, tenantId, async (client) => {
     await client.query("SELECT set_config('app.principal_id',$1,true)", [userId]);
-    const result = await client.query<{ notification_id: string; notification_type: string; safe_summary: Record<string, unknown>; source_name: string | null; read_at: Date | null }>(
-      `SELECT n.notification_id,n.notification_type,n.safe_summary,n.read_at,c.display_name AS source_name
+    const result = await client.query<{ notification_id: string; notification_type: string; safe_summary: Record<string, unknown>; source_name: string | null; connector_type: string | null; connection_id: string | null; read_at: Date | null; created_at: Date; counts: NotificationCounts }>(
+      `SELECT n.notification_id,n.notification_type,n.safe_summary,n.read_at,n.created_at,n.connection_id,
+         coalesce(nullif(c.display_name,''),c.connector_type) AS source_name,c.connector_type,f.counts
        FROM core.notifications n LEFT JOIN registry.connections c ON c.tenant_id=n.tenant_id AND c.connection_id=n.connection_id
-       WHERE n.tenant_id=$1 AND n.user_id=$2 ORDER BY n.created_at DESC`,
+       LEFT JOIN LATERAL (
+         SELECT jsonb_build_object(
+           'total',count(*),
+           'tablesChanged',count(*) FILTER (WHERE kind='schema_change' AND detail->>'change'='columns'),
+           'tablesDropped',count(*) FILTER (WHERE kind='schema_change' AND detail->>'change'='dropped'),
+           'newTables',count(*) FILTER (WHERE kind='new_tables'),
+           'newColumns',coalesce(sum(jsonb_array_length(detail->'added')) FILTER (WHERE kind='schema_change' AND detail->>'change'='columns'),0),
+           'removedColumns',coalesce(sum(jsonb_array_length(detail->'removed')) FILTER (WHERE kind='schema_change' AND detail->>'change'='columns'),0),
+           'retypedColumns',coalesce(sum(jsonb_array_length(detail->'retyped')) FILTER (WHERE kind='schema_change' AND detail->>'change'='columns'),0),
+           'rowCountChanges',count(*) FILTER (WHERE kind='data_anomaly' AND detail->>'change'='row_count'),
+           'countsUnavailable',count(*) FILTER (WHERE kind='data_anomaly' AND detail->>'change'='count_unavailable'),
+           'sensitiveColumns',count(*) FILTER (WHERE kind='sensitive_column'),
+           'probableRelationships',count(*) FILTER (WHERE kind='probable_relationship'),
+           'idMatches',count(*) FILTER (WHERE kind='id_match')) AS counts
+         FROM profiler.findings WHERE tenant_id=n.tenant_id AND job_id=n.job_id) f ON true
+       WHERE n.tenant_id=$1 AND n.user_id=$2 AND NOT (n.notification_type='nightly' AND (f.counts->>'total')::int=0)
+       ORDER BY n.created_at DESC`,
       [tenantId, userId],
     );
-    return result.rows.map((row) => ({ notificationId: row.notification_id, type: row.notification_type, summary: {...row.safe_summary,sourceName:row.source_name}, readAt: row.read_at?.toISOString() ?? null }));
+    return result.rows.map((row) => ({ notificationId: row.notification_id, type: row.notification_type, summary: { ...row.safe_summary, sourceName: row.source_name },
+      readAt: row.read_at?.toISOString() ?? null, createdAt: row.created_at.toISOString(), connectionId: row.connection_id, sourceName: row.source_name, connectorType: row.connector_type,
+      counts: Object.fromEntries(Object.entries(row.counts).map(([key, value]) => [key, Number(value)])) as NotificationCounts }));
   });
 }
 
@@ -574,4 +600,15 @@ export async function runNextDiscovery(pool: Pool, connectorFor: (tenantId: stri
     console.error('Discovery failed:', code);
   } finally { await connector?.close?.(); }
   return true;
+}
+
+async function notifyUsers(client: PoolClient, tenantId: string, connectionId: string, jobId: string, type: 'discovery' | 'nightly', summary: Record<string, number>): Promise<void> {
+  const users = await client.query<{ user_id: string }>('SELECT user_id FROM core.users WHERE tenant_id=$1 AND is_active=true', [tenantId]);
+  for (const user of users.rows) {
+    await client.query("SELECT set_config('app.principal_id',$1,true)", [user.user_id]);
+    await client.query(
+      `INSERT INTO core.notifications(tenant_id,user_id,connection_id,job_id,notification_type,safe_summary)
+       VALUES($1,$2,$3,$4,$5,$6::jsonb) ON CONFLICT(tenant_id,user_id,job_id,notification_type) DO NOTHING`,
+      [tenantId, user.user_id, connectionId, jobId, type, JSON.stringify(summary)]);
+  }
 }

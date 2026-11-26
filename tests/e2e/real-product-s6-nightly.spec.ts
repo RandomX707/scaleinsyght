@@ -46,6 +46,19 @@ test('s6_refresh_from_the_approval_matrix_finds_source_changes_and_a_dismissal_i
   await expect(page.getByRole('tab',{name:'Changes 4',exact:true})).toHaveAttribute('aria-selected','true');
   await expect(page.getByText('4 Changes to review',{exact:true})).toBeVisible();
   await expect(page.getByText('0 Suggestions',{exact:true})).toBeVisible();
+
+  // Bug 4: Home and Notifications name the source, say what changed with a time, and link to the details.
+  const changed = 'Shop database: 1 table changed, 1 new column, 1 new table, 1 table dropped, 1 unusual row-count change';
+  await page.goto('/');
+  const card = page.locator('.home-updates .home-notice').filter({ hasText: changed });
+  await expect(card).toBeVisible();
+  await expect(card.locator('time')).toHaveText(/^Today, \d{2}:\d{2}$/);
+  await expect(page.locator('.home-updates .home-notice').filter({ hasText: 'Shop database: profiling finished' })).toBeVisible();
+  await page.getByRole('button', { name: /^Notifications/ }).click();
+  await expect(page.getByRole('complementary', { name: 'Notifications' }).getByText(changed)).toBeVisible();
+  await page.getByRole('complementary', { name: 'Notifications' }).getByRole('button', { name: `View details: ${changed}` }).click();
+  await expect(page).toHaveURL(/\/approval-matrix$/);
+  await expect(page.getByRole('heading', { name: 'Latest refresh' })).toBeVisible();
   await page.getByRole('tab',{name:'Suggestions 0',exact:true}).click();
   await expect(page.getByText('No suggestions in this refresh',{exact:true})).toBeVisible();
   await expect(page.getByRole('button',{name:'Approve all suggestions'})).toHaveCount(0);
