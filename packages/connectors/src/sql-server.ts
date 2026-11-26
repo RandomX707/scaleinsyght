@@ -1,9 +1,10 @@
 import { columnScope, objectScope } from './scope.js';
 import { CATALOG_ROW_LIMIT } from './limits.js';
+import { DEFAULT_SAMPLING, SENSITIVITY_MIN_VALUES, SENSITIVITY_VALUES, type SamplingLimits, catalogEstimate, samplePercent } from './sampling.js';
 import { createHash } from 'node:crypto';
 import sql from 'mssql';
 import { classifyColumn } from '@scaleinsyght/classification';
-import { COLUMN_STATISTICS_ROW_LIMIT, POSSIBLE_REFERENCE_COVERAGE, UNMEASURED, type ColumnStatistics, type ConnectorScope, type DiscoveryResult, type ObjectProfile, type ReadOnlyConnector } from './index.js';
+import { POSSIBLE_REFERENCE_COVERAGE, UNMEASURED, type ColumnStatistics, type ConnectorScope, type DiscoveryResult, type ObjectProfile, type ReadOnlyConnector } from './index.js';
 
 const SQL_SERVER_TEXT = new Set(['nvarchar', 'varchar', 'nchar', 'char']);
 const SQL_SERVER_MEASURABLE = new Set([...SQL_SERVER_TEXT, 'tinyint', 'smallint', 'int', 'bigint', 'decimal', 'numeric', 'float', 'real', 'bit', 'date', 'datetime', 'datetime2', 'uniqueidentifier']);
@@ -14,6 +15,9 @@ const quote = (value: string) => `[${value.replaceAll(']', ']]')}]`;
 const keyFor = (name: string) => createHash('sha256').update(`sql_server\0${name}`).digest('hex');
 
 export type SqlServerConnection = { server: string; port: number; database: string; username: string; password: string; encrypt: true; trustServerCertificate?: boolean };
+
+/** The driver gave up on a request that ran past its time limit (mssql ETIMEOUT). */
+const isTimeout = (error: unknown) => (error as { code?: string })?.code === 'ETIMEOUT';
 
 export class SqlServerConnector implements ReadOnlyConnector {
   readonly type = 'sql_server' as const;
@@ -26,7 +30,10 @@ export class SqlServerConnector implements ReadOnlyConnector {
   private readonly maxCatalogRows: number;
   private readonly objects = new Map<string, CatalogObject>();
 
-  constructor(input: SqlServerConnection & { id?: string; name?: string; statementTimeoutMs?: number; maxRows?: number; maxCatalogRows?: number }) {
+  /** Decision 59: when to count exactly and how many rows to sample. */
+  private readonly limits: SamplingLimits;
+  constructor(input: SqlServerConnection & { id?: string; name?: string; statementTimeoutMs?: number; maxRows?: number; maxCatalogRows?: number; sampling?: Partial<SamplingLimits> }) {
+    this.limits = { ...DEFAULT_SAMPLING, ...input.sampling };
     if (!input.encrypt) throw new Error('sqlserver_encryption_required');
     const statementTimeoutMs = input.statementTimeoutMs ?? 10_000;
     this.maxRows = input.maxRows ?? 1_000;
@@ -108,24 +115,52 @@ export class SqlServerConnector implements ReadOnlyConnector {
     if(objectScope(scope,qualifiedName,object.object_type==='V'?'view':'table')!=='profile') throw new Error('object_out_of_scope');
     const columns = (await this.columns(object)).filter(column=>columnScope(scope,qualifiedName,column.column_name)!=='exclude');
     const fullName = `${quote(object.schema_name)}.${quote(object.object_name)}`;
-    let rowCount: number | null = null;
-    try {
-      const counted = await (await this.request()).query<{row_count:number}>(`SELECT COUNT_BIG(*) AS row_count FROM ${fullName}`);
-      rowCount = counted.recordset[0]?.row_count == null ? null : Number(counted.recordset[0].row_count);
-    } catch { /* Unavailable counts are excluded from change comparisons. */ }
+    // Decision 59: the size comes from sys.partitions (no scan); small tables are counted exactly.
+    const table = object.object_type !== 'V';
+    let estimate: number | null = null;
+    if (table) { try { const partitions = await (await this.request()).input('id', sql.NVarChar, `${quote(object.schema_name)}.${quote(object.object_name)}`).query<{ rows: number | null }>('SELECT SUM(p.rows) AS rows FROM sys.partitions p WHERE p.object_id=OBJECT_ID(@id) AND p.index_id IN (0,1)'); estimate = catalogEstimate(partitions.recordset[0]?.rows === null || partitions.recordset[0]?.rows === undefined ? null : Number(partitions.recordset[0].rows)); } catch { estimate = null; } }
+    let rowCount: number | null = null; let rowCountEstimated = false;
+    if (estimate !== null && estimate > this.limits.exactCountLimit) { rowCount = estimate; rowCountEstimated = true; }
+    else {
+      try {
+        const counted = await (await this.request()).query<{row_count:number}>(`SELECT COUNT_BIG(*) AS row_count FROM ${fullName}`);
+        rowCount = counted.recordset[0]?.row_count == null ? null : Number(counted.recordset[0].row_count);
+      } catch { if (estimate !== null) { rowCount = estimate; rowCountEstimated = true; } /* Otherwise unavailable: excluded from change comparisons. */ }
+    }
+    // TABLESAMPLE works on tables only; a view is read with a plain row limit.
+    const sampled = (wanted: number) => { const percent = table ? samplePercent(rowCount, wanted) : null; return percent === null ? '' : ` TABLESAMPLE SYSTEM (${percent} PERCENT)`; };
     // Bounded text samples feed the sensitivity detector only; they are discarded here and never stored or sent to a model (decision 41).
-    const sampled = new Map<string, string[]>();
-    for (const column of columns) if (rowCount !== null && !columnScope(scope,qualifiedName,column.column_name) && ['nvarchar', 'varchar', 'nchar', 'char'].includes(column.data_type)) { const rows = await (await this.request()).query<{ v: string }>(`SELECT TOP (200) CAST(${quote(column.column_name)} AS nvarchar(400)) AS v FROM ${fullName} WHERE ${quote(column.column_name)} IS NOT NULL`); sampled.set(column.column_name, rows.recordset.map((row) => row.v)); }
-    const classified = new Map(columns.map((column) => [column.column_name, classifyColumn({ name: column.column_name, declaredTags: [...(column.sensitivity ? [column.sensitivity.replace(/^sensitivity:/, '')] : []), ...(columnScope(scope,qualifiedName,column.column_name)==='mask'?['personal']:[])], sample: sampled.get(column.column_name) ?? [] })] as const));
-    // Null rate, distinct count and average text length on untagged scalar columns, in one aggregate query per table.
-    const measurable = rowCount !== null && rowCount > 0 && rowCount <= COLUMN_STATISTICS_ROW_LIMIT ? columns.filter((column) => !classified.get(column.column_name)!.tags.length && !columnScope(scope, qualifiedName, column.column_name) && SQL_SERVER_MEASURABLE.has(column.data_type)) : [];
+    // One query samples every text column; a sparse column gets its own non-null sample. A query that still runs out of
+    // time leaves the table without samples or statistics (bug 6), so an unsampled column never gets statistics (contract 7).
+    const samples = new Map<string, string[]>(); let limited: 'timeout' | undefined;
+    const textColumns = rowCount === null ? [] : columns.filter((column) => !columnScope(scope, qualifiedName, column.column_name) && ['nvarchar', 'varchar', 'nchar', 'char'].includes(column.data_type));
+    try {
+      if (textColumns.length) {
+        const rows = (await (await this.request()).query<Record<string, string | null>>(`SELECT TOP (${this.limits.sensitivitySampleRows}) ${textColumns.map((column, index) => `CAST(${quote(column.column_name)} AS nvarchar(400)) AS t${index}`).join(',')} FROM ${fullName}${sampled(this.limits.sensitivitySampleRows)}`)).recordset;
+        textColumns.forEach((column, index) => samples.set(column.column_name, rows.map((row) => row[`t${index}`]).filter((value): value is string => value !== null).slice(0, SENSITIVITY_VALUES)));
+        for (const column of textColumns) if (samples.get(column.column_name)!.length < SENSITIVITY_MIN_VALUES && (rowCount ?? 0) > samples.get(column.column_name)!.length) {
+          const ref = quote(column.column_name);
+          samples.set(column.column_name, (await (await this.request()).query<{ v: string }>(`SELECT TOP (${SENSITIVITY_VALUES}) CAST(${ref} AS nvarchar(400)) AS v FROM ${fullName}${sampled(this.limits.statisticsSampleRows)} WHERE ${ref} IS NOT NULL`)).recordset.map((row) => row.v));
+        }
+      }
+    } catch (error) { if (!isTimeout(error)) throw error; limited = 'timeout'; samples.clear(); }
+    const classified = new Map(columns.map((column) => [column.column_name, classifyColumn({ name: column.column_name, declaredTags: [...(column.sensitivity ? [column.sensitivity.replace(/^sensitivity:/, '')] : []), ...(columnScope(scope,qualifiedName,column.column_name)==='mask'?['personal']:[])], sample: samples.get(column.column_name) ?? [] })] as const));
+    // Null rate, distinct count and average text length on untagged scalar columns, in one query per table: exact on a
+    // small table; on a large one null rate and length come from a capped TABLESAMPLE and are marked as estimates. A
+    // distinct count from a sample is never reported, so a large table's distinct counts stay unknown.
+    const measurable = !limited && rowCount !== null && rowCount > 0 ? columns.filter((column) => !classified.get(column.column_name)!.tags.length && !columnScope(scope, qualifiedName, column.column_name) && SQL_SERVER_MEASURABLE.has(column.data_type)) : [];
     const statistics = new Map<string, ColumnStatistics>();
     if (measurable.length) {
-      const parts = measurable.flatMap((column, index) => { const ref = quote(column.column_name); return [`COUNT_BIG(${ref}) AS n${index}`, `COUNT_BIG(DISTINCT ${ref}) AS d${index}`, SQL_SERVER_TEXT.has(column.data_type) ? `AVG(CAST(LEN(${ref}) AS float)) AS l${index}` : `CAST(NULL AS float) AS l${index}`]; });
-      const measured = (await (await this.request()).query<Record<string, string | number | null>>(`SELECT ${parts.join(',')} FROM ${fullName}`)).recordset[0]!;
-      measurable.forEach((column, index) => statistics.set(column.column_name, { nullRate: 1 - Number(measured[`n${index}`]) / rowCount!, distinctCount: Number(measured[`d${index}`]), averageLength: measured[`l${index}`] === null ? null : Number(measured[`l${index}`]) }));
+      const estimated = rowCountEstimated || rowCount! > this.limits.statisticsSampleRows;
+      const parts = measurable.flatMap((column, index) => { const ref = quote(column.column_name); return [`COUNT_BIG(${ref}) AS n${index}`, ...(estimated ? [] : [`COUNT_BIG(DISTINCT ${ref}) AS d${index}`]), SQL_SERVER_TEXT.has(column.data_type) ? `AVG(CAST(LEN(${ref}) AS float)) AS l${index}` : `CAST(NULL AS float) AS l${index}`]; });
+      const from = estimated ? `(SELECT TOP (${this.limits.statisticsSampleRows}) ${measurable.map((column) => quote(column.column_name)).join(',')} FROM ${fullName}${sampled(this.limits.statisticsSampleRows)}) AS sampled` : fullName;
+      let measured: Record<string, string | number | null> | undefined;
+      try { measured = (await (await this.request()).query<Record<string, string | number | null>>(`SELECT COUNT_BIG(*) AS total,${parts.join(',')} FROM ${from}`)).recordset[0]!; }
+      catch (error) { if (!isTimeout(error)) throw error; limited = 'timeout'; }
+      const total = Number(measured?.total ?? 0);
+      if (measured && total > 0) measurable.forEach((column, index) => statistics.set(column.column_name, { nullRate: 1 - Number(measured![`n${index}`]) / total, distinctCount: estimated ? null : Number(measured![`d${index}`]), averageLength: measured![`l${index}`] === null ? null : Number(measured![`l${index}`]), ...(estimated ? { estimated: true } : {}) }));
     }
-    return { assetKey, qualifiedName, version: createHash('sha256').update(JSON.stringify(columns)).digest('hex'), rowCount, columns: columns.map((column) => { const found = classified.get(column.column_name)!; return { name: column.column_name, dataType: column.data_type, isNullable: column.is_nullable, ...(columnScope(scope, qualifiedName, column.column_name) === 'mask' ? { sensitivityTags: [...new Set([...found.tags, 'personal'])], sensitivityEvidence: [...found.evidence, { tag: 'personal', detection: 'declared' as const, reason: 'Masked in Controls' }] } : { sensitivityTags: found.tags, sensitivityEvidence: found.evidence }), statistics: statistics.get(column.column_name) ?? UNMEASURED }; }) };
+    return { assetKey, qualifiedName, version: createHash('sha256').update(JSON.stringify(columns)).digest('hex'), rowCount, ...(rowCountEstimated ? { rowCountEstimated: true } : {}), ...(limited ? { limited } : {}), columns: columns.map((column) => { const found = classified.get(column.column_name)!; return { name: column.column_name, dataType: column.data_type, isNullable: column.is_nullable, ...(columnScope(scope, qualifiedName, column.column_name) === 'mask' ? { sensitivityTags: [...new Set([...found.tags, 'personal'])], sensitivityEvidence: [...found.evidence, { tag: 'personal', detection: 'declared' as const, reason: 'Masked in Controls' }] } : { sensitivityTags: found.tags, sensitivityEvidence: found.evidence }), statistics: statistics.get(column.column_name) ?? UNMEASURED }; }) };
   }
 
   async structuralReferences(scope?: ConnectorScope) {
@@ -223,4 +258,4 @@ export class SqlServerConnector implements ReadOnlyConnector {
   async close() { if (this.pool.connected) await this.pool.close(); }
 }
 
-export function createSqlServerConnector(input: SqlServerConnection & { id?: string; name?: string; statementTimeoutMs?: number; maxRows?: number; maxCatalogRows?: number }) { return new SqlServerConnector(input); }
+export function createSqlServerConnector(input: SqlServerConnection & { id?: string; name?: string; statementTimeoutMs?: number; maxRows?: number; maxCatalogRows?: number; sampling?: Partial<SamplingLimits> }) { return new SqlServerConnector(input); }
