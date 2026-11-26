@@ -67,8 +67,9 @@ test('s9_dictionary_matches_testbed_truth_for_every_connector_type_and_exports_o
 
   // Every connector is in the Source dropdown.
   await openSource(page, sql);
-  const options = await page.getByLabel('Source').locator('option').allTextContents();
-  for (const name of ['PostgreSQL testbed', 'SQL Server dictionary testbed', 'Operations workbook', 'Hospital dbt project', 'Riverside operations']) expect(options.join('|')).toContain(name);
+  // The list arrives separately from the page (the current source shows alone until then), so wait for it.
+  for (const name of ['PostgreSQL testbed', 'SQL Server dictionary testbed', 'Operations workbook', 'Hospital dbt project', 'Riverside operations'])
+    await expect.poll(async () => (await page.getByLabel('Source').locator('option').allTextContents()).join('|'), name).toContain(name);
 
   // SQL Server: landing, standard and custom objects, procedure tabs, encrypted state, SQL search, Show original.
   await expect(page.locator('.dict-card').first()).toContainText('No vendor dictionary imported');
