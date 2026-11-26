@@ -5,7 +5,7 @@
  */
 export type ProfileJob = {
   state: string; phase?: string | null; listed_count?: number | null; planned_count?: number | null; profiled_count?: number | null;
-  failure_code?: string | null; limited_count?: number | null; failed_count?: number | null;
+  failure_code?: string | null; limited_count?: number | null; failed_count?: number | null; id_steps_planned?: number | null; id_steps_done?: number | null;
 };
 export type StepState = 'done' | 'now' | 'todo' | 'failed';
 
@@ -29,12 +29,14 @@ export function profileProgress(job: ProfileJob) {
   const percent = job.state === 'COMPLETED' ? 100
     : phase === 'queued' ? 0 : phase === 'listing' ? 5
     : phase === 'profiling' ? 10 + Math.floor((planned ? profiled / planned : 1) * 80)
-    : phase === 'relationships' ? 92 : 100;
+    : phase === 'relationships' ? 90 + (Number(job.id_steps_planned ?? 0) ? Math.floor(9 * Math.min(1, Number(job.id_steps_done ?? 0) / Number(job.id_steps_planned))) : 2) : 100;
   const current = STEPS.findIndex((step) => step.phase === phase);
   const steps = STEPS.map((step, index) => {
     const state: StepState = job.state === 'COMPLETED' || current === -1 || index < current ? 'done' : index === current ? (failed ? 'failed' : running(job) ? 'now' : 'done') : 'todo';
     const label = step.phase === 'profiling' && planned && (state === 'now' || state === 'done' || state === 'failed')
-      ? `${step.label}: ${n(profiled)} of ${n(planned)} ${planned === 1 ? 'object' : 'objects'}` : step.label;
+      ? `${step.label}: ${n(profiled)} of ${n(planned)} ${planned === 1 ? 'object' : 'objects'}`
+      : step.phase === 'relationships' && state === 'now' && Number(job.id_steps_planned ?? 0) > 0
+        ? `${step.label}: IDs ${Math.floor((100 * Math.min(1, Number(job.id_steps_done ?? 0) / Number(job.id_steps_planned))))}% done` : step.label;
     return { label, state };
   });
   return { percent, running: running(job), complete: job.state === 'COMPLETED', failed, steps, message: failed ? failureCopy(job) : null, notes: job.state === 'COMPLETED' ? completionNotes(job) : [] };

@@ -323,7 +323,8 @@ export async function runProfile(
   if(input.jobType==='nightly'&&scope?.policy?.newObjects==='approve'){
     await queueNewObjectReview(pool,input.tenantId,input.connectionId,discovery.listOnlyObjects.map(object=>object.qualifiedName));
   }
-  const ids = await runIdAgent(pool, { ...input, ...(scope?{scope}:{}), ...(masterKey ? { masterKey } : {}) });
+  const ids = await runIdAgent(pool, { ...input, ...(scope?{scope}:{}), ...(masterKey ? { masterKey } : {}),
+    ...(job ? { onProgress: (done: number, planned: number) => reportDiscovery(pool, job, { idDone: done, idPlanned: planned }) } : {}) });
   const findings: number = await recordFindings(pool, { tenantId: input.tenantId, connectionId: input.connectionId, jobId, before, inventory:new Set([...discovery.objects,...discovery.unchangedObjects,...discovery.excludedObjects,...discovery.listOnlyObjects,...discovery.inaccessibleObjects].map(object=>object.qualifiedName)), checked: discovery.objects.length + discovery.unchangedObjects.length, scannedObjects: new Set(profiles.map(({ object }) => object.qualifiedName)) });
   if (input.jobType === 'nightly' && findings > 0) {
     const summary = { listed: discovery.coverage.listed, profiled: profiles.length, unchanged: discovery.unchanged, findings };

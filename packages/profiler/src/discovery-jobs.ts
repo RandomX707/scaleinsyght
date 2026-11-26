@@ -71,12 +71,13 @@ export async function claimDiscovery(pool: Pool, leaseMs = DISCOVERY_LEASE_MS, o
 }
 
 /** Records progress and renews the lease; throws if another worker now holds the job. */
-export async function reportDiscovery(pool: Pool, job: DiscoveryJob, progress: { phase?: JobPhase; listed?: number; planned?: number; profiled?: number } = {}, leaseMs = DISCOVERY_LEASE_MS): Promise<void> {
+export async function reportDiscovery(pool: Pool, job: DiscoveryJob, progress: { phase?: JobPhase; listed?: number; planned?: number; profiled?: number; idPlanned?: number; idDone?: number } = {}, leaseMs = DISCOVERY_LEASE_MS): Promise<void> {
   const updated = await withTenant(pool, job.tenantId, (client) => client.query(
     `UPDATE profiler.jobs SET phase=coalesce($4,phase),listed_count=coalesce($5,listed_count),planned_count=coalesce($6,planned_count),profiled_count=coalesce($7,profiled_count),
+       id_steps_planned=coalesce($9,id_steps_planned),id_steps_done=coalesce($10,id_steps_done),
        lease_expires_at=clock_timestamp()+make_interval(secs=>$8::double precision/1000),updated_at=clock_timestamp()
      WHERE tenant_id=$1 AND job_id=$2 AND claim_token=$3 AND state='RUNNING'`,
-    [job.tenantId, job.jobId, job.token, progress.phase ?? null, progress.listed ?? null, progress.planned ?? null, progress.profiled ?? null, leaseMs]));
+    [job.tenantId, job.jobId, job.token, progress.phase ?? null, progress.listed ?? null, progress.planned ?? null, progress.profiled ?? null, leaseMs, progress.idPlanned ?? null, progress.idDone ?? null]));
   if (!updated.rowCount) throw new StaleDiscoveryJobError();
 }
 

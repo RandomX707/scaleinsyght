@@ -150,9 +150,11 @@ export class PostgresConnector implements ReadOnlyConnector {
       if(textColumns.length){
         const rows=(await this.pool.query<Record<string,string|null>>(`SELECT ${textColumns.map((column,index)=>`${quoteIdentifier(column.column_name)}::text AS t${index}`).join(',')} FROM ${relation}${sampled(this.limits.sensitivitySampleRows)} LIMIT ${this.limits.sensitivitySampleRows}`)).rows;
         textColumns.forEach((column,index)=>samples.set(column.column_name,rows.map(row=>row[`t${index}`]).filter((value):value is string=>value!==null).slice(0,SENSITIVITY_VALUES)));
-        for(const column of textColumns)if(samples.get(column.column_name)!.length<SENSITIVITY_MIN_VALUES&&(rowCount??0)>samples.get(column.column_name)!.length){
-          const ref=quoteIdentifier(column.column_name);
-          samples.set(column.column_name,(await this.pool.query<{v:string}>(`SELECT ${ref}::text AS v FROM ${relation}${sampled(this.limits.statisticsSampleRows)} WHERE ${ref} IS NOT NULL LIMIT ${SENSITIVITY_VALUES}`)).rows.map(row=>row.v));
+        // Sparse text columns get more values in one further query per table, reading only rows where one of them is set.
+        const sparse=textColumns.filter(column=>samples.get(column.column_name)!.length<SENSITIVITY_MIN_VALUES&&(rowCount??0)>samples.get(column.column_name)!.length);
+        if(sparse.length){
+          const more=(await this.pool.query<Record<string,string|null>>(`SELECT ${sparse.map((column,index)=>`${quoteIdentifier(column.column_name)}::text AS s${index}`).join(',')} FROM ${relation}${sampled(this.limits.statisticsSampleRows)} WHERE ${sparse.map(column=>`${quoteIdentifier(column.column_name)} IS NOT NULL`).join(' OR ')} LIMIT ${this.limits.sensitivitySampleRows}`)).rows;
+          sparse.forEach((column,index)=>samples.set(column.column_name,[...samples.get(column.column_name)!,...more.map(row=>row[`s${index}`]).filter((value):value is string=>value!==null)].slice(0,SENSITIVITY_VALUES)));
         }
       }
     }catch(error){if(!isTimeout(error))throw error;limited='timeout';samples.clear();}

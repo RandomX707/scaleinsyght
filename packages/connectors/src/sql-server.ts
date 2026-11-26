@@ -138,9 +138,11 @@ export class SqlServerConnector implements ReadOnlyConnector {
       if (textColumns.length) {
         const rows = (await (await this.request()).query<Record<string, string | null>>(`SELECT TOP (${this.limits.sensitivitySampleRows}) ${textColumns.map((column, index) => `CAST(${quote(column.column_name)} AS nvarchar(400)) AS t${index}`).join(',')} FROM ${fullName}${sampled(this.limits.sensitivitySampleRows)}`)).recordset;
         textColumns.forEach((column, index) => samples.set(column.column_name, rows.map((row) => row[`t${index}`]).filter((value): value is string => value !== null).slice(0, SENSITIVITY_VALUES)));
-        for (const column of textColumns) if (samples.get(column.column_name)!.length < SENSITIVITY_MIN_VALUES && (rowCount ?? 0) > samples.get(column.column_name)!.length) {
-          const ref = quote(column.column_name);
-          samples.set(column.column_name, (await (await this.request()).query<{ v: string }>(`SELECT TOP (${SENSITIVITY_VALUES}) CAST(${ref} AS nvarchar(400)) AS v FROM ${fullName}${sampled(this.limits.statisticsSampleRows)} WHERE ${ref} IS NOT NULL`)).recordset.map((row) => row.v));
+        // Sparse text columns get more values in one further query per table, reading only rows where one of them is set.
+        const sparse = textColumns.filter((column) => samples.get(column.column_name)!.length < SENSITIVITY_MIN_VALUES && (rowCount ?? 0) > samples.get(column.column_name)!.length);
+        if (sparse.length) {
+          const more = (await (await this.request()).query<Record<string, string | null>>(`SELECT TOP (${this.limits.sensitivitySampleRows}) ${sparse.map((column, index) => `CAST(${quote(column.column_name)} AS nvarchar(400)) AS s${index}`).join(',')} FROM ${fullName}${sampled(this.limits.statisticsSampleRows)} WHERE ${sparse.map((column) => `${quote(column.column_name)} IS NOT NULL`).join(' OR ')}`)).recordset;
+          sparse.forEach((column, index) => samples.set(column.column_name, [...samples.get(column.column_name)!, ...more.map((row) => row[`s${index}`]).filter((value): value is string => value !== null)].slice(0, SENSITIVITY_VALUES)));
         }
       }
     } catch (error) { if (!isTimeout(error)) throw error; limited = 'timeout'; samples.clear(); }
