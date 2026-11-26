@@ -23,6 +23,12 @@ describe('notification wording', () => {
     expect(group).toMatchObject({ line: 'SQL Server hospital: 2 tables changed, 1 new column', detail: 'Nightly refresh', when: 'Today, 02:14', href: '/approval-matrix', unread: true });
     const [discovery] = groupNotifications([item({ type: 'discovery', connectionId: 'c9', sourceName: 'Operations workbook', summary: { profiled: 4 } })], now);
     expect(discovery).toMatchObject({ line: 'Operations workbook: profiling finished, 4 tables and views profiled', href: '/profile/c9' });
+    // Profiling the same source twice reports the latest run's size, not a sum.
+    const [twice] = groupNotifications([
+      item({ type: 'discovery', sourceName: 'pgs', summary: { profiled: 7 }, createdAt: new Date(2026, 10, 25, 7, 0).toISOString() }),
+      item({ type: 'discovery', sourceName: 'pgs', summary: { profiled: 8 }, createdAt: new Date(2026, 10, 25, 7, 35).toISOString() }),
+    ], now);
+    expect(twice).toMatchObject({ line: 'pgs: profiling finished, 8 tables and views profiled', detail: 'Profiling finished · 2 times' });
   });
   it('groups repeated items from one source and kind, adding their counts, and keeps new and earlier apart', () => {
     const groups = groupNotifications([
