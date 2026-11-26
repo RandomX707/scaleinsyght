@@ -5,7 +5,7 @@ import { DEFAULT_SAMPLING, SENSITIVITY_MIN_VALUES, SENSITIVITY_VALUES, type Samp
 import { createHash } from 'node:crypto';
 import sql from 'mssql';
 import { classifyColumn } from '@scaleinsyght/classification';
-import { POSSIBLE_REFERENCE_COVERAGE, UNMEASURED, type ColumnStatistics, type ConnectorScope, type DiscoveryResult, type ObjectProfile, type ReadOnlyConnector } from './index.js';
+import { POSSIBLE_REFERENCE_COVERAGE, UNMEASURED, type ColumnStatistics, type ConnectorScope, type DiscoveryResult, type ObjectProfile, type ReadOnlyConnector , type ObjectOrigin } from './index.js';
 
 const SQL_SERVER_TEXT = new Set(['nvarchar', 'varchar', 'nchar', 'char']);
 const SQL_SERVER_MEASURABLE = new Set([...SQL_SERVER_TEXT, 'tinyint', 'smallint', 'int', 'bigint', 'decimal', 'numeric', 'float', 'real', 'bit', 'date', 'datetime', 'datetime2', 'uniqueidentifier']);
@@ -211,6 +211,15 @@ export class SqlServerConnector implements ReadOnlyConnector {
       FROM sys.views v JOIN sys.schemas s ON s.schema_id=v.schema_id LEFT JOIN sys.sql_modules m ON m.object_id=v.object_id ORDER BY qualified_name`);
     if (rows.recordset.length > this.maxCatalogRows) throw new Error('sqlserver_connector_result_limit_exceeded');
     return rows.recordset.map((row) => ({ qualifiedName: row.qualified_name, schema: row.schema_name, definition: row.definition }));
+  }
+
+  /** Owners and creation order of tables, views, procedures and functions (decision 62). */
+  async objectOrigins(): Promise<ObjectOrigin[]> {
+    const rows = await (await this.request()).query<{ qualified_name: string; owner: string | null; created_order: number | null }>(`SELECT TOP (${this.maxCatalogRows + 1}) s.name+'.'+o.name AS qualified_name,
+        COALESCE(USER_NAME(o.principal_id),USER_NAME(s.principal_id)) AS owner,DATEDIFF_BIG(second,'19700101',o.create_date) AS created_order
+      FROM sys.objects o JOIN sys.schemas s ON s.schema_id=o.schema_id WHERE o.type IN ('U','V','P','FN','IF','TF') AND o.is_ms_shipped=0`);
+    if (rows.recordset.length > this.maxCatalogRows) throw new Error('sqlserver_connector_result_limit_exceeded');
+    return rows.recordset.map((row) => ({ qualifiedName: row.qualified_name, owner: row.owner, createdOrder: row.created_order === null ? null : Number(row.created_order) }));
   }
 
   async routines() {

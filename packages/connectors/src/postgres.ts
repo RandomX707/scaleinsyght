@@ -5,7 +5,7 @@ import { DEFAULT_SAMPLING, SENSITIVITY_MIN_VALUES, SENSITIVITY_VALUES, type Samp
 import { createHash } from 'node:crypto';
 import { Pool } from 'pg';
 import { classifyColumn } from '@scaleinsyght/classification';
-import { POSSIBLE_REFERENCE_COVERAGE, UNMEASURED, type ColumnStatistics, type ConnectorScope, type DiscoveryResult, type Routine, type ObjectProfile, type ReadOnlyConnector } from './index.js';
+import { POSSIBLE_REFERENCE_COVERAGE, UNMEASURED, type ColumnStatistics, type ConnectorScope, type DiscoveryResult, type Routine, type ObjectProfile, type ReadOnlyConnector , type ObjectOrigin } from './index.js';
 
 export type Table = { schema_name: string; table_name: string; table_type: 'BASE TABLE' | 'VIEW'; readable?: boolean };
 type Column = { column_name: string; data_type: string; is_nullable: 'YES' | 'NO'; comment: string | null };
@@ -275,6 +275,19 @@ export class PostgresConnector implements ReadOnlyConnector {
     }catch(error){await client.query('ROLLBACK').catch(()=>undefined);throw error;}finally{client.release();}
     if(result.rows.length>this.maxCatalogRows)throw new Error('postgres_connector_result_limit_exceeded');
     return result.rows.map(row=>({qualifiedName:row.qualified_name,schema:row.schema_name,definition:row.definition}));
+  }
+
+  /** Owners and creation order of tables, views, procedures and functions (decision 62); names as harvested elsewhere. */
+  async objectOrigins():Promise<ObjectOrigin[]>{
+    const filter=`n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_toast%'`;
+    const result=await this.pool.query<{qualified_name:string;owner:string|null;created_order:string|null}>(`SELECT n.nspname||'.'||c.relname AS qualified_name,pg_get_userbyid(c.relowner) AS owner,c.oid::bigint::text AS created_order
+        FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relkind IN ('r','p','v','m') AND ${filter}
+      UNION ALL
+      SELECT n.nspname||'.'||p.proname||'('||pg_get_function_identity_arguments(p.oid)||')',pg_get_userbyid(p.proowner),p.oid::bigint::text
+        FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE ${filter}
+      LIMIT $1`,[this.maxCatalogRows+1]);
+    if(result.rows.length>this.maxCatalogRows)throw new Error('postgres_connector_result_limit_exceeded');
+    return result.rows.map(row=>({qualifiedName:row.qualified_name,owner:row.owner,createdOrder:row.created_order===null?null:Number(row.created_order)}));
   }
 
   async routines():Promise<Routine[]>{

@@ -15,7 +15,7 @@ const postgres = new URL(process.env.DATABASE_URL_TESTBED ?? '');
 if (!postgres.hostname || !process.env.SQLSERVER_TESTBED_PASSWORD) throw new Error('The PostgreSQL and SQL Server testbeds are required; run pnpm testbed:up (it includes pnpm testbed:dictionary).');
 type Procedure = { group: string; writes: Array<{ table: string; mode: string }>; reads: string[]; calls: string[]; parameters: string[]; encrypted: boolean };
 const truth = JSON.parse(readFileSync('testbed/dictionary/truth.json', 'utf8')) as {
-  sqlserver: { standardTables: string[]; customTables: string[]; customViews: string[]; procedures: Record<string, Procedure>; hardCodedLiterals: string[]; sqlSearch: { query: string; object: string } };
+  sqlserver: { standardTables: string[]; customTables: string[]; customViews: string[]; procedures: Record<string, Procedure>; copiedProcedures: Array<{ copy: string; original: string }>; unclassifiedProcedures: string[]; hardCodedLiterals: string[]; sqlSearch: { query: string; object: string } };
   postgres: { tables: string[]; views: string[]; functions: Record<string, { reads: string[]; parameters: string[] }>; withheldColumns: Record<string, string[]> };
   dbt: { models: string[]; descriptions: Record<string, string>; tests: Record<string, string[][]> };
   tableau: { workbook: string; calculatedFields: Record<string, string>; hiddenLiterals: string[] };
@@ -90,6 +90,17 @@ test('s9_dictionary_matches_testbed_truth_for_every_connector_type_and_exports_o
   await expect.poll(() => names(page, 'Custom tables')).toEqual(truth.sqlserver.customTables.map(short).sort());
   await expect.poll(() => names(page, 'Custom views')).toEqual(truth.sqlserver.customViews.map(short).sort());
   for (const [name, procedure] of Object.entries(truth.sqlserver.procedures)) await expect.poll(() => names(page, procedure.group), name).toContain(short(name));
+  // Decision 62: a customer's near-identical copy of a vendor procedure is Custom, marked as a copy with its similarity;
+  // the original is not in the vendor dictionary's table list, so it stays "Not classified yet", never Standard.
+  for (const { copy, original } of truth.sqlserver.copiedProcedures) {
+    const item = side(page).locator('li').filter({ has: page.locator('.mono', { hasText: new RegExp(`^${short(copy)}$`) }) });
+    await expect(item.locator('.dict-copy')).toHaveText(new RegExp(`^copy of ${short(original)} · (9\\d|100)%$`));
+  }
+  await side(page).getByRole('tab', { name: /^Not classified yet/ }).click();
+  for (const name of truth.sqlserver.unclassifiedProcedures) await expect.poll(() => side(page).locator('li .mono').allTextContents()).toContain(short(name));
+  await expect(page.locator('.dict-classify-note')).toContainText('Nothing is called Standard until it is known to be.');
+  await page.screenshot({ path: screen('not-classified') });
+  await side(page).getByRole('tab', { name: /^Custom/ }).click();
   const routines = Object.values(truth.sqlserver.procedures); const encrypted = routines.filter((procedure) => procedure.encrypted).length;
   await expect(side(page)).toContainText(`SQL captured for ${routines.length - encrypted} of ${routines.length} procedures and functions · ${encrypted} encrypted`);
   const loader = 'dbo.usp_X_LOAD_READMIT_FLAGS'; const expected = truth.sqlserver.procedures[loader]!;
@@ -132,6 +143,8 @@ test('s9_dictionary_matches_testbed_truth_for_every_connector_type_and_exports_o
 
   // PostgreSQL: tables, views and functions; tagged columns show withheld statistics.
   await openSource(page, pg);
+  // No vendor dictionary: the page opens on what is not classified yet, grouped by type (decision 62).
+  await expect(side(page).getByRole('tab', { name: /^Not classified yet/ })).toHaveAttribute('aria-selected', 'true');
   await expect.poll(() => names(page, 'Tables')).toEqual(truth.postgres.tables.map(short).sort());
   await expect.poll(() => names(page, 'Views')).toEqual(truth.postgres.views.map(short).sort());
   await expect.poll(() => names(page, 'Functions')).toEqual(Object.keys(truth.postgres.functions).map(short).sort());

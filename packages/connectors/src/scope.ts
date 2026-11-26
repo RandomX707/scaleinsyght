@@ -9,7 +9,12 @@ export type ControlsPolicy = {
   newObjects: 'approve'|'rules'|'ignore';
   leavingScope: 'keep';
   approval: boolean;
+  /** Decision 62: what marks an object as customer-built when no vendor dictionary decides. Name prefixes match the
+   *  object name's start or a token after an underscore; owner patterns use * as a wildcard. */
+  classification?: ClassificationRules;
 };
+export type ClassificationRules = { customPrefixes: string[]; customSchemas: string[]; ownerPatterns: string[] };
+export const DEFAULT_CLASSIFICATION: ClassificationRules = { customPrefixes: ['X_'], customSchemas: [], ownerPatterns: [] };
 
 function matches(pattern: string, name: string): boolean {
   const expression=pattern.split('*').map(part=>part.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('.*');

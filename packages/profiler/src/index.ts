@@ -9,6 +9,7 @@ import { captureDefinitions } from './definitions.js';
 export { analyseDefinition, captureDefinitions } from './definitions.js';
 import { readProfileState, recordFindings } from './findings.js';
 import { isObjectError, sourceErrorCode } from './source-errors.js';
+import { detectCopies } from './copies.js';
 import { claimDiscovery, finishDiscovery, heartbeat, holdDiscovery, reportDiscovery, StaleDiscoveryJobError, type DiscoveryJob } from './discovery-jobs.js';
 import { parseStatementLineage, statementHash, writeStatementLineage, SqlParserUnavailable, type LineageDialect, type StatementLineage } from '@scaleinsyght/graph';
 
@@ -36,6 +37,8 @@ export interface ProfileSummary {
   ids?: { fields: number; fingerprinted: number; matches: number };
   /** Findings recorded by comparing this run with the previous state (decision 48). */
   findings?: number;
+  /** Objects whose owner was recorded, and procedures or functions found to be copies (decision 62). */
+  origins?: { objects: number; copies: number };
 }
 
 export async function saveConnectionScope(pool: Pool, tenantId: string, connectionId: string, rules: ScopeRule[]): Promise<void> {
@@ -322,6 +325,7 @@ export async function runProfile(
 
   const lineage = await collectViewLineage(pool, input);
   const definitions = await captureDefinitions(pool, input);
+  const origins = await recordObjectOrigins(pool, input);
   const masterKey = process.env.ARTIFACT_MASTER_KEY ? Buffer.from(process.env.ARTIFACT_MASTER_KEY, 'base64') : undefined;
   if(input.jobType==='nightly'&&scope?.policy?.newObjects==='approve'){
     await queueNewObjectReview(pool,input.tenantId,input.connectionId,discovery.listOnlyObjects.map(object=>object.qualifiedName));
@@ -342,6 +346,7 @@ export async function runProfile(
   return {
     ...(lineage ? { lineage } : {}),
     definitions,
+    ...(origins ? { origins } : {}),
     ...(ids ? { ids } : {}),
     findings,
     jobId,
@@ -594,6 +599,7 @@ export async function retireConnection(
 
 export { runIdAgent, formatPattern, ID_FINGERPRINT_LIMIT } from './id-agent.js';
 export { isObjectError, sourceErrorCode } from './source-errors.js';
+export { COPY_SIMILARITY, detectCopies, normaliseRoutine, routineSimilarity } from './copies.js';
 export { queueProfileJob, type ProfileJobType } from './discovery-jobs.js';
 export { claimDiscovery, finishDiscovery, latestDiscovery, queueDiscovery, StaleDiscoveryJobError, DISCOVERY_LEASE_MS, type DiscoveryJob } from './discovery-jobs.js';
 export { readProfileState, recordFindings, listFindings, decideFinding, ROW_CHANGE_SHARE, type FindingRow } from './findings.js';
@@ -636,5 +642,37 @@ async function notifyUsers(client: PoolClient, tenantId: string, connectionId: s
       `INSERT INTO core.notifications(tenant_id,user_id,connection_id,job_id,notification_type,safe_summary)
        VALUES($1,$2,$3,$4,$5,$6::jsonb) ON CONFLICT(tenant_id,user_id,job_id,notification_type) DO NOTHING`,
       [tenantId, user.user_id, connectionId, jobId, type, JSON.stringify(summary)]);
+  }
+}
+
+/**
+ * Decision 62: each object's owner and creation order, and which procedures and functions are near-identical copies of
+ * another (the later-created one), so the Dictionary can tell customer-built objects from vendor-delivered ones.
+ * Auxiliary: a failure is logged by code and leaves the previous record, never failing the profile.
+ */
+export async function recordObjectOrigins(pool: Pool, input: { tenantId: string; connectionId: string; connector: ReadOnlyConnector }): Promise<{ objects: number; copies: number } | undefined> {
+  if (!input.connector.objectOrigins) return undefined;
+  try {
+    const origins = await input.connector.objectOrigins();
+    return await withTenant(pool, input.tenantId, async (client) => {
+      const order = new Map(origins.map((origin) => [origin.qualifiedName, origin.createdOrder]));
+      const routines = (await client.query<{ qualified_name: string; scrubbed_text: string }>(
+        "SELECT qualified_name,scrubbed_text FROM graph.definitions WHERE tenant_id=$1 AND source_id=$2 AND active AND kind IN ('procedure','function') AND scrubbed_text IS NOT NULL",
+        [input.tenantId, input.connectionId])).rows;
+      const copies = detectCopies(routines.map((row) => ({ qualifiedName: row.qualified_name, text: row.scrubbed_text, createdOrder: order.get(row.qualified_name) ?? null })));
+      await client.query('DELETE FROM graph.object_origins WHERE tenant_id=$1 AND source_id=$2', [input.tenantId, input.connectionId]);
+      for (let start = 0; start < origins.length; start += 5_000) {
+        const batch = origins.slice(start, start + 5_000);
+        await client.query(
+          `INSERT INTO graph.object_origins(tenant_id,source_id,qualified_name,owner,created_order,copy_of,copy_similarity)
+           SELECT $1,$2,n,o,c,cp,cs FROM unnest($3::text[],$4::text[],$5::bigint[],$6::text[],$7::numeric[]) AS u(n,o,c,cp,cs) ON CONFLICT DO NOTHING`,
+          [input.tenantId, input.connectionId, batch.map((item) => item.qualifiedName), batch.map((item) => item.owner), batch.map((item) => item.createdOrder),
+            batch.map((item) => copies.get(item.qualifiedName)?.copyOf ?? null), batch.map((item) => copies.get(item.qualifiedName)?.similarity ?? null)]);
+      }
+      return { objects: origins.length, copies: copies.size };
+    });
+  } catch (error) {
+    console.error(`Object origins not recorded for connection ${input.connectionId}: ${sourceErrorCode(error)}`);
+    return undefined;
   }
 }

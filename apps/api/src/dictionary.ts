@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import { withTenant } from '@scaleinsyght/db';
-import type { ReadOnlyConnector } from '@scaleinsyght/connectors';
+import { DEFAULT_CLASSIFICATION, type ClassificationRules, type ReadOnlyConnector } from '@scaleinsyght/connectors';
 import { scrubDefinition } from '@scaleinsyght/classification';
 import { renderDictionaryHtml, type HtmlSource } from './dictionary-html.js';
 
@@ -21,26 +21,44 @@ export type DictionaryDeps = {
 };
 
 export type ObjectKind = 'table' | 'view' | 'materialized_view' | 'procedure' | 'function' | 'package' | 'sheet' | 'model' | 'source' | 'datasource' | 'worksheet' | 'calculated_field';
-export type ListedObject = { name: string; kind: ObjectKind; procedureKind: string | null; columns: number | null; custom: boolean };
+export type Origin = 'standard' | 'custom' | 'unclassified';
+export type OriginReason = 'in_vendor_dictionary' | 'not_in_vendor_dictionary' | 'name_prefix' | 'schema' | 'owner' | 'copy' | 'built_in_bi_tool' | null;
+export type ListedObject = { name: string; kind: ObjectKind; procedureKind: string | null; columns: number | null; custom: boolean;
+  origin: Origin; originReason: OriginReason; copyOf?: string; copySimilarity?: number };
 
-/** Customer-built by naming convention: an `X_` token at the start of the name or after an underscore
- * (X_READMIT_FLAGS, usp_X_LOAD, rpt_X_BY_DEPT). Case-insensitive, on the object's own name, not its schema. */
-export function hasCustomPrefix(qualifiedName: string): boolean {
-  const own = qualifiedName.replace(/\(.*\)$/, '').split('.').at(-1) ?? qualifiedName;
-  return /(^|_)x_/i.test(own);
+const ownName = (qualifiedName: string) => qualifiedName.replace(/\(.*\)$/, '').split('.').at(-1) ?? qualifiedName;
+const schemaOf = (qualifiedName: string) => { const parts = qualifiedName.replace(/\(.*\)$/, '').split('.'); return parts.length > 1 ? parts.at(-2)! : ''; };
+const glob = (pattern: string, value: string) => new RegExp(`^${pattern.split('*').map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`, 'i').test(value);
+
+/** A custom name prefix at the start of the object's own name or after an underscore (X_READMIT, usp_X_LOAD), any case. */
+export function hasCustomPrefix(qualifiedName: string, prefixes: string[] = DEFAULT_CLASSIFICATION.customPrefixes): boolean {
+  const own = ownName(qualifiedName).toLowerCase();
+  return prefixes.some((prefix) => { const p = prefix.toLowerCase(); return own.startsWith(p) || own.includes(`_${p}`); });
 }
-/** Custom when it uses the custom prefix or, once a vendor dictionary is imported, when that dictionary lacks it. */
-export function isCustom(name: string, kind: ObjectKind, imported: Set<string> | null): boolean {
-  if (['sheet', 'model', 'source', 'datasource'].includes(kind)) return false;
-  if (['worksheet', 'calculated_field'].includes(kind)) return true;
-  return hasCustomPrefix(name) || (imported !== null && ['table', 'view', 'materialized_view'].includes(kind) && !imported.has(name.toLowerCase()));
+
+/**
+ * Standard means vendor-delivered and Custom customer-built (CLAUDE.md glossary), so it is about who built an object,
+ * not its type (decision 62). An imported vendor dictionary decides for the kinds it lists: in it, Standard; not in it,
+ * Custom. Otherwise the Controls rules (name prefixes, schemas, owner patterns) mark Custom, and so does a procedure or
+ * function that is a near-identical copy of another. Anything else is not classified yet: never Standard by default.
+ */
+export function classifyObject(object: { name: string; kind: ObjectKind }, context: { vendor: Set<string> | null; rules: ClassificationRules; owner: string | null; copy: { copyOf: string; similarity: number } | null }): { origin: Origin; reason: OriginReason } {
+  if (['worksheet', 'calculated_field'].includes(object.kind)) return { origin: 'custom', reason: 'built_in_bi_tool' };
+  if (context.vendor && ['table', 'view', 'materialized_view'].includes(object.kind))
+    return context.vendor.has(object.name.toLowerCase()) ? { origin: 'standard', reason: 'in_vendor_dictionary' } : { origin: 'custom', reason: 'not_in_vendor_dictionary' };
+  if (hasCustomPrefix(object.name, context.rules.customPrefixes)) return { origin: 'custom', reason: 'name_prefix' };
+  const schema = schemaOf(object.name).toLowerCase();
+  if (schema && context.rules.customSchemas.some((item) => item.toLowerCase() === schema)) return { origin: 'custom', reason: 'schema' };
+  if (context.owner && context.rules.ownerPatterns.some((pattern) => glob(pattern, context.owner!))) return { origin: 'custom', reason: 'owner' };
+  if (context.copy) return { origin: 'custom', reason: 'copy' };
+  return { origin: 'unclassified', reason: null };
 }
 
 const PROCEDURE_GROUPS: Record<string, string> = { fact_loader: 'Fact loaders', report: 'Report procedures', data_check: 'Data checks', archive: 'Archive', utility: 'Utilities' };
 const GROUP_ORDER = ['tables', 'sheets', 'models', 'sources', 'datasources', 'views', 'materialized_views', 'custom_tables', 'proc_fact_loader', 'proc_report', 'proc_data_check', 'proc_archive', 'proc_utility', 'procedures', 'functions', 'custom_materialized_views', 'custom_views', 'packages', 'worksheets', 'calculated_fields'];
 
 /** The left-panel group an object belongs to, with its label. Standard and Custom tabs have different groups. */
-export function groupFor(object: ListedObject): { key: string; label: string } {
+export function groupFor(object: Pick<ListedObject, 'name' | 'kind' | 'procedureKind' | 'columns' | 'custom'>): { key: string; label: string } {
   const custom = object.custom;
   switch (object.kind) {
     case 'table': return custom ? { key: 'custom_tables', label: 'Custom tables' } : { key: 'tables', label: 'Tables' };
@@ -92,9 +110,19 @@ async function importedTables(client: PoolClient, tenantId: string, connectionId
 /** Every object of a source, names and kinds only (no columns), cheap enough for 5,000-table sources. */
 export async function listObjects(client: PoolClient, tenantId: string, source: Source): Promise<ListedObject[]> {
   const imported = await importedTables(client, tenantId, source.connection_id);
+  const saved = (await client.query<{ policy: { classification?: ClassificationRules } }>('SELECT policy FROM registry.connection_controls WHERE tenant_id=$1 AND connection_id=$2', [tenantId, source.connection_id])).rows[0];
+  const rules: ClassificationRules = { ...DEFAULT_CLASSIFICATION, ...saved?.policy.classification };
+  const origins = new Map((await client.query<{ qualified_name: string; owner: string | null; copy_of: string | null; copy_similarity: string | null }>(
+    'SELECT qualified_name,owner,copy_of,copy_similarity::text FROM graph.object_origins WHERE tenant_id=$1 AND source_id=$2', [tenantId, source.connection_id])).rows.map((row) => [row.qualified_name, row]));
+  const classify = (name: string, kind: ObjectKind) => {
+    const origin = origins.get(name);
+    const copy = origin?.copy_of ? { copyOf: origin.copy_of, similarity: Number(origin.copy_similarity) } : null;
+    const decided = classifyObject({ name, kind }, { vendor: imported, rules, owner: origin?.owner ?? null, copy });
+    return { custom: decided.origin === 'custom', origin: decided.origin, originReason: decided.reason, ...(copy ? { copyOf: copy.copyOf, copySimilarity: copy.similarity } : {}) };
+  };
   if (source.connector_type === 'dbt') {
     const objects = source.dbt_import?.objects ?? [];
-    return objects.map((object) => ({ name: object.name, kind: object.type, procedureKind: null, columns: null, custom: false }));
+    return objects.map((object) => ({ name: object.name, kind: object.type, procedureKind: null, columns: null, ...classify(object.name, object.type) }));
   }
   const rows = await client.query<{ name: string; asset_type: string; object_type: string | null; columns: number | null; definition_kind: string | null; procedure_kind: string | null }>(
     `SELECT a.qualified_name AS name,a.asset_type,v.structural_attributes->>'object_type' AS object_type,
@@ -111,7 +139,7 @@ export async function listObjects(client: PoolClient, tenantId: string, source: 
     else if (source.connector_type === 'excel') kind = 'sheet';
     else if (source.connector_type === 'tableau') kind = 'datasource';
     else kind = row.object_type === 'view' ? 'view' : row.object_type === 'materialized_view' ? 'materialized_view' : 'table';
-    return { name: row.name, kind, procedureKind: row.procedure_kind, columns: row.columns === null ? null : Number(row.columns), custom: isCustom(row.name, kind, imported) };
+    return { name: row.name, kind, procedureKind: row.procedure_kind, columns: row.columns === null ? null : Number(row.columns), ...classify(row.name, kind) };
   });
 }
 
@@ -194,7 +222,7 @@ export function registerDictionaryRoutes(app: FastifyInstance, deps: DictionaryD
         importedDictionary: latest ? { fileName: latest.file_name, importedAt: latest.imported_at, importedBy: latest.imported_by, tables: latest.table_count, columns: latest.column_count } : null,
         hasVendorDictionary: (await importedTables(client, current.tenantId, source.connection_id)) !== null,
         counts: {
-          standard: objects.filter((object) => !object.custom).length, custom: objects.filter((object) => object.custom).length,
+          standard: objects.filter((object) => object.origin === 'standard').length, custom: objects.filter((object) => object.origin === 'custom').length, unclassified: objects.filter((object) => object.origin === 'unclassified').length,
           tables: count(['table', 'sheet', 'model', 'source', 'datasource']), customTables: objects.filter((object) => object.kind === 'table' && object.custom).length,
           views: count(['view', 'materialized_view']), procedures: count(['procedure']), functions: count(['function']), packages: count(['package']),
           worksheets: count(['worksheet']), calculatedFields: count(['calculated_field']), dbtTests: tests,
@@ -209,7 +237,7 @@ export function registerDictionaryRoutes(app: FastifyInstance, deps: DictionaryD
 
   app.get<{ Params: { connectionId: string }; Querystring: { tab?: string; q?: string; group?: string; offset?: string } }>('/api/connections/:connectionId/dictionary/objects', async (request, reply) => {
     const current = await authed(request, reply); if (!current) return;
-    const tab = request.query.tab === 'custom' ? 'custom' : 'standard';
+    const asked = (['standard', 'custom', 'unclassified'] as const).find((item) => item === request.query.tab);
     const search = q(request.query.q, 100); const onlyGroup = q(request.query.group, 60) || null;
     const offset = Math.max(0, Math.min(1_000_000, Number.parseInt(request.query.offset ?? '0', 10) || 0));
     const body = await withTenant(deps.pool, current.tenantId, async (client) => {
@@ -228,7 +256,10 @@ export function registerDictionaryRoutes(app: FastifyInstance, deps: DictionaryD
            GROUP BY d.qualified_name`, [current.tenantId, datasetSource, search.replace(/[\\%_]/g, (character) => `\\${character}`)]);
         for (const row of rows.rows) columnHits.set(row.table_name, row.hits);
       }
-      const inTab = objects.filter((object) => (tab === 'custom') === object.custom)
+      const counts = { standard: objects.filter((object) => object.origin === 'standard').length, custom: objects.filter((object) => object.origin === 'custom').length, unclassified: objects.filter((object) => object.origin === 'unclassified').length };
+      // Decision 62: never Standard by default; without one, the page opens on what is not classified yet.
+      const tab = asked ?? (counts.standard ? 'standard' : counts.unclassified ? 'unclassified' : 'custom');
+      const inTab = objects.filter((object) => object.origin === tab)
         .filter((object) => !search || object.name.toLowerCase().includes(search.toLowerCase()) || columnHits.has(object.name));
       const grouped = new Map<string, { key: string; label: string; items: ListedObject[] }>();
       for (const object of inTab) { const group = groupFor(object); const entry = grouped.get(group.key) ?? { ...group, items: [] }; entry.items.push(object); grouped.set(group.key, entry); }
@@ -238,7 +269,8 @@ export function registerDictionaryRoutes(app: FastifyInstance, deps: DictionaryD
           group.items.sort((a, b) => a.name.localeCompare(b.name));
           const start = onlyGroup ? offset : 0; const page = group.items.slice(start, start + GROUP_PAGE);
           return { key: group.key, label: group.label, total: group.items.length,
-            items: page.map((object) => ({ name: object.name, kind: object.kind, columns: object.columns, ...(columnHits.has(object.name) ? { matchedColumns: columnHits.get(object.name) } : {}) })),
+            items: page.map((object) => ({ name: object.name, kind: object.kind, columns: object.columns, ...(columnHits.has(object.name) ? { matchedColumns: columnHits.get(object.name) } : {}),
+              ...(object.originReason ? { originReason: object.originReason } : {}), ...(object.copyOf ? { copyOf: object.copyOf, copySimilarity: object.copySimilarity } : {}) })),
             nextOffset: start + page.length < group.items.length ? start + page.length : null };
         });
       let sqlHits: Array<{ name: string; kind: string; matches: number; lines: Array<{ line: number; text: string }> }> = [];
@@ -252,7 +284,7 @@ export function registerDictionaryRoutes(app: FastifyInstance, deps: DictionaryD
       // How much procedure SQL could be read here, as the prototype shows on the Custom tab.
       const coverage = (await client.query<{ routines: number; encrypted: number }>(`SELECT count(*)::int AS routines,count(*) FILTER (WHERE encrypted)::int AS encrypted FROM graph.definitions
         WHERE tenant_id=$1 AND source_id=$2 AND active AND kind IN ('procedure','function','package')`, [current.tenantId, source.connection_id])).rows[0]!;
-      return { tab, hasVendorDictionary, counts: { standard: objects.filter((object) => !object.custom).length, custom: objects.filter((object) => object.custom).length }, groups, sqlHits,
+      return { tab, hasVendorDictionary, counts, groups, sqlHits,
         sqlCoverage: coverage.routines ? { routines: coverage.routines, captured: coverage.routines - coverage.encrypted, encrypted: coverage.encrypted } : null };
     });
     if (!body) return reply.code(404).send({ error: 'connection_not_found' });
@@ -520,7 +552,7 @@ async function objectDetail(client: PoolClient, tenantId: string, connectionId: 
 
   return {
     source: { connectionId, name: source.name, type: source.connector_type },
-    name, kind: listed.kind, custom: listed.custom, procedureKind: listed.procedureKind,
+    name, kind: listed.kind, custom: listed.custom, origin: listed.origin, originReason: listed.originReason, ...(listed.copyOf ? { copyOf: listed.copyOf, copySimilarity: listed.copySimilarity } : {}), procedureKind: listed.procedureKind,
     description,
     stats: dataset ? { rows: typeof dataset.statistics?.row_count === 'number' ? dataset.statistics.row_count : null, ...(dataset.statistics?.row_count_estimated ? { rowsEstimated: true } : {}), lastProfiled, dependentReports, builtBy: builtBy.map((item) => item.name) } : null,
     columns, keys, joins, tests,
@@ -572,7 +604,7 @@ async function exportSource(client: PoolClient, tenantId: string, connectionId: 
     // Out-of-scope objects appear only in the name-and-type list (non-negotiable 11).
     objects: objects.filter((object) => !excluded.has(object.name)).map((object) => {
       const definition = byDefinition.get(object.name);
-      return { name: object.name, kind: object.kind, custom: object.custom, group: groupFor(object).label, description: byDescription.get(object.name) ?? null,
+      return { name: object.name, kind: object.kind, custom: object.custom, origin: object.origin, group: groupFor(object).label, description: byDescription.get(object.name) ?? null,
         columns: (byTable.get(object.name) ?? []).map((row) => {
           const withheld = (row.tags ?? []).length > 0;
           return { name: row.name, label: row.label, dataType: row.data_type, tags: row.tags ?? [], statsWithheld: withheld,
