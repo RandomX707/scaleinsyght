@@ -4,6 +4,7 @@ import { config } from 'dotenv';
 import { Pool } from 'pg';
 import { withTenant } from '@scaleinsyght/db';
 import { createTenant } from '../../scripts/tenant-create.js';
+import { activateAndWait } from '../support/e2e-profile.js';
 
 // Reproduces the Home thread bug reported on the review app: with SQL Server and "All sources" selected, asking a
 // question (through the source-choice step) and then asking again lost earlier turns, filled Recent conversations with
@@ -18,7 +19,7 @@ async function connect(page: Page, data: Record<string, unknown>) {
   const draft = await page.request.post('/api/connections', { data }); expect(draft.status()).toBe(201);
   const { connectionId } = await draft.json() as { connectionId: string };
   expect((await page.request.post(`/api/connections/${connectionId}/test`)).ok()).toBeTruthy();
-  expect((await page.request.post(`/api/connections/${connectionId}/activate`, { data: { scope: [] } })).ok()).toBeTruthy();
+  await activateAndWait(page, connectionId);
 }
 
 async function answerLatest(page: Page, turns: number) {

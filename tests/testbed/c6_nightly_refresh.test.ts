@@ -8,6 +8,7 @@ import { hashPassword } from '@scaleinsyght/api/server';
 import { claimDueNightly, connectorForConnection, runProfile } from '@scaleinsyght/profiler';
 import { buildTestServer } from '../support/test-api.js';
 import { startSqlParser } from '../support/sqlparse-server.js';
+import { runQueuedDiscoveries } from '../support/discovery.js';
 
 // S6: a source changes between runs (a column added, a table dropped, a new table, rows added); the nightly refresh
 // finds each change, and the Approval matrix decisions are recorded. Uses its own scratch database, never the shared
@@ -48,6 +49,7 @@ describe('S6 nightly refresh, findings and review', () => {
     expect(draft.statusCode).toBe(201); connectionId = draft.json<{ connectionId: string }>().connectionId;
     expect((await server.inject({ method: 'POST', url: `/api/connections/${connectionId}/test`, headers: { cookie } })).statusCode).toBe(200);
     expect((await server.inject({ method: 'POST', url: `/api/connections/${connectionId}/activate`, headers: { cookie }, payload: { scope: [] } })).statusCode).toBe(200);
+    await runQueuedDiscoveries(tenantId);
   });
   afterAll(async () => {
     await server?.close(); parser?.stop(); await appPool.end(); await adminPool.end(); await workerPool.end(); delete process.env.CONNECTION_SECRET_KEY;

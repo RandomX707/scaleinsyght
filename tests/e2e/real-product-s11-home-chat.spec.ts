@@ -4,6 +4,7 @@ import { mkdirSync } from 'node:fs';
 import { config } from 'dotenv';
 import { Client, Pool } from 'pg';
 import { createTenant } from '../../scripts/tenant-create.js';
+import { activateAndWait } from '../support/e2e-profile.js';
 
 // S11: Home answers follow decision 56. One case per display rule, each checked against SQL truth on the PostgreSQL
 // testbed; form-only follow-ups make no new run. Lineage answers are covered by S4 and the excluded-table refusal by S10.
@@ -40,7 +41,7 @@ test('s11_home_answers_take_the_form_code_chooses_and_form_follow_ups_do_not_rer
   const draft = await page.request.post('/api/connections', { data: { connectorType: 'postgres', displayName: 'PostgreSQL testbed', credential: { host: postgres.hostname, port: Number(postgres.port || 5432), database: postgres.pathname.slice(1), username: decodeURIComponent(postgres.username), password: decodeURIComponent(postgres.password), sslMode: 'disable' } } });
   const { connectionId } = await draft.json() as { connectionId: string };
   expect((await page.request.post(`/api/connections/${connectionId}/test`)).ok()).toBeTruthy();
-  expect((await page.request.post(`/api/connections/${connectionId}/activate`, { data: { scope: [] } })).ok()).toBeTruthy();
+  await activateAndWait(page, connectionId);
   page.on('request', (request) => { if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/runs') runPosts.push(request.url()); });
   await page.goto('/');
 

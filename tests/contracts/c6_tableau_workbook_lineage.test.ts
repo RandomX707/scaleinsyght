@@ -8,6 +8,7 @@ import { getImpactRadius, listReports } from '@scaleinsyght/graph';
 import { hashPassword } from '@scaleinsyght/api/server';
 import { buildTestServer } from '../support/test-api.js';
 import { startSqlParser } from '../support/sqlparse-server.js';
+import { runQueuedDiscoveries } from '../support/discovery.js';
 
 // S8: a Tableau workbook (.twb) uploaded for a warehouse connection becomes report-to-column lineage in the graph.
 // Real PostgreSQL (si_test and the sample source) and the real SQLGlot service; nothing is mocked.
@@ -49,6 +50,7 @@ describe('contract 6 Tableau workbook lineage', () => {
     warehouseId = draft.json<{ connectionId: string }>().connectionId;
     expect((await server.inject({ method: 'POST', url: `/api/connections/${warehouseId}/test`, headers: { cookie } })).statusCode).toBe(200);
     expect((await server.inject({ method: 'POST', url: `/api/connections/${warehouseId}/activate`, headers: { cookie }, payload: { scope: [] } })).statusCode).toBe(200);
+    await runQueuedDiscoveries(tenantId);
   }, 120_000);
   afterAll(async () => { await server?.close(); parser?.stop(); await appPool.end(); await adminPool.end(); delete process.env.CONNECTION_SECRET_KEY; });
 

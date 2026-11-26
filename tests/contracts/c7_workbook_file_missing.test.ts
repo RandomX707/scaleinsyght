@@ -9,6 +9,7 @@ import { EncryptedArtifactStore } from '@scaleinsyght/artifacts';
 import { withTenant } from '@scaleinsyght/db';
 import { hashPassword } from '@scaleinsyght/api/server';
 import { buildTestServer } from '../support/test-api.js';
+import { runQueuedDiscoveries } from '../support/discovery.js';
 
 // A workbook whose encrypted file is missing from the artifact volume (for example a volume that moved) is reported
 // as "Workbook file not found, upload it again", never as a server error. Real PostgreSQL; nothing is mocked.
@@ -30,6 +31,7 @@ describe('contract 7 missing workbook file', () => {
     const uploaded = await server.inject({ method: 'POST', url: `/api/connections/${connectionId}/workbooks`, headers: { cookie, 'content-type': 'application/octet-stream' }, payload: readFileSync('testbed/excel/hospital-operations.xlsx') });
     expect(uploaded.statusCode).toBe(201); artifactId = uploaded.json<{ artifactId: string }>().artifactId;
     expect((await server.inject({ method: 'POST', url: `/api/connections/${connectionId}/activate`, headers: { cookie }, payload: { scope: [] } })).statusCode).toBe(200);
+    await runQueuedDiscoveries(tenantId, store);
   }, 60_000);
   afterAll(async () => { await server?.close(); await appPool.end(); await adminPool.end(); rmSync(volume, { recursive: true, force: true }); });
 

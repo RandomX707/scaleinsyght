@@ -6,6 +6,7 @@ import { Pool, Client } from 'pg';
 import { buildTestServer as buildServer } from '../support/test-api.js';
 import { hashPassword } from '@scaleinsyght/api/server';
 import { withTenant } from '@scaleinsyght/db';
+import { runQueuedDiscoveries } from '../support/discovery.js';
 
 config({ path: '.env' });
 const sourceUrl=process.env.DATABASE_URL_SAMPLE_SOURCE;
@@ -38,7 +39,8 @@ describe('contract 6 real PostgreSQL source connector',()=>{
       expect((await server.inject({method:'POST',url:`/api/connections/${connectionId}/test`,headers:{cookie}})).statusCode).toBe(200);
       const activated=await server.inject({method:'POST',url:`/api/connections/${connectionId}/activate`,headers:{cookie},payload:{scope:[]}});
       expect(activated.statusCode).toBe(200);
-      expect((activated.json() as {profile:{listed:number;profiled:number}}).profile).toMatchObject({listed:5,profiled:5});
+      expect(activated.json()).toMatchObject({connectionId,jobState:'QUEUED'});
+      await runQueuedDiscoveries(tenantId);
       const profile=await server.inject({method:'GET',url:`/api/connections/${connectionId}/profile`,headers:{cookie}});
       expect(profile.json().profile).toMatchObject({job_type:'discovery',listed_count:5,profiled_count:5});
       const dictionary=await server.inject({method:'GET',url:`/api/connections/${connectionId}/dictionary`,headers:{cookie}});

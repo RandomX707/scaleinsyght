@@ -6,6 +6,7 @@ import { Pool } from 'pg';
 import { withTenant } from '@scaleinsyght/db';
 import { createTenant, hashPassword } from '../../scripts/tenant-create.js';
 import { docxText, pdfText, pptxText, xlsxRows } from '../support/document-text.js';
+import { activateAndWait } from '../support/e2e-profile.js';
 
 // S7: a live answer is saved, reused as a starting plan, exported to PDF, workbook and slides, turned into a governed
 // report approved by a second person, run on a schedule, and the source's dictionary exported. Every file is opened and
@@ -39,7 +40,7 @@ test('s7_saved_question_reuse_exports_governed_report_schedule_and_dictionary_ma
   const draft = await page.request.post('/api/connections', { data: { connectorType: 'postgres', displayName: 'PostgreSQL testbed', credential: { host: postgres.hostname, port: Number(postgres.port || 5432), database: postgres.pathname.slice(1), username: decodeURIComponent(postgres.username), password: decodeURIComponent(postgres.password), sslMode: 'disable' } } });
   const { connectionId } = await draft.json() as { connectionId: string };
   expect((await page.request.post(`/api/connections/${connectionId}/test`)).ok()).toBeTruthy();
-  expect((await page.request.post(`/api/connections/${connectionId}/activate`, { data: { scope: [] } })).ok()).toBeTruthy();
+  await activateAndWait(page, connectionId);
 
   // A live answer, rated useful and saved.
   await page.goto('/'); await page.getByLabel('Ask a question').fill(question); await page.getByRole('button', { name: 'Send question' }).click();

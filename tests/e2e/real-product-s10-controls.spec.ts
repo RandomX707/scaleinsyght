@@ -7,6 +7,7 @@ import 'dotenv/config';
 import { Pool } from 'pg';
 import { withTenant } from '@scaleinsyght/db';
 import { createTenant } from '../../scripts/tenant-create.js';
+import { activateAndWait } from '../support/e2e-profile.js';
 
 const platformUrl=new URL(process.env.DATABASE_URL_MIGRATE??'');
 platformUrl.pathname=`/${process.env.SI_TEST_DATABASE??'si_test'}`;
@@ -28,7 +29,7 @@ test('controls_exclusion_blocks_profile_and_query_after_approval',async({page,br
     credential:{host:source.hostname,port:Number(source.port||5432),database:source.pathname.slice(1),username:decodeURIComponent(source.username),password:decodeURIComponent(source.password),sslMode:'disable'}}});
   expect(draft.status()).toBe(201);
   const {connectionId}=await draft.json() as {connectionId:string};
-  expect((await page.request.post(`/api/connections/${connectionId}/activate`,{data:{scope:[]}})).ok()).toBe(true);
+  await activateAndWait(page, connectionId);
 
   await page.goto('/');
   await page.getByLabel('Ask a question').fill('How many patients are in the PostgreSQL testbed?');

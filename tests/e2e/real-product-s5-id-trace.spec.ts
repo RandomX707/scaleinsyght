@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { config } from 'dotenv';
 import { Pool } from 'pg';
 import { createTenant } from '../../scripts/tenant-create.js';
+import { activateAndWait } from '../support/e2e-profile.js';
 
 // S5: ID trace across PostgreSQL, SQL Server and the workbook, checked against testbed/id-truth.json.
 config({ path: '.env' });
@@ -18,7 +19,7 @@ async function connect(page: Page, data: Record<string, unknown>, workbook?: Buf
   const { connectionId } = await draft.json() as { connectionId: string };
   if (workbook) expect((await page.request.post(`/api/connections/${connectionId}/workbooks`, { data: workbook, headers: { 'content-type': 'application/octet-stream' } })).ok()).toBeTruthy();
   expect((await page.request.post(`/api/connections/${connectionId}/test`)).ok()).toBeTruthy();
-  expect((await page.request.post(`/api/connections/${connectionId}/activate`, { data: { scope: [] } })).ok()).toBeTruthy();
+  await activateAndWait(page, connectionId);
 }
 
 test('s5_id_trace_groups_patient_encounter_and_mrn_ids_across_three_systems_and_looks_up_a_value', async ({ page }) => {

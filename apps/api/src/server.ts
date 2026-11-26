@@ -9,7 +9,7 @@ import { recordAgentRun, tenantAgent } from '@scaleinsyght/registry';
 import { activateConnection, approveGovernedVersion, createConnectionDraft, createGovernedDraft, deletePersonalMemory, getApprovedGovernedVersion, getPersonalMemory, moveConnectionToGroup, putPersonalMemory, type ConnectorType, type PersonalMemoryData } from '@scaleinsyght/registry';
 import { decryptConnectionSecret, encryptConnectionSecret, createExcelConnector, createPostgresConnector, createSqlServerConnector, type ReadOnlyConnector, type Routine, type SourceConnectorType } from '@scaleinsyght/connectors';
 import { EncryptedArtifactStore } from '@scaleinsyght/artifacts';
-import { decideFinding, getNotifications, listFindings, markNotificationRead, readConnectionScope, readWorkbook, retireConnection, runProfile, saveConnectionScope, storeWorkbook } from '@scaleinsyght/profiler';
+import { decideFinding, getNotifications, latestDiscovery, listFindings, queueDiscovery, markNotificationRead, readConnectionScope, readWorkbook, retireConnection, runProfile, saveConnectionScope, storeWorkbook } from '@scaleinsyght/profiler';
 import { applyPersonalContext, createAnalyticPlan, parseLineageRequest, startAnalyticRun, submitFeedback, type StructuredAnswer } from '@scaleinsyght/analytic';
 import { eventsAfter } from '@scaleinsyght/runner';
 import { AnalyticPlanSchema, FlowSpecSchema, hashPlan, parseQueryIntent, type QueryIntent } from '@scaleinsyght/contracts';
@@ -1278,21 +1278,39 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     if(draft.rows[0]?.status!=='draft')return reply.code(404).send({error:'connection_draft_not_found'});
     try{return reply.send(await (await connectorForConnection(current.tenantId,request.params.connectionId)).test());}catch(error){const code=error instanceof Error?error.message:'connection_test_failed';if(code==='artifact_file_missing')return reply.code(409).send(WORKBOOK_FILE_MISSING);if(['postgres_connector_role_not_read_only','sqlserver_connector_role_not_read_only','source_connection_requires_credentials','postgres_connection_string_required','excel_workbook_not_uploaded','excel_workbook_not_xlsx','excel_workbook_size_invalid','excel_workbook_has_no_header_rows'].includes(code))return reply.code(400).send({error:code});throw error;}
   });
+  // Decision 57: activation creates the connection and its agent, queues the discovery profile and returns at once. The
+  // profile runs in the worker; the Profile page shows its progress. A repeated or concurrent activation (a double click,
+  // a retry after a slow network) returns the same connection and job, never an error.
   app.post<{Params:{connectionId:string};Body:{scope?:Array<{qualifiedName:string;objectType:string;scopeMode:'profile'|'list_only'|'exclude'}>}}>('/api/connections/:connectionId/activate',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
-    const draft=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{source_ref:string|null;connector_type:string;display_name:string;status:string}>('SELECT source_ref,connector_type,display_name,status FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2',[current.tenantId,request.params.connectionId]));
-    const row=draft.rows[0];if(!row||row.status!=='draft'||!['postgres','sql_server','excel'].includes(row.connector_type))return reply.code(404).send({error:'connection_draft_not_found'});
+    if(!/^[0-9a-f-]{36}$/i.test(request.params.connectionId))return reply.code(404).send({error:'connection_not_found'});
+    const read=()=>withTenant(options.pool,current.tenantId,async(client)=>(await client.query<{source_ref:string|null;connector_type:string;display_name:string;status:string;agent_id:string|null}>('SELECT source_ref,connector_type,display_name,status,connector_agent_id AS agent_id FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2',[current.tenantId,request.params.connectionId])).rows[0]);
+    const activeResult=async(row:{display_name:string;agent_id:string|null})=>{
+      const job=await withTenant(options.pool,current.tenantId,async(client)=>await latestDiscovery(client,current.tenantId,request.params.connectionId)??await queueDiscovery(client,current.tenantId,request.params.connectionId));
+      return {connectionId:request.params.connectionId,agentId:row.agent_id,sourceName:row.display_name,jobId:job.jobId,jobState:job.state};
+    };
+    const row=await read();
+    if(!row||!['postgres','sql_server','excel'].includes(row.connector_type))return reply.code(404).send({error:'connection_not_found'});
+    if(row.status==='active')return reply.send(await activeResult(row));
+    if(row.status!=='draft')return reply.code(409).send({error:'connection_retired'});
     let connector:ReadOnlyConnector;try{connector=await connectorForConnection(current.tenantId,request.params.connectionId);const checked=await connector.test();if(!checked.ok)return reply.code(400).send({error:'connection_test_failed'});}catch(error){const code=error instanceof Error?error.message:'connection_test_failed';if(code==='artifact_file_missing')return reply.code(409).send(WORKBOOK_FILE_MISSING);if(['postgres_connector_role_not_read_only','sqlserver_connector_role_not_read_only','source_connection_requires_credentials','excel_workbook_not_uploaded','excel_workbook_not_xlsx','excel_workbook_size_invalid','excel_workbook_has_no_header_rows'].includes(code))return reply.code(400).send({error:code});throw error;}
     const scope=request.body?.scope??[];
-    const activated=await activateConnection(options.pool,{tenantId:current.tenantId,principalId:current.userId,connectorType:row.connector_type as 'postgres'|'sql_server'|'excel',connectionId:request.params.connectionId,...(row.source_ref?{sourceRef:row.source_ref}:{}),scope});
+    let activated:{connectionId:string;agentId:string};
+    try{activated=await activateConnection(options.pool,{tenantId:current.tenantId,principalId:current.userId,connectorType:row.connector_type as 'postgres'|'sql_server'|'excel',connectionId:request.params.connectionId,...(row.source_ref?{sourceRef:row.source_ref}:{}),scope});}
+    catch(error){
+      // Another request activated it while this one was testing the connection: answer with that result.
+      if(error instanceof Error&&error.message==='connection_draft_invalid'){const now=await read();if(now?.status==='active')return reply.send(await activeResult(now));}
+      if(error instanceof Error&&error.message==='connector_allowance_exceeded')return reply.code(409).send({error:'connector_allowance_exceeded'});
+      throw error;
+    }
     await withTenant(options.pool,current.tenantId,async(client)=>{
       await client.query("INSERT INTO registry.capabilities(tenant_id,capability_id,active_version,effect_class,effect_safety,enabled) VALUES($1,'analytic.read',1,'READ','not_applicable',true) ON CONFLICT(tenant_id,capability_id) DO UPDATE SET enabled=true,effect_class='READ',effect_safety='not_applicable'",[current.tenantId]);
       await client.query("INSERT INTO registry.capability_versions(tenant_id,capability_id,version,input_schema,output_schema) VALUES($1,'analytic.read',1,'{}'::jsonb,'{}'::jsonb) ON CONFLICT DO NOTHING",[current.tenantId]);
       const existing=await client.query("SELECT 1 FROM core.entitlements WHERE tenant_id=$1 AND principal_id=$2 AND capability_id='analytic.read' AND resource_id=$3 AND allowed",[current.tenantId,current.userId,activated.connectionId]);
       if(!existing.rowCount)await client.query("INSERT INTO core.entitlements(tenant_id,principal_id,capability_id,resource_id,allowed) VALUES($1,$2,'analytic.read',$3,true)",[current.tenantId,current.userId,activated.connectionId]);
     });
-    const profile=await runProfile(options.pool,{tenantId:current.tenantId,connectionId:activated.connectionId,connector,jobType:'discovery'});
-    return reply.send({connectionId:activated.connectionId,agentId:activated.agentId,sourceName:row.display_name,profile});
+    const job=await withTenant(options.pool,current.tenantId,client=>queueDiscovery(client,current.tenantId,activated.connectionId));
+    return reply.send({connectionId:activated.connectionId,agentId:activated.agentId,sourceName:row.display_name,jobId:job.jobId,jobState:job.state});
   });
   app.post<{Params:{connectionId:string};Body:{jobType?:'profile'|'nightly'}}>('/api/connections/:connectionId/discover',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
@@ -1309,7 +1327,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
   app.get<{Params:{connectionId:string}}>('/api/connections/:connectionId/profile',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const result=await withTenant(options.pool,current.tenantId,async(client)=>client.query(
-      `SELECT j.job_id,j.job_type,j.state,j.listed_count,j.profiled_count,j.inaccessible_count,j.created_at,
+      `SELECT j.job_id,j.job_type,j.state,j.phase,j.planned_count,j.failure_code,j.listed_count,j.profiled_count,j.inaccessible_count,j.created_at,
         count(DISTINCT a.asset_id)::int AS dataset_count,count(DISTINCT f.asset_id)::int AS field_count
        FROM profiler.jobs j LEFT JOIN graph.assets a ON a.tenant_id=j.tenant_id AND a.source_id=j.connection_id AND a.asset_type='dataset'
        LEFT JOIN graph.assets f ON f.tenant_id=j.tenant_id AND f.source_id=j.connection_id AND f.asset_type='field'
