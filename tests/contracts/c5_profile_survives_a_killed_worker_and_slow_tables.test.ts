@@ -7,7 +7,7 @@ import { Pool } from 'pg';
 import { withTenant } from '@scaleinsyght/db';
 import { activateConnection } from '@scaleinsyght/registry';
 import { createPostgresConnector, type ReadOnlyConnector } from '@scaleinsyght/connectors';
-import { queueDiscovery, runNextDiscovery } from '@scaleinsyght/profiler';
+import { claimDiscovery, queueDiscovery, runNextDiscovery } from '@scaleinsyght/profiler';
 import { hashPassword } from '@scaleinsyght/api/server';
 import { createGoldenConnector, listGoldenSources } from '../support/golden-connectors.js';
 
@@ -67,6 +67,26 @@ describe('contract 5 background profile resilience', () => {
     const assets = await withTenant(migratePool, tenantId, (db) => db.query("SELECT 1 FROM graph.assets WHERE tenant_id=$1 AND asset_type='dataset' AND active", [tenantId]));
     expect(assets.rowCount).toBe(objects);
   }, 120_000);
+
+  it('c5_the_lease_is_kept_while_relationships_lineage_and_findings_are_mapped', async () => {
+    // test_emr on 4284 (K10): after profiling, mapping relationships and IDs ran for minutes with the lease already
+    // expired, so a second worker could have reclaimed a job that was still running.
+    const { tenantId, jobId } = await tenantWithConnection('lease-kept');
+    const inner = createGoldenConnector(listGoldenSources().find((item) => item.type === 'postgres')!.id);
+    const slowAfter = new Proxy(inner, { get: (target, key) => key === 'viewDefinitions'
+      ? async () => { await new Promise((resolve) => setTimeout(resolve, 5_000)); return []; }
+      : (() => { const value = Reflect.get(target, key, target) as unknown; return typeof value === 'function' ? value.bind(target) : value; })() });
+    let done = false; const run = runNextDiscovery(workerPool, async () => slowAfter, tenantId, 2_000).then((value) => { done = true; return value; });
+    let checked = 0;
+    while (!done) {
+      const row = await withTenant(migratePool, tenantId, async (db) => (await db.query<{ phase: string; live: boolean }>('SELECT phase,lease_expires_at>clock_timestamp() AS live FROM profiler.jobs WHERE tenant_id=$1 AND job_id=$2', [tenantId, jobId])).rows[0]!);
+      if (row.phase === 'relationships') { expect(row.live).toBe(true); expect(await claimDiscovery(workerPool, undefined, tenantId)).toBeNull(); checked++; }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    expect(await run).toBe(true);
+    expect(checked).toBeGreaterThan(4); // watched for over two lease lengths while relationships were mapped
+    expect(await jobRow(tenantId, jobId)).toMatchObject({ state: 'COMPLETED', claim_token: 1 });
+  }, 60_000);
 
   it('c7_a_table_too_slow_to_sample_is_kept_without_statistics_and_an_unreadable_one_is_skipped', async () => {
     // A real PostgreSQL view whose row count is instant but whose text column takes 0.4 s a row to read: sampling it runs
