@@ -188,11 +188,12 @@ export class SqlServerConnector implements ReadOnlyConnector {
       if (references.some((item) => item.from === candidate.from && item.fromColumn === candidate.fromColumn && item.to === candidate.to && item.toColumn === candidate.toColumn)) continue;
       const [fromSchema, fromName] = candidate.from.split('.'); const [toSchema, toName] = candidate.to.split('.');
       if (!fromSchema || !fromName || !toSchema || !toName) continue;
-      // Decision 63: the first REFERENCE_CHECK_SAMPLE non-null values, each looked up in the target's primary key.
+      // Decision 63: the first REFERENCE_CHECK_SAMPLE non-null values, each looked up in the target's primary key (a
+      // single-column key, so the join cannot repeat a source value).
       let count;
-      try { count = await (await this.request()).query<{ source_count: number; matched_count: number }>(`SELECT COUNT_BIG(*) AS source_count,
-          COALESCE(SUM(CASE WHEN EXISTS (SELECT 1 FROM ${quote(toSchema)}.${quote(toName)} dst WHERE dst.${quote(candidate.toColumn)} = src.v) THEN 1 ELSE 0 END), 0) AS matched_count
-        FROM (SELECT TOP (${REFERENCE_CHECK_SAMPLE}) ${quote(candidate.fromColumn)} AS v FROM ${quote(fromSchema)}.${quote(fromName)} WHERE ${quote(candidate.fromColumn)} IS NOT NULL) src`); }
+      try { count = await (await this.request()).query<{ source_count: number; matched_count: number }>(`SELECT COUNT_BIG(*) AS source_count, COUNT_BIG(dst.${quote(candidate.toColumn)}) AS matched_count
+        FROM (SELECT TOP (${REFERENCE_CHECK_SAMPLE}) ${quote(candidate.fromColumn)} AS v FROM ${quote(fromSchema)}.${quote(fromName)} WHERE ${quote(candidate.fromColumn)} IS NOT NULL) src
+        LEFT JOIN ${quote(toSchema)}.${quote(toName)} dst ON dst.${quote(candidate.toColumn)} = src.v`); }
       catch (error) { if (!isSkippableCheckError(error)) throw error; skippedChecks++; continue; }
       const sourceCount = Number(count.recordset[0]?.source_count ?? 0); const matchedCount = Number(count.recordset[0]?.matched_count ?? 0);
       if (sourceCount > 0 && matchedCount / sourceCount >= POSSIBLE_REFERENCE_COVERAGE) references.push({ ...candidate, evidenceMethod: 'inferred',confidence:matchedCount/sourceCount,matchedCount,sourceCount,sampled:sourceCount>=REFERENCE_CHECK_SAMPLE });
