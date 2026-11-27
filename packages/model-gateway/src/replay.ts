@@ -88,7 +88,12 @@ export function replayFetcher(mode: ReplayMode, live: Fetch, env: NodeJS.Process
     if (mode === 'replay') {
       if (!existsSync(file)) {
         const purpose = purposeOf(request);
-        try { appendFileSync(missesFile(env), `${hash} ${purpose}\n`); } catch { /* the error below still fails the call */ }
+        try {
+          appendFileSync(missesFile(env), `${hash} ${purpose}\n`);
+          // The normalized request (already through the contract 7 boundary), so a miss can be compared with the nearest recording.
+          const debug = resolve(env.MODEL_REPLAY_MISSES_DIR ?? '.model-replay-misses'); mkdirSync(debug, { recursive: true });
+          writeFileSync(join(debug, `${hash}.json`), `${JSON.stringify(request, null, 1)}\n`);
+        } catch { /* the error below still fails the call */ }
         console.error(`[model-replay] no recording for request ${hash} (${purpose}); record it with MODEL_REPLAY=record. The live model was not called.`);
         throw new ModelReplayMissingError(hash);
       }
