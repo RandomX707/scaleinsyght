@@ -1,6 +1,6 @@
-# Handover, 26 Nov 2026
+# Handover, 27 Nov 2026
 
-Updated by Claude Code after #51 (bug 6). The review app on 4284 runs `main` at `a3e2ca0`; K10 follows. 4284 logs now append across redeploys.
+Updated by Claude Code after #56 (consistent ID sampling). The review app on 4284 runs `main` at `58d12cd`. test_emr's latest profile completed in 28 minutes (`docs/reports/test-emr-profiling-report.md`). Standard and Custom (decision 62) is next to merge.
 
 ## Merged to `main` today
 
@@ -36,10 +36,15 @@ Updated by Claude Code after #51 (bug 6). The review app on 4284 runs `main` at 
 | #49 | 7fb2105 | Bug 4: notifications and Home cards name the source, say what changed with a time, link to the details and group repeats; quiet nights notify no one |
 | #50 | 63ef5fd | Grouped profiling notifications show the latest run's size; handover |
 | #51 | a3e2ca0 | Bug 6: a slow or unreadable table no longer fails a profile; failed profiles say why with Retry; Run profile now and Remove on cards (decision 58, migration 042) |
+| #52 | 73c5c9b | K10: Run profile now and on-demand refresh queue a background job; the scheduled nightly is queued too (migration 043) |
+| #53 | f20b7f2 | Large tables are sampled, not skipped (decision 59, migration 044); K13: the ID step saves field by field and shows its progress |
+| #54 | 6e73d7f | K12: "each <dimension>" counts from the dimension table, empty groups as 0 (decision 60) |
+| #55 | 3327ca2 | An ID field that times out is skipped and counted, not the whole run (migration 045) |
+| #56 | 58d12cd | Decision 61: large identifier columns are fingerprinted through a consistent 1-in-16 sample (migration 046); a reclaimed profile job reruns safely |
 
 ## Review app on 4284 and riverside-health
 
-- **4284 runs `main` at `a3e2ca0`** (redeployed 26 Nov, 20:45 IST) from `../scaleinsyght-review` (detached): API 3000, worker 3001, web 4284, sqlparse 8011, started with `nohup` by Claude Code (logs in its scratchpad). `scale_insyght` is migrated to 042; backups were taken before the 035, 036, 037, 039, 040, 041 and 042 migrations and before K6 (Claude Code's scratchpad). Riverside-health's procedure and view SQL appears in the Dictionary after its next profile or nightly refresh, which captures definitions. Riverside-health now has its ID and ID trace agents. Its workbook refresh and ID trace (3 systems) were checked by running the same code; a browser check needs the riverside-health password.
+- **4284 runs `main` at `58d12cd`** (redeployed 27 Nov, 04:53 IST) from `../scaleinsyght-review` (detached): API 3000, worker 3001, web 4284, sqlparse 8011, started with `nohup` by Claude Code (logs in its scratchpad, appended with a stamp per deploy). `scale_insyght` is migrated to 046; a `pg_dump` backup is taken before every migration (latest `scale_insyght-before-046.dump`, Claude Code's scratchpad). **Deploying safely:** SIGTERM lets the worker finish its current profile, which can take an hour; the new worker then cannot bind 3001 and exits while the health check still answers from the old one (this happened at 03:28 on 27 Nov). Wait for the old processes to exit, force-stop them after a timeout, and check that every listening PID is new.
 - **riverside-health password:** Yashaswi's password (`yashaswi@riverside-health.test`) was reset with `pnpm tenant:reset-password` at about 06:40 IST and given to Yashaswi once in the chat at handover. It is not in the repo. If it is lost, reset it again with the same command.
 - **riverside-health sources:** PostgreSQL (`pgs`) and SQL Server (`sql`) were already connected by Yashaswi; the Operations workbook was added through Add connector, and PostgreSQL and SQL Server were re-profiled so display labels work. No dbt project, no Tableau and no nightly refresh have been run there yet (`profiler.nightly_schedules` is backfilled by migration 032 when 4284 is migrated). Drafts Yashaswi created were left alone.
 - `../scaleinsyght/.env` was changed: `MODEL_DAILY_COST_CAP_USD=5`, `MODEL_DAILY_USER_COST_CAP_USD=1`, token cap removed (backup in my scratchpad as `main-env-backup`).
@@ -57,22 +62,21 @@ Updated by Claude Code after #51 (bug 6). The review app on 4284 runs `main` at 
 
 - `docs/known-issues.md`: K1 fixed; K2 closed, not reproduced (development and heldout3 score the same with and without dbt marts); K3 open; K4 partly fixed (an intermittent `c2_postgres_connection_credentials` timeout was seen once in CI after the fix; CI now prints slow plans when contracts fail); K5 heldout2 retired; K6 two conditions on one table is not a supported query shape (Q52).
 - The testbed's `pnpm test:testbed` now runs `pnpm testbed:dbt` first, which rebuilds the dbt `analytics` and `billing` schemas in `si_testbed_pg` and revokes the read-only login's access to them.
-- Running anything against `si_test` while another suite is using it breaks both. Each worktree can set `SI_TEST_DATABASE` (Claude Code uses `si_test_cc`) and its own ports (Claude Code: API 3350, worker 3351, web 4295, parser 8031).
+- Running anything against `si_test` while another suite is using it breaks both. Each worktree sets `SI_TEST_DATABASE` in its own `.env` (Claude Code: `si_test_cc` in `../scaleinsyght-cc`, `si_test_cc2` in `../scaleinsyght-cc-s8`). Setting it on the command line is not enough for resets: `scripts/prepare-test-db.ts` loads `.env` with override, so check the "Reset only …" line it prints and its own ports (Claude Code: API 3350, worker 3351, web 4295, parser 8031).
 - **Migrations:** `main` has two 035s (`035_claims_need_an_active_run`, `035_saved_reuse`); both are applied on `scale_insyght`, so neither may be renamed. The next migration is 038 (037 is the Dictionary). Migrations cannot see tenant rows (row security is forced even for the owner): 036 shows how to backfill with policies for the migration role that live only inside its transaction. 032's backfill of nightly schedules inserted nothing for this reason.
 - Every worktree's `.env` sets `ARTIFACT_VOLUME_PATH=/Users/yashaswiram/.scaleinsyght/artifacts`.
 - The model ledger (`core.model_usage`) lives in the test databases, which the gates reset, so spend has to be tracked from run logs (queue item 5 fixes this). 25 Nov: measured in `si_test_cc` about USD 0.3 per full testbed walkthrough run (S1 to S9 ask questions; the Dictionary itself uses no model); `si_test` showed USD 1.43 when checked.
 - The testbed walkthroughs all honour `SI_TEST_DATABASE` now; S7 used to write to `si_test` regardless (two S7 tenants were added to `si_test` on 25 Nov before this was fixed; nothing was reset).
 - Worktrees: `../scaleinsyght-review` serves 4284; `../scaleinsyght-cc` and `../scaleinsyght-cc-s8` are Claude Code's; `../scaleinsyght-chat` (S7, merged) and `../scaleinsyght-eval` are Codex's. Orphaned SQL parsers from before #30 may still hold ports 8032 and 8033 (in the chat and eval worktrees); `startSqlParser` treats any server on its port as its own, so stop them before relying on those ports.
 
-## Claude Code queue (in the user's order; Codex is out of limits, so Claude Code holds all work)
+## Claude Code queue (in the user's order)
 
-1. **K10**: every profile runs as a background job (this PR).
-2. **Profiling large tables** (user, 27 Nov): instead of skipping statistics when a sample query times out, use the database's sampling (TABLESAMPLE SYSTEM in PostgreSQL and SQL Server, with a fixed row cap), take row counts from catalog statistics (`pg_class.reltuples`, `sys.partitions`) for very large tables, and label estimated figures as estimates. Target: on test_emr all 272 tables get statistics and the profile finishes in under 8 minutes. Includes K13: the ID agent commits per table and reports progress, instead of one transaction of 27 minutes or more.
-3. **K12 as a planner fix** (user, 27 Nov): for "each <dimension>" questions the plan counts from the dimension table so groups with zero appear as 0, still under the small-count rule (0 shows as 0, 1 to 10 as "<11"). Not a verifier change. Development set only, 0 wrong.
-4. **Agents, My agent, Usage and BI reports** matched to the prototype, one PR each (Agents is built on `agents-screen`; needs a rebase, screenshots, gates and testbed runs).
-5. **Remaining Dictionary items**: keys and indexes, Back buttons, encrypted procedure dependencies, agent schedules ("Run by"), ER grid.
-6. **Cross-source row joins**: spec first, for the user's approval.
-7. Then: K11 (worker nightly runs re-profile every table), migration backfill safety, a model-spend ledger that test resets don't wipe, per-table profiling time, planner pre-model catalog reads.
+1. **Standard and Custom (decision 62)** on `standard-custom` (worktree `../scaleinsyght-cc-s8`, migration 047): never Standard by default; "Not classified yet"; rules in Controls (prefixes, schemas, owners); copy detection; vendor dictionary decides for the tables it lists. After merge, re-profile test_emr on 4284 to show it.
+   - The copied SQL Server procedure for the shared Dictionary testbed is on `dictionary-testbed-copy`, waiting for the user's OK to reapply `pnpm testbed:dictionary` (it recreates the shared database and breaks every branch's c7 and S9 until they rebase).
+2. **Agents, My agent, Usage and BI reports** matched to the prototype, one PR each (Agents is built on `agents-screen`; needs a rebase, screenshots, gates and testbed runs).
+3. **Remaining Dictionary items**: keys and indexes, Back buttons, encrypted procedure dependencies, agent schedules ("Run by"), ER grid.
+4. **Cross-source row joins**: spec first, for the user's approval.
+5. Then: K11 (worker nightly runs re-profile every table; on test_emr that is a 28-minute nightly), reuse stored fingerprints so the ID step does not reread every identifier column, stage start and end times and per-table time in the job record, migration backfill safety, a model-spend ledger that test resets don't wipe, planner pre-model catalog reads.
 
 ## Codex continuation
 
