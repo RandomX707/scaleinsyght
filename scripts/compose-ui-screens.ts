@@ -10,6 +10,7 @@ const pairs: Pair[] = [
   { out: 'my-agent', app: 'docs/acceptance/phase5/my-agent.png', prototype: 'docs/acceptance/phase5/prototype/my-agent.png' },
 
   { out: 'usage', app: 'docs/acceptance/phase5/usage.png', prototype: 'docs/acceptance/phase5/prototype/usage.png' },
+  { out: 'bi-reports', app: 'docs/acceptance/s8/bi-reports.png', prototype: 'docs/acceptance/s8/prototype/bi-reports.png' },
   { out: 'login', app: 'docs/acceptance/phase0/login.png', prototype: 'docs/acceptance/phase0/prototype/login.png' },
   { out: 'dictionary-landing', app: 'docs/acceptance/s9/landing.png', prototype: 'docs/acceptance/s9/prototype/landing.png' },
   { out: 'dictionary-table', app: 'docs/acceptance/s9/table.png', prototype: 'docs/acceptance/s9/prototype/table.png' },
