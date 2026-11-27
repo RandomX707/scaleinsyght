@@ -19,6 +19,16 @@ const run = (intent: unknown) => connector.executeQueryIntent(parseQueryIntent(i
 describe('Excel workbook connector', () => {
   afterAll(async () => connector.close());
 
+  it('validates explicit deadlines passed through the workbook factory', () => {
+    for (const [option, env] of [
+      ['connectTimeoutMs', 'SOURCE_CONNECT_TIMEOUT_MS'],
+      ['statementTimeoutMs', 'SOURCE_QUERY_TIMEOUT_MS'],
+    ] as const) {
+      expect(() => createExcelConnector({ id: 'deadline', name: 'Workbook', workbook, [option]: 0 }))
+        .toThrow(`invalid_source_timeout:${env}`);
+    }
+  });
+
   it('c6_excel_connector_profiles_sheets_columns_and_null_rates_matching_truth', async () => {
     expect(await connector.test()).toEqual({ ok: true, capabilities: ['discover', 'profile'], readOnly: true });
     const discovered = await connector.discover({ mode: 'profile' });

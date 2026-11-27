@@ -209,7 +209,9 @@ export function decodePlannerOutput(text: string, catalog: PlannerCatalog, joins
       .filter((ref): ref is string => typeof ref === 'string');
     const undeclared = [...new Set(readColumns.filter(ref => !read.includes(ref)))];
     if (undeclared.length) throw new Error(`plan_reads_undeclared_columns: ${undeclared.join(', ')} must be in read_columns`);
-    const unexposed = [...new Set(shownColumns.filter(ref => !exposed.includes(ref)))];
+    // The grouped column must be exposed. A group key is read (covered above) but need not be listed as exposed: it is
+    // tag-checked here like the grouping, and requiring it turned Q49's correct plans away (K16).
+    const unexposed = [...new Set([item.groupBy].filter((ref): ref is string => typeof ref === 'string' && !exposed.includes(ref)))];
     if (unexposed.length) throw new Error(`plan_shows_unexposed_columns: ${unexposed.join(', ')} must be in exposed_columns`);
     // The executable plan must match what the step declares.
     if ((isJoinIntent ? leftTable : table) !== declared.subject_table) throw new Error(`plan_subject_differs_from_declared_subject: declared ${String(declared.subject_table)}, plan uses ${isJoinIntent ? leftTable : table}`);
@@ -404,6 +406,15 @@ export function describePlan(steps: DecodedStep[], catalog: PlannerCatalog): str
     if (plan.groupBy) {
       const groupTable = plan.groupByTable === 'right' ? String(plan.rightTable) : subject;
       parts.push(`for each ${label(index, groupTable, String(plan.groupBy))}`);
+      // K16: a group key means the query groups by that key and only shows the grouped column, so records that share a
+      // name are never merged. The model may set the key itself, or code attaches it when the name is unique and
+      // complete in its table (decision 45, attachEntityKey). Without saying so the verifier objected to shared names.
+      const executed = intent as unknown as {groupKey?: string; groupBy?: string};
+      const key = plan.groupKey ?? (executed.groupBy === plan.groupBy ? executed.groupKey : undefined);
+      if (key && key !== plan.groupBy) {
+        const shown = label(index, groupTable, String(plan.groupBy));
+        parts.push(`grouped by ${groupTable}.${String(key)} and shown by ${shown}, so records with the same ${shown} are never merged${plan.groupKey ? '' : ` (the profile shows each ${shown} names exactly one ${groupTable} record)`}`);
+      }
     }
     if ((intent as {emptyGroups?: string}).emptyGroups === 'zero') parts.push(`including every ${String((intent as {rightTable: string}).rightTable)} record with none, counted as 0`);
     const conditions = [...(plan.kind === 'filtered_count' ? [plan] : []), ...(Array.isArray(plan.filters) ? plan.filters as Array<Record<string, unknown>> : [])]

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Badge, Button, FileInput, Input, Modal, PillTabs, SegmentedControl, Select, Tabs, Textarea } from '@scaleinsyght/ui';
-import './dictionary.css';
+// One stylesheet for the page and the offline HTML export (item 5).
+import '@scaleinsyght/ui/dictionary.css';
 
 /**
  * The Dictionary (docs/phases/dictionary-rebuild.md). Lazy: the object list is paged and searched on the server and an
@@ -15,8 +16,15 @@ type Summary = {
   counts: { standard: number; custom: number; tables: number; tablesNotInDictionary: number | null; views: number; procedures: number; functions: number; packages: number; worksheets: number; calculatedFields: number; dbtTests: number | null };
   coverage: { tables: { documented: number; drafted: number; total: number }; columns: { documented: number; total: number } };
   drafted: number;
+  descriptions?: DescriptionStates;
   newerThanDictionary: { count: number; names: string[] } | null;
 };
+type DescriptionStates = { drafted: number; approved: number; edited: number; imported: number };
+/** "271 drafted, 1 approved": every description state of what is shown, so the numbers add up. */
+export function descriptionLine(states: DescriptionStates): string {
+  return ([[states.drafted, 'drafted'], [states.approved, 'approved'], [states.edited, 'edited'], [states.imported, 'from a dictionary']] as Array<[number, string]>)
+    .filter(([count]) => count > 0).map(([count, label]) => `${count.toLocaleString('en-US')} ${label}`).join(', ');
+}
 type ListItem = { name: string; kind: string; columns: number | null; matchedColumns?: number; copyOf?: string; copySimilarity?: number };
 type Group = { key: string; label: string; total: number; items: ListItem[]; nextOffset: number | null };
 /** Decision 64: Standard is base tables (and sheets, dbt sources, BI data sources); Custom is everything built over them. */
@@ -24,7 +32,7 @@ type Tab = 'standard' | 'custom';
 const TAB_LABEL: Record<Tab, string> = { standard: 'Standard', custom: 'Custom' };
 /** Information only: copy detection never changes the tab. */
 const copyLabel = (copyOf: string, similarity?: number) => `Copy of ${objectTitle(copyOf)}${similarity ? ` · ${Math.round(similarity * 100)}% similar` : ''}`;
-type ObjectList = { tab: Tab; hasVendorDictionary: boolean; counts: { standard: number; custom: number }; drafted: number; sqlCoverage: { routines: number; captured: number; encrypted: number } | null; groups: Group[]; sqlHits: Array<{ name: string; kind: string; matches: number; lines: Array<{ line: number; text: string }> }> };
+type ObjectList = { tab: Tab; hasVendorDictionary: boolean; counts: { standard: number; custom: number }; drafted: number; descriptions?: DescriptionStates; sqlCoverage: { routines: number; captured: number; encrypted: number } | null; groups: Group[]; sqlHits: Array<{ name: string; kind: string; matches: number; lines: Array<{ line: number; text: string }> }> };
 type Column = { statisticsEstimated?: boolean; name: string; label: string | null; dataType: string | null; nullable: boolean | null; tags: string[]; inferredTags?: string[]; key: boolean; statsWithheld: boolean; withheldReason?: string; nullRate: number | null; distinctCount: number | null; description: string | null; usedBy: number };
 type Detail = {
   source: { connectionId: string; name: string; type: string };
@@ -216,9 +224,9 @@ export function DictionaryPage(props: { connectionId: string; navigate: (path: s
         <SegmentedControl label="Standard or custom" selected={shownTab ?? 'standard'} onSelect={(id) => setTab(id as Tab)}
           items={(['standard', 'custom'] as Tab[]).map((item) => ({ id: item, label: <>{TAB_LABEL[item]} <span className="dict-seg-count">{number(list?.counts[item] ?? 0)}</span></> }))} />
         <Input type="search" aria-label="Search tables, columns or SQL code" placeholder="Search tables, columns or SQL code" value={query} onChange={(event) => setQuery(event.target.value)} />
-        {list && list.drafted > 0 && shownTab && <div className="dict-approve-all">
-          <span>{number(list.drafted)} drafted {list.drafted === 1 ? 'description' : 'descriptions'} {debounced ? 'match this search' : `on ${TAB_LABEL[shownTab]}`}</span>
-          <Button size="small" onClick={() => setApproving({ count: list.drafted, scope: debounced ? `matching “${debounced}” on ${TAB_LABEL[shownTab]}` : `on ${TAB_LABEL[shownTab]}`, body: { tab: shownTab, ...(debounced ? { q: debounced } : {}) } })}>Approve all</Button>
+        {list && shownTab && list.descriptions && descriptionLine(list.descriptions) && <div className="dict-approve-all">
+          <span>Descriptions {debounced ? 'matching this search' : `on ${TAB_LABEL[shownTab]}`}: {descriptionLine(list.descriptions)}</span>
+          {list.drafted > 0 && <Button size="small" onClick={() => setApproving({ count: list.drafted, scope: debounced ? `matching “${debounced}” on ${TAB_LABEL[shownTab]}` : `on ${TAB_LABEL[shownTab]}`, body: { tab: shownTab, ...(debounced ? { q: debounced } : {}) } })}>Approve all</Button>}
         </div>}
         {list?.sqlCoverage && !debounced && <p className="dict-note">SQL captured for {number(list.sqlCoverage.captured)} of {number(list.sqlCoverage.routines)} procedures and functions{list.sqlCoverage.encrypted ? ` · ${number(list.sqlCoverage.encrypted)} encrypted` : ''}</p>}
         {!list && <p role="status" className="dict-note">Loading objects…</p>}
@@ -282,7 +290,7 @@ function Landing(props: { summary: Summary; isOpen: (id: string) => boolean; tog
       {imported && summary.newerThanDictionary && summary.newerThanDictionary.count > 0 && <p>{number(summary.newerThanDictionary.count)} {summary.newerThanDictionary.count === 1 ? 'table was' : 'tables were'} first seen after this dictionary was imported, so {summary.newerThanDictionary.count === 1 ? 'it has' : 'they have'} no entry in it yet: <span className="mono">{summary.newerThanDictionary.names.slice(0, 5).map(shortName).join(', ')}{summary.newerThanDictionary.count > 5 ? '…' : ''}</span></p>}
       {!imported && !['excel', 'dbt', 'tableau'].includes(type) && <p className="dict-note">No vendor dictionary imported. Descriptions are drafted by Scale Insyght from names, keys and parsed SQL and used straight away, marked Drafted. Approving them is optional.</p>}
       <p className="dict-note">Standard objects are the source’s tables. Custom objects are what is built over them: views, materialized views, procedures, functions and packages.</p>
-      {summary.drafted > 0 && <div className="dict-approve-all"><span>{number(summary.drafted)} drafted {summary.drafted === 1 ? 'description' : 'descriptions'} in this source</span><Button size="small" onClick={props.onApproveAll}>Approve all</Button></div>}
+      {summary.descriptions && descriptionLine(summary.descriptions) && <div className="dict-approve-all"><span>Descriptions in this source: {descriptionLine(summary.descriptions)}</span>{summary.drafted > 0 && <Button size="small" onClick={props.onApproveAll}>Approve all</Button>}</div>}
       <div className="dict-actions">
         {!['excel', 'dbt', 'tableau'].includes(type) && <FileInput label={imported ? 'Upload a newer dictionary' : 'Import dictionary file'} accept=".csv,.xlsx" onChange={(event) => props.onImport(event.target.files?.[0])} />}
         <Button variant="primary" size="small" onClick={props.onExport}>Export as interactive HTML</Button>

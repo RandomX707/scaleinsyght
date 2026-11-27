@@ -5,7 +5,7 @@ import { analyseDefinition } from '@scaleinsyght/profiler';
 import { splitRoutineArguments } from '@scaleinsyght/connectors';
 import { dictionaryDocx, dictionaryMarkdown } from '@scaleinsyght/reports';
 import JSZip from 'jszip';
-import { listTitles, objectTitle } from '../../apps/web/src/dictionary.js';
+import { descriptionLine, listTitles, objectTitle } from '../../apps/web/src/dictionary.js';
 
 describe('Standard and Custom by object type (decision 64)', () => {
   it('calls base data Standard and everything built over it Custom, whatever the name or source', () => {
@@ -52,6 +52,15 @@ describe('Markdown and Word exports carry table descriptions (decision 64)', () 
     expect(document).toContain('Drafted: Table encounters with 5 columns.');
     expect(document).toContain('>One row per ward.<');
     expect(document).not.toContain('Drafted: One row per ward.');
+  });
+});
+
+describe('description line', () => {
+  it('names every state so the counts add up to what is shown', () => {
+    expect(descriptionLine({ drafted: 271, approved: 1, edited: 0, imported: 0 })).toBe('271 drafted, 1 approved');
+    expect(descriptionLine({ drafted: 1200, approved: 0, edited: 2, imported: 5 })).toBe('1,200 drafted, 2 edited, 5 from a dictionary');
+    expect(descriptionLine({ drafted: 0, approved: 3, edited: 0, imported: 0 })).toBe('3 approved');
+    expect(descriptionLine({ drafted: 0, approved: 0, edited: 0, imported: 0 })).toBe('');
   });
 });
 
@@ -111,22 +120,32 @@ END $$ LANGUAGE plpgsql` });
   });
 });
 
-describe('interactive HTML export template (spec 2.5)', () => {
+describe('interactive HTML export (item 5)', () => {
   const html = renderDictionaryHtml({ generatedAt: '2026-11-25T10:00:00.000Z', sources: [{
-    name: 'Source </script><script>alert(1)</script>', type: 'sql_server',
-    objects: [{ name: 'dbo.patients', kind: 'table', custom: false, group: 'Tables', description: null, columns: [
-      { name: 'mrn', label: null, dataType: 'nvarchar', tags: ['personal'], statsWithheld: true, nullRate: null, distinctCount: null, description: null },
-      { name: 'patient_id', label: null, dataType: 'int', tags: [], statsWithheld: false, nullRate: 0, distinctCount: 3, description: null }] }],
-    relationships: [], outOfScope: [{ name: 'dbo.BH_NOTES', type: 'table' }] }] });
+    connectionId: 'c', name: 'Source </script><script>alert(1)</script>', type: 'sql_server',
+    objects: [{ name: 'dbo.patients', kind: 'table', origin: 'standard', group: { key: 'tables', label: 'Tables', order: 0 }, descriptionState: 'drafted' }],
+    details: { 'dbo.patients': { name: 'dbo.patients', kind: 'table', columns: [{ name: 'mrn', tags: ['personal'], statsWithheld: true, nullRate: null, distinctCount: null }] } },
+    outOfScope: [{ name: 'dbo.BH_NOTES', type: 'table' }] }] });
+  const withoutComments = html.replace(/\/\*[\s\S]*?\*\//g, '');
   it('is one file that forbids every network request and loads nothing external', () => {
-    expect(html).toContain(`content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'"`);
+    expect(html).toContain(`content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; font-src data:; img-src data:; base-uri 'none'; form-action 'none'"`);
     expect(html).not.toMatch(/<(?:script|link|img|iframe)[^>]+(?:src|href)=/i);
-    expect(html).not.toMatch(/https?:\/\//);
+    expect(html).not.toMatch(/@import/);
+    // The only web addresses are inside the fonts' licence comments; nothing is loaded from them.
+    expect(withoutComments).not.toMatch(/https?:\/\//);
   });
-  it('cannot be broken out of by names, and lists out-of-scope objects by name and type only', () => {
+  it('embeds the app\'s fonts with their OFL notices and the app\'s own stylesheets', () => {
+    expect(html.match(/@font-face\{font-family:"Inter"/g)).toHaveLength(4);
+    expect(html.match(/@font-face\{font-family:"JetBrains Mono"/g)).toHaveLength(2);
+    expect(html).toContain('Copyright 2016 The Inter Project Authors');
+    expect(html).toContain('Copyright 2020 The JetBrains Mono Project Authors');
+    expect(html.match(/SIL Open Font License, Version 1\.1/g)).toHaveLength(2);
+    for (const selector of ['.dict-layout', '.ui-segmented', '.ui-pill-tab', '--primary:']) expect(html).toContain(selector);
+  });
+  it('cannot be broken out of by names, and carries out-of-scope objects by name and type only', () => {
     expect(html.match(/<\/script>/g)).toHaveLength(2);
     expect(scriptJson('</script><!--\u2028')).toBe('"\\u003c/script\\u003e\\u003c!--\\u2028"');
-    expect(html).toContain('dbo.BH_NOTES · table');
+    expect(html).toContain('"outOfScope":[{"name":"dbo.BH_NOTES","type":"table"}]');
     expect(html.split('dbo.BH_NOTES')).toHaveLength(2);
   });
 });

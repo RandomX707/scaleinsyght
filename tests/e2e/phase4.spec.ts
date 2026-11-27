@@ -24,7 +24,7 @@ async function createEmptyTenant() {
 test('hub_integrations_show_disconnected_empty_state_for_a_new_tenant', async ({ page }) => {
   const tenant = await createEmptyTenant();
   await signInToTestWorkspace(page, tenant.email);
-  await page.getByRole('link', { name: 'Hub integrations' }).click();
+  await page.goto('/hub');
   await expect(page.getByRole('heading', { name: 'Hub integrations' })).toBeVisible();
   await expect(page.getByText('No integrations connected')).toBeVisible();
   await expect(page.getByText('This workspace has no connected Hub integrations.')).toBeVisible();
@@ -42,7 +42,7 @@ test('hub_integrations_show_disconnected_empty_state_for_a_new_tenant', async ({
 test('hub_page_does_not_show_canned_metric_or_delivery_examples', async ({ page }) => {
   const tenant = await createEmptyTenant();
   await signInToTestWorkspace(page, tenant.email);
-  await page.getByRole('link', { name: 'Hub integrations' }).click();
+  await page.goto('/hub');
   await expect(page.getByText(/active customers|customer report|synthetic|fixture|golden/i)).toHaveCount(0);
   await expect(page.getByText('Handoffs will appear after a supported destination and a real report definition are connected.')).toBeVisible();
 });

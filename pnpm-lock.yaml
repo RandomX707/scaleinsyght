@@ -293,6 +293,12 @@ importers:
 
   apps/api:
     dependencies:
+      '@fontsource/inter':
+        specifier: 5.1.1
+        version: 5.1.1
+      '@fontsource/jetbrains-mono':
+        specifier: 5.1.2
+        version: 5.1.2
       '@scaleinsyght/analytic':
         specifier: workspace:*
         version: link:../../packages/analytic
@@ -332,6 +338,9 @@ importers:
       '@scaleinsyght/tableau':
         specifier: workspace:*
         version: link:../../packages/tableau
+      '@scaleinsyght/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
       exceljs:
         specifier: ^4.4.0
         version: 4.4.0
