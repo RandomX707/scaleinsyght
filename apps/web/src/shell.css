@@ -455,3 +455,5 @@ h3 { font-size: 14px; line-height: 1.3; }
 .login .ui-button--secondary { background:var(--surface); color:var(--ink); border:1px solid var(--line); font-weight:500; }
 .login .ui-button--secondary:hover:not(:disabled) { border-color:var(--primary); color:var(--primary-ink); }
 .login label small { display:block; margin-top:4px; font-weight:400; }
+/* BI reports (prototype V.reports). */
+.bi-reports-page { width:min(1120px,100%); margin:0 auto; padding:32px 36px; display:flex; flex-direction:column; gap:16px; }

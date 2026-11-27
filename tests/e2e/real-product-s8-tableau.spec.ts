@@ -13,7 +13,7 @@ const migrateUrl = () => { const value = process.env.DATABASE_URL_MIGRATE; if (!
 const adminPool = new Pool({ connectionString: migrateUrl() });
 const postgres = new URL(process.env.DATABASE_URL_TESTBED ?? '');
 if (!postgres.hostname) throw new Error('The local PostgreSQL testbed is required; run pnpm testbed:up.');
-type TableauTruth = { workbook: string; connectionName: string; datasets: Record<string, unknown>; fields: Record<string, string[]>; reports: Record<string, string[]>; endToEnd: Record<string, string[]> };
+type TableauTruth = { workbook: string; connectionName: string; datasets: Record<string, unknown>; fields: Record<string, string[]>; reports: Record<string, string[]>; endToEnd: Record<string, string[]>; upstreamGaps: Array<{ report: string; asset: string; reasonIncludes: string }> };
 const truth = (JSON.parse(readFileSync('testbed/lineage-truth.json', 'utf8')) as { tableau: TableauTruth }).tableau;
 const target = 'testbed/dbt/target';
 
@@ -75,11 +75,17 @@ test('s8_tableau_workbook_upload_card_reports_and_lineage_match_truth', async ({
   // BI reports lists every worksheet as a Tableau report with linked flows; an uploaded file has nothing to open.
   await card.getByRole('button', { name: 'Reports' }).click();
   await expect(page).toHaveURL(/\/bi-reports/);
-  for (const report of Object.keys(truth.reports)) {
-    const row = page.locator('.report-row').filter({ hasText: report });
+  // Its own page (prototype V.reports): tool, what each report is built on, its lineage status from the whole upstream
+  // path, and Open ↗ only for a report with a link. The seeded gap upstream of Claims is never shown as complete.
+  await expect(page.getByRole('heading', { name: 'BI reports', level: 1 })).toBeVisible();
+  const gapped = new Set(truth.upstreamGaps.map((gap) => gap.report));
+  for (const [report, fields] of Object.entries(truth.reports)) {
+    const row = page.getByRole('row').filter({ hasText: report.split(' / ').at(-1)! });
     await expect(row).toContainText('Tableau');
-    await expect(row).toContainText(/[1-9]\d* linked flow/);
+    for (const dataset of new Set(fields.map((field) => field.split('.')[0]!))) await expect(row).toContainText(dataset);
     await expect(row).toContainText('From an uploaded file');
+    if (gapped.has(report)) await expect(row).toContainText('Gap in lineage');
+    else await expect(row).not.toContainText('Gap in lineage');
   }
   await page.screenshot({ path: 'docs/acceptance/s8/bi-reports.png' });
 
