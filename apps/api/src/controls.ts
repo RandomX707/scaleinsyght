@@ -18,9 +18,6 @@ const policy = object({
   leavingScope:{const:'keep'},
   approval:{type:'boolean'},
 });
-// Decision 62: optional, so policies saved before it stay valid.
-const classificationList = {type:'array',maxItems:100,items:{type:'string',minLength:1,maxLength:100}};
-(policy.properties as Record<string,unknown>).classification = object({customPrefixes:classificationList,customSchemas:classificationList,ownerPatterns:classificationList});
 const edit = object({
   revision:{type:'integer',minimum:0},
   policy,

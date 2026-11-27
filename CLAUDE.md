@@ -74,6 +74,7 @@ These are never broken, in any phase, for any reason. If a task seems to need br
 13. **Single login, no personas.** No role switcher, no "engineer view" or "business view", and no answer variants by role.
 14. **No new infrastructure without a demonstrated need.** Release 1 adds no workflow engine, policy engine, graph database, vector database, message broker or cache server. Each has a named trigger in design section 1.10. Propose one by writing a decision first.
 15. **No real vendor or client names in code, fixtures or UI copy.** Use the fictional names in section 13. Never commit client data, client SQL or credentials.
+16. **Automatic by default:** profiling results are produced automatically for any source; human review is optional, done in bulk, and never required per object (decision 64).
 
 ---
 
@@ -351,9 +352,9 @@ Open `docs/prototype/index.html` and click through every screen before building 
 **Profile** (per connector)
 - A progress ring and step list. They are orange while profiling and turn **green with white ticks** when complete.
 - A columns-profiled bar.
-- Category cards: standard tables, custom tables, stored procedures, materialized views, views and SSIS packages. Each card has counts, names and a "Show ER diagram" toggle.
+- Category cards: tables, stored procedures, functions, materialized views, views and SSIS packages. Each card has counts, names and a "Show ER diagram" toggle.
 - Procedures and packages show what they read and write.
-- "Standard" means delivered by the vendor's schema. "Custom" means built by the customer, found by naming convention plus comparison with the vendor schema.
+- **Standard and Custom are decided by object type from the catalog, for every source, automatically (decision 64).** Standard is base tables. Custom is views, materialized views, stored procedures, functions and packages. No scoring, rules, vendor-dictionary comparison or per-object approval. For other sources: sheets, dbt sources and BI data sources are Standard; dbt models, worksheets and calculated fields are Custom.
 
 **Dictionary** (per connector, picked from a Source dropdown)
 - For a source with an imported vendor dictionary, the page opens first on a summary of it:
@@ -361,11 +362,13 @@ Open `docs/prototype/index.html` and click through every screen before building 
   - table counts, and objects newer than the dictionary;
   - how agents use it.
 - Left panel:
-  - **Standard** and **Custom** tabs. Custom groups custom tables, procedures grouped by kind (fact loaders, report, data checks, archive, utilities), materialized views, custom views and SSIS packages.
+  - **Standard** and **Custom** tabs, by object type (decision 64). Standard lists the tables. Custom groups procedures by kind (fact loaders, report, data checks, archive, utilities), functions, materialized views, views and SSIS packages.
+  - The list shows short names (e02_a1c), adding the schema or arguments only where two would look the same. A near-identical copy of another routine shows a "Copy" badge, for information only; it never changes the tab.
   - One search box covering names, column names and an "In SQL code" group with line snippets.
 - Right side has open-object pill tabs, plus "Collapse all" and "Expand all".
 - **Table header card:**
-  - Description, drafted by Scale Insyght with Approve and Edit unless it comes from an imported dictionary.
+  - The title is the object's short name; its full name or signature is under Details.
+  - Description, unless it comes from an imported dictionary or dbt: drafted by Scale Insyght and shown and used as "Drafted", with Approve and Edit. "Approve all" approves every drafted description on a tab, a search or the whole source after one confirmation. Approval is optional and never blocks anything.
   - Details and stats (rows, last profiled, dependent reports, built by).
   - Buttons: Open in Lineage, Show in ER diagram and Ask about this.
   - Export: Markdown, Word (.docx) and Copy.
@@ -376,7 +379,7 @@ Open `docs/prototype/index.html` and click through every screen before building 
   - Joins to other tables.
 - **Procedure, view or package tabs:**
   - Overview: what it writes and how (truncate-insert, merge, insert, delete), reads and parsed logic.
-  - Parameters, marked declared.
+  - Parameters, marked declared. A function's returned columns (RETURNS TABLE, OUT arguments, table-valued functions) are listed separately, never counted as parameters.
   - Tables and columns: columns used highlighted, dropped columns struck through.
   - Calls: calls, called by and run by (SQL Agent, SSIS, SSRS).
   - SQL: highlighted, with copy, and an explicit "Encrypted" state.
@@ -577,7 +580,7 @@ pnpm lint && pnpm typecheck
 | **Assertion** | A recorded relationship with evidence. `evidence_method`, `review_status` and `verification` are independent |
 | **Gap** | A known missing hop in a path. Never hidden |
 | **Probable** | Inferred and not yet approved. Always labelled |
-| **Standard / custom** | Delivered by the vendor schema / built by the customer |
+| **Standard / custom** | By object type from the catalog (decision 64): base tables / views, materialized views, stored procedures, functions and packages |
 | **List only** | Name and type recorded; never profiled, sampled or queried |
 | **Approval matrix** | Where people approve or reject findings and changes |
 | **Controls** | Per-connector scope, name rules, column rules and change handling |

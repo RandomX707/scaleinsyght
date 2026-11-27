@@ -15,13 +15,15 @@ const postgres = new URL(process.env.DATABASE_URL_TESTBED ?? '');
 if (!postgres.hostname || !process.env.SQLSERVER_TESTBED_PASSWORD) throw new Error('The PostgreSQL and SQL Server testbeds are required; run pnpm testbed:up (it includes pnpm testbed:dictionary).');
 type Procedure = { group: string; writes: Array<{ table: string; mode: string }>; reads: string[]; calls: string[]; parameters: string[]; encrypted: boolean };
 const truth = JSON.parse(readFileSync('testbed/dictionary/truth.json', 'utf8')) as {
-  sqlserver: { standardTables: string[]; customTables: string[]; customViews: string[]; procedures: Record<string, Procedure>; hardCodedLiterals: string[]; sqlSearch: { query: string; object: string } };
+  sqlserver: { tables: string[]; views: string[]; procedures: Record<string, Procedure>; hardCodedLiterals: string[]; sqlSearch: { query: string; object: string } };
   postgres: { tables: string[]; views: string[]; functions: Record<string, { reads: string[]; parameters: string[] }>; withheldColumns: Record<string, string[]> };
   dbt: { models: string[]; descriptions: Record<string, string>; tests: Record<string, string[][]> };
   tableau: { workbook: string; calculatedFields: Record<string, string>; hiddenLiterals: string[] };
 };
 const excel = (JSON.parse(readFileSync('testbed/truth.json', 'utf8')) as { excel: { file: string; sheets: Array<{ name: string; columns: string[]; headers: string[] }> } }).excel;
 const short = (name: string) => name.replace(/^(dbo|public)\./, '');
+// Decision 64: list items, tabs and headings show an object's own name, without schema or argument list.
+const title = (name: string) => name.replace(/\(.*\)$/s, '').split('.').at(-1)!;
 // App captures; scripts/compose-ui-screens.ts pairs them with the prototype in docs/ui/screens.
 const screen = (name: string) => `docs/acceptance/s9/${name}.png`;
 
@@ -74,11 +76,16 @@ test('s9_dictionary_matches_testbed_truth_for_every_connector_type_and_exports_o
   // SQL Server: landing, standard and custom objects, procedure tabs, encrypted state, SQL search, Show original.
   await expect(page.locator('.dict-card').first()).toContainText('No vendor dictionary imported');
   await page.screenshot({ path: screen('landing') });
-  await expect.poll(() => names(page, 'Tables')).toEqual(truth.sqlserver.standardTables.map(short).sort());
+  // Decision 64: Standard is every table, X_ tables included; the page opens on it.
+  await expect(side(page).getByRole('tab', { name: /^Standard/ })).toHaveAttribute('aria-selected', 'true');
+  await expect.poll(() => names(page, 'Tables')).toEqual(truth.sqlserver.tables.map(title).sort());
   await side(page).getByRole('button', { name: 'encounters', exact: true }).click();
   const header = page.locator('.dict-header');
   await expect(header.getByRole('heading', { name: 'encounters' })).toBeVisible();
-  await expect(header).toContainText('Drafted by Scale Insyght · waiting for approval');
+  await expect(header).toContainText('Standard table');
+  // Drafted descriptions are shown and used as they are; approving is optional.
+  await expect(header.locator('.dict-review')).toContainText('Drafted');
+  await expect(header).not.toContainText('waiting for approval');
   await expect(page.locator('.dict-card', { hasText: 'Keys and indexes' })).toContainText('patients.patient_id');
   await page.screenshot({ path: screen('table'), fullPage: false });
   // Show in ER diagram opens the ER explorer on this table and its neighbours.
@@ -87,16 +94,24 @@ test('s9_dictionary_matches_testbed_truth_for_every_connector_type_and_exports_o
   await expect(page.locator('.er-node h3')).toContainText(['dbo.encounters']);
   await page.screenshot({ path: screen('er') });
   await page.goBack(); await expect(page.locator('.dict-card').first()).toBeVisible();
+  // Approve all for a search: one confirmation, then every drafted description it shows.
+  await page.getByLabel('Search tables, columns or SQL code').fill('X_CENSUS');
+  const approveAll = side(page).locator('.dict-approve-all');
+  await expect(approveAll).toContainText('2 drafted descriptions match this search');
+  await approveAll.getByRole('button', { name: 'Approve all' }).click();
+  const confirm = page.getByRole('dialog', { name: 'Approve all drafted descriptions' });
+  await expect(confirm).toContainText('Approve 2 drafted descriptions matching “X_CENSUS” on Standard?');
+  await page.screenshot({ path: screen('approve-all') });
+  await confirm.getByRole('button', { name: 'Approve 2' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'approved' })).toHaveText('2 descriptions approved.');
+  await expect(approveAll).toHaveCount(0);
+  await side(page).getByRole('button', { name: 'X_CENSUS_SNAP', exact: true }).click();
+  await expect(header.locator('.dict-review')).toContainText('Approved by Test Analyst');
+  await page.getByLabel('Search tables, columns or SQL code').fill('');
   await side(page).getByRole('tab', { name: /^Custom/ }).click();
-  await expect.poll(() => names(page, 'Custom tables')).toEqual(truth.sqlserver.customTables.map(short).sort());
-  await expect.poll(() => names(page, 'Custom views')).toEqual(truth.sqlserver.customViews.map(short).sort());
-  for (const [name, procedure] of Object.entries(truth.sqlserver.procedures)) await expect.poll(() => names(page, procedure.group), name).toContain(short(name));
-  // Decision 62: no vendor dictionary is imported, so the vendor's tables are "Not classified yet", never Standard.
-  await side(page).getByRole('tab', { name: /^Not classified yet/ }).click();
-  await expect.poll(() => names(page, 'Tables')).toEqual(truth.sqlserver.standardTables.map(short).sort());
-  await expect(page.locator('.dict-classify-note')).toContainText('Nothing is called Standard until it is known to be.');
-  await page.screenshot({ path: screen('not-classified') });
-  await side(page).getByRole('tab', { name: /^Custom/ }).click();
+  await expect.poll(() => names(page, 'Views')).toEqual(truth.sqlserver.views.map(title).sort());
+  for (const [name, procedure] of Object.entries(truth.sqlserver.procedures)) await expect.poll(() => names(page, procedure.group), name).toContain(title(name));
+  await expect(side(page).locator('.dict-group h3', { hasText: /^Custom tables/ })).toHaveCount(0);
   const routines = Object.values(truth.sqlserver.procedures); const encrypted = routines.filter((procedure) => procedure.encrypted).length;
   await expect(side(page)).toContainText(`SQL captured for ${routines.length - encrypted} of ${routines.length} procedures and functions · ${encrypted} encrypted`);
   const loader = 'dbo.usp_X_LOAD_READMIT_FLAGS'; const expected = truth.sqlserver.procedures[loader]!;
@@ -139,19 +154,24 @@ test('s9_dictionary_matches_testbed_truth_for_every_connector_type_and_exports_o
 
   // PostgreSQL: tables, views and functions; tagged columns show withheld statistics.
   await openSource(page, pg);
-  // No vendor dictionary: the page opens on what is not classified yet, grouped by type (decision 62).
-  await expect(side(page).getByRole('tab', { name: /^Not classified yet/ })).toHaveAttribute('aria-selected', 'true');
-  await expect.poll(() => names(page, 'Tables')).toEqual(truth.postgres.tables.map(short).sort());
-  await expect.poll(() => names(page, 'Views')).toEqual(truth.postgres.views.map(short).sort());
-  await expect.poll(() => names(page, 'Functions')).toEqual(Object.keys(truth.postgres.functions).map(short).sort());
+  // Tables on Standard; views and functions on Custom (decision 64).
+  await expect(side(page).getByRole('tab', { name: /^Standard/ })).toHaveAttribute('aria-selected', 'true');
+  await expect.poll(() => names(page, 'Tables')).toEqual(truth.postgres.tables.map(title).sort());
   for (const [table, columns] of Object.entries(truth.postgres.withheldColumns)) {
-    await side(page).getByRole('button', { name: short(table), exact: true }).click();
+    await side(page).getByRole('button', { name: title(table), exact: true }).click();
     const card = page.locator('.dict-card', { hasText: 'Columns' });
     const showAll = card.getByRole('button', { name: /^Show all/ }); if (await showAll.count()) await showAll.click();
     for (const column of columns) await expect(card.locator('tr', { has: page.locator('.dict-colname', { hasText: new RegExp(`^${column}$`) }) })).toContainText('Withheld');
   }
+  await side(page).getByRole('tab', { name: /^Custom/ }).click();
+  await expect.poll(() => names(page, 'Views')).toEqual(truth.postgres.views.map(title).sort());
+  await expect.poll(() => names(page, 'Functions')).toEqual(Object.keys(truth.postgres.functions).map(title).sort());
   const [fn, fnTruth] = Object.entries(truth.postgres.functions)[0]!;
-  await side(page).getByRole('button', { name: short(fn), exact: true }).click();
+  await side(page).getByRole('button', { name: title(fn), exact: true }).click();
+  // The title is the short name; the full signature is under Details.
+  await expect(header.getByRole('heading', { name: title(fn), exact: true })).toBeVisible();
+  await expect(header.locator('.dict-kv > div', { hasText: 'Full signature' })).toContainText(fn);
+  await expect(page.getByRole('tab', { name: `Parameters ${fnTruth.parameters.length}` })).toBeVisible();
   for (const read of fnTruth.reads) await expect(page.locator('.dict-card', { hasText: 'What it does' })).toContainText(short(read));
 
   // Excel: one object per sheet with the original headers.
@@ -165,14 +185,16 @@ test('s9_dictionary_matches_testbed_truth_for_every_connector_type_and_exports_o
 
   // dbt: models and sources with their descriptions (documented) and tests.
   await openSource(page, dbtId);
-  for (const model of truth.dbt.models) await expect.poll(() => names(page, 'Models')).toContain(model);
+  // dbt models are built over the sources, so they are Custom (decision 64).
+  await side(page).getByRole('tab', { name: /^Custom/ }).click();
+  for (const model of truth.dbt.models) await expect.poll(() => names(page, 'Models')).toContain(title(model));
   for (const [model, description] of Object.entries(truth.dbt.descriptions)) {
-    await side(page).getByRole('button', { name: model, exact: true }).click();
+    await side(page).getByRole('button', { name: title(model), exact: true }).click();
     await expect(page.locator('.dict-header')).toContainText(description);
     await expect(page.locator('.dict-header')).toContainText('From the dbt project');
   }
   const [testedModel, tests] = Object.entries(truth.dbt.tests)[0]!;
-  await side(page).getByRole('button', { name: testedModel, exact: true }).click();
+  await side(page).getByRole('button', { name: title(testedModel), exact: true }).click();
   const testCard = page.locator('.dict-card', { hasText: 'dbt tests' });
   for (const [column, name] of tests) await expect(testCard).toContainText(`${column} · ${name}`);
   await page.screenshot({ path: screen('dbt') });
@@ -181,7 +203,7 @@ test('s9_dictionary_matches_testbed_truth_for_every_connector_type_and_exports_o
   await openSource(page, tableauId);
   await side(page).getByRole('tab', { name: /^Custom/ }).click();
   for (const [field, formula] of Object.entries(truth.tableau.calculatedFields)) {
-    await side(page).getByRole('button', { name: field, exact: true }).click();
+    await side(page).getByRole('button', { name: title(field), exact: true }).click();
     await expect(page.locator('.dict-code')).toHaveText(formula);
   }
   for (const literal of truth.tableau.hiddenLiterals) await expect(page.locator('.dict-code')).not.toContainText(literal);
@@ -213,4 +235,9 @@ test('s9_dictionary_matches_testbed_truth_for_every_connector_type_and_exports_o
   expect(requests).toEqual([]);
   await offline.close();
   await expect(page.getByRole('status')).toContainText('recorded in the audit log');
+
+  // Decision 64: Controls has no "Standard or custom" rules; the split comes from the object type.
+  await page.goto(`/controls?connection=${sql}`);
+  await expect(page.getByRole('heading', { name: 'When things change' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Standard or custom' })).toHaveCount(0);
 });

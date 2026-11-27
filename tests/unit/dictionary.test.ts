@@ -1,42 +1,53 @@
 import { describe, expect, it } from 'vitest';
-import { classifyObject, draftDescription, groupFor, hasCustomPrefix, sqlSnippets } from '@scaleinsyght/api/dictionary';
+import { DRAFTED_KINDS, draftDescription, groupFor, originOf, sqlSnippets, type ObjectKind } from '@scaleinsyght/api/dictionary';
 import { renderDictionaryHtml, scriptJson } from '@scaleinsyght/api/dictionary-html';
 import { analyseDefinition } from '@scaleinsyght/profiler';
+import { splitRoutineArguments } from '@scaleinsyght/connectors';
+import { listTitles, objectTitle } from '../../apps/web/src/dictionary.js';
 
-describe('Dictionary custom detection (spec 2.1)', () => {
-  it('finds the X_ token at the start or after an underscore, on the object name only', () => {
-    for (const name of ['dbo.X_READMIT_FLAGS', 'dbo.usp_X_LOAD', 'dbo.rpt_X_BY_DEPT', 'public.x_census', 'X_JOB_LOG']) expect(hasCustomPrefix(name), name).toBe(true);
-    for (const name of ['dbo.encounters', 'dbo.max_value', 'dbo.tax_rate', 'X_schema.encounters', 'dbo.idx_patients', 'public.f(x_a integer)']) expect(hasCustomPrefix(name), name).toBe(false);
+describe('Standard and Custom by object type (decision 64)', () => {
+  it('calls base data Standard and everything built over it Custom, whatever the name or source', () => {
+    for (const kind of ['table', 'sheet', 'source', 'datasource'] as ObjectKind[]) expect(originOf(kind), kind).toBe('standard');
+    for (const kind of ['view', 'materialized_view', 'procedure', 'function', 'package', 'model', 'worksheet', 'calculated_field'] as ObjectKind[]) expect(originOf(kind), kind).toBe('custom');
   });
-  // Decision 62: Standard means vendor-delivered, Custom customer-built; never Standard by default.
-  const none = { vendor: null, rules: { customPrefixes: ['X_'], customSchemas: [] as string[], ownerPatterns: [] as string[] }, owner: null, copy: null };
-  it('uses an imported vendor dictionary for the tables and views it lists', () => {
-    const vendor = new Set(['dbo.patients']);
-    expect(classifyObject({ name: 'dbo.patients', kind: 'table' }, { ...none, vendor })).toEqual({ origin: 'standard', reason: 'in_vendor_dictionary' });
-    expect(classifyObject({ name: 'dbo.local_extract', kind: 'table' }, { ...none, vendor })).toEqual({ origin: 'custom', reason: 'not_in_vendor_dictionary' });
-    // The dictionary lists tables and views, so a procedure it does not mention is decided by the rules.
-    expect(classifyObject({ name: 'dbo.usp_load', kind: 'procedure' }, { ...none, vendor })).toEqual({ origin: 'unclassified', reason: null });
+  it('drafts descriptions for database objects and sheets, not for dbt or BI objects', () => {
+    expect([...DRAFTED_KINDS].sort()).toEqual(['function', 'materialized_view', 'package', 'procedure', 'sheet', 'table', 'view']);
   });
-  it('never calls an object Standard without a vendor dictionary', () => {
-    for (const kind of ['table', 'view', 'procedure', 'function', 'sheet', 'model'] as const)
-      expect(classifyObject({ name: 'dbo.local_extract', kind }, none)).toEqual({ origin: 'unclassified', reason: null });
-    expect(classifyObject({ name: 'Long stay', kind: 'calculated_field' }, none)).toEqual({ origin: 'custom', reason: 'built_in_bi_tool' });
+  it('groups procedures by their parsed kind, and every table under Tables', () => {
+    expect(groupFor({ kind: 'procedure', procedureKind: 'fact_loader' }).label).toBe('Procedures · Fact loaders');
+    expect(groupFor({ kind: 'procedure', procedureKind: null }).label).toBe('Procedures · Utilities');
+    expect(groupFor({ kind: 'procedure', procedureKind: 'report' }).label).toBe('Procedures · Report procedures');
+    expect(groupFor({ kind: 'view', procedureKind: null }).label).toBe('Views');
+    expect(groupFor({ kind: 'table', procedureKind: null }).label).toBe('Tables');
   });
-  it('marks custom by name prefix, schema and owner rules from Controls', () => {
-    expect(classifyObject({ name: 'dbo.usp_X_LOAD', kind: 'procedure' }, none)).toMatchObject({ origin: 'custom', reason: 'name_prefix' });
-    expect(classifyObject({ name: 'dbo.Z_TEMP', kind: 'table' }, { ...none, rules: { ...none.rules, customPrefixes: ['Z_'] } })).toMatchObject({ reason: 'name_prefix' });
-    expect(classifyObject({ name: 'local.extract', kind: 'table' }, { ...none, rules: { ...none.rules, customSchemas: ['LOCAL'] } })).toMatchObject({ origin: 'custom', reason: 'schema' });
-    expect(classifyObject({ name: 'dbo.extract', kind: 'table' }, { ...none, owner: 'etl_nightly', rules: { ...none.rules, ownerPatterns: ['etl_*'] } })).toMatchObject({ origin: 'custom', reason: 'owner' });
-    expect(classifyObject({ name: 'dbo.extract', kind: 'table' }, { ...none, owner: 'vendor_admin', rules: { ...none.rules, ownerPatterns: ['etl_*'] } })).toMatchObject({ origin: 'unclassified' });
+});
+
+describe('routine arguments (decision 64)', () => {
+  const arg = (name: string, mode: string) => ({ name, dataType: 'integer', mode });
+  it('keeps a function\'s RETURNS TABLE columns and OUT arguments apart from its inputs', () => {
+    const split = splitRoutineArguments('function', [arg('p_patient', 'in'), arg('p_from', 'in'), arg('p_to', 'in'), ...Array.from({ length: 13 }, (_, index) => arg(`c${index}`, 'table'))]);
+    expect(split.parameters.map((item) => item.name)).toEqual(['p_patient', 'p_from', 'p_to']);
+    expect(split.returns).toHaveLength(13);
+    expect(splitRoutineArguments('function', [arg('a', 'in'), arg('total', 'out'), arg('both', 'inout')])).toEqual({
+      parameters: [{ name: 'a', dataType: 'integer', mode: 'in' }, { name: 'both', dataType: 'integer', mode: 'inout' }], returns: [{ name: 'total', dataType: 'integer' }] });
   });
-  it('marks a near-identical copy of another routine as custom', () => {
-    expect(classifyObject({ name: 'dbo.fn_admit_copy', kind: 'function' }, { ...none, copy: { copyOf: 'dbo.usp_admit', similarity: 0.97 } })).toEqual({ origin: 'custom', reason: 'copy' });
+  it('keeps a procedure\'s OUT arguments as output parameters', () => {
+    expect(splitRoutineArguments('procedure', [arg('ward', 'in'), arg('n', 'out')])).toEqual({ parameters: [{ name: 'ward', dataType: 'integer', mode: 'in' }, { name: 'n', dataType: 'integer', mode: 'out' }], returns: [] });
   });
-  it('groups custom procedures by their parsed kind', () => {
-    expect(groupFor({ name: 'dbo.usp_X_LOAD', kind: 'procedure', procedureKind: 'fact_loader', columns: null, custom: true }).label).toBe('Procedures · Fact loaders');
-    expect(groupFor({ name: 'dbo.usp_X_LOAD', kind: 'procedure', procedureKind: null, columns: null, custom: true }).label).toBe('Procedures · Utilities');
-    expect(groupFor({ name: 'dbo.vendor_proc', kind: 'procedure', procedureKind: 'report', columns: null, custom: false }).label).toBe('Procedures');
-    expect(groupFor({ name: 'dbo.X_V', kind: 'view', procedureKind: null, columns: 3, custom: true }).label).toBe('Custom views');
+});
+
+describe('object titles (decision 64)', () => {
+  it('shows the own name, without schema or argument list', () => {
+    expect(objectTitle('public.e02_a1c(p_patient integer, p_from date, p_to date)')).toBe('e02_a1c');
+    expect(objectTitle('emr.e02_a1c()')).toBe('e02_a1c');
+    expect(objectTitle('dbo.X_READMIT_FLAGS')).toBe('X_READMIT_FLAGS');
+    expect(objectTitle('Long stay')).toBe('Long stay');
+  });
+  it('adds the schema or arguments only where two names would look the same', () => {
+    const titles = listTitles(['public.f(a integer)', 'public.f(a text)', 'emr.g()', 'audit.g()', 'public.h()']);
+    expect(titles.get('public.f(a integer)')).toEqual({ title: 'f', hint: '(a integer)' });
+    expect(titles.get('emr.g()')).toEqual({ title: 'g', hint: 'emr ()' });
+    expect(titles.get('public.h()')).toEqual({ title: 'h', hint: null });
   });
 });
 

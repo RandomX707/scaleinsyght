@@ -34,9 +34,14 @@ async function requireAdmin(db:PoolClient, tenantId:string, userId:string) {
 }
 
 async function current(db:PoolClient, tenantId:string, connectionId:string) {
-  return (await db.query<{policy:ControlsPolicy;known_objects:string[];revision:number}>(
+  const row=(await db.query<{policy:ControlsPolicy&{classification?:unknown};known_objects:string[];revision:number}>(
     'SELECT policy,known_objects,revision FROM registry.connection_controls WHERE tenant_id=$1 AND connection_id=$2',
     [tenantId,connectionId])).rows[0];
+  if(!row)return row;
+  // Decision 64 removed the "Standard or custom" rules (decision 62). A policy saved with them still loads, without
+  // them, so the page can save it again; they were never used for scope.
+  const policy={...row.policy};delete policy.classification;
+  return {...row,policy:policy as ControlsPolicy};
 }
 
 export function getControls(pool:Pool,tenantId:string,connectionId:string) {

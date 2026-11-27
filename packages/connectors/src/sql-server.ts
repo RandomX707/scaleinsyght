@@ -239,7 +239,14 @@ export class SqlServerConnector implements ReadOnlyConnector {
     if (parameters.recordset.length > this.maxCatalogRows) throw new Error('sqlserver_connector_result_limit_exceeded');
     const byObject = new Map<number, Array<{ name: string; dataType: string; mode: 'in' | 'out' | 'inout' }>>();
     for (const parameter of parameters.recordset) byObject.set(parameter.object_id, [...(byObject.get(parameter.object_id) ?? []), { name: parameter.name, dataType: parameter.data_type, mode: parameter.is_output ? 'inout' : 'in' }]);
-    return rows.recordset.map((row) => ({ qualifiedName: row.qualified_name, kind: row.kind, definition: row.encrypted ? null : row.definition, encrypted: Boolean(row.encrypted), parameters: byObject.get(row.object_id) ?? [] }));
+    // A table-valued function's returned columns are in sys.columns, not sys.parameters (decision 64).
+    const returned = await (await this.request()).query<{ object_id: number; name: string; data_type: string }>(`SELECT TOP (${this.maxCatalogRows + 1}) c.object_id,c.name,TYPE_NAME(c.user_type_id) AS data_type
+      FROM sys.columns c JOIN sys.objects o ON o.object_id=c.object_id WHERE o.type IN ('IF','TF') ORDER BY c.object_id,c.column_id`);
+    if (returned.recordset.length > this.maxCatalogRows) throw new Error('sqlserver_connector_result_limit_exceeded');
+    const returnsByObject = new Map<number, Array<{ name: string; dataType: string }>>();
+    for (const column of returned.recordset) returnsByObject.set(column.object_id, [...(returnsByObject.get(column.object_id) ?? []), { name: column.name, dataType: column.data_type }]);
+    return rows.recordset.map((row) => ({ qualifiedName: row.qualified_name, kind: row.kind, definition: row.encrypted ? null : row.definition, encrypted: Boolean(row.encrypted),
+      parameters: byObject.get(row.object_id) ?? [], returns: returnsByObject.get(row.object_id) ?? [] }));
   }
 
   async categoryValues(table: string, column: string): Promise<{sql: string; values: string[]} | undefined> {

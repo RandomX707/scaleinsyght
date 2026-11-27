@@ -1,18 +1,16 @@
 {
   "sqlserver": {
     "database": "si_testbed_dictionary",
-    "standardTables": [
+    "tables": [
+      "dbo.X_CENSUS_SNAP",
+      "dbo.X_CENSUS_SNAP_ARCH",
+      "dbo.X_JOB_LOG",
+      "dbo.X_READMIT_FLAGS",
       "dbo.departments",
       "dbo.encounters",
       "dbo.patients"
     ],
-    "customTables": [
-      "dbo.X_CENSUS_SNAP",
-      "dbo.X_CENSUS_SNAP_ARCH",
-      "dbo.X_JOB_LOG",
-      "dbo.X_READMIT_FLAGS"
-    ],
-    "customViews": [
+    "views": [
       "dbo.X_V_DEPT_CENSUS"
     ],
     "procedures": {

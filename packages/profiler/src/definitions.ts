@@ -80,7 +80,7 @@ export function analyseDefinition(input: { name: string; text: string | null; de
 }
 
 const DEFAULT_SCHEMA: Record<string, string> = { sql_server: 'dbo', postgres: 'public', snowflake: 'PUBLIC' };
-type DefinitionRow = { qualifiedName: string; kind: 'view' | 'procedure' | 'function'; text: string | null; encrypted: boolean; parameters: unknown[] };
+type DefinitionRow = { qualifiedName: string; kind: 'view' | 'procedure' | 'function'; text: string | null; encrypted: boolean; parameters: unknown[]; returns: unknown[] };
 
 /**
  * Stores the scrubbed definitions of a connection's in-scope views, procedures and functions as versions (decision 53).
@@ -93,8 +93,8 @@ export async function captureDefinitions(pool: Pool, input: { tenantId: string; 
   if (!connector.viewDefinitions && !connector.routines) return { captured: 0, changed: 0, encrypted: 0 };
   const defaultSchema = DEFAULT_SCHEMA[connector.type] ?? 'public';
   const rows: DefinitionRow[] = [];
-  for (const view of (await connector.viewDefinitions?.()) ?? []) rows.push({ qualifiedName: view.qualifiedName, kind: 'view', text: view.definition, encrypted: false, parameters: [] });
-  for (const routine of (await connector.routines?.()) ?? []) rows.push({ qualifiedName: routine.qualifiedName, kind: routine.kind, text: routine.definition, encrypted: routine.encrypted, parameters: routine.parameters });
+  for (const view of (await connector.viewDefinitions?.()) ?? []) rows.push({ qualifiedName: view.qualifiedName, kind: 'view', text: view.definition, encrypted: false, parameters: [], returns: [] });
+  for (const routine of (await connector.routines?.()) ?? []) rows.push({ qualifiedName: routine.qualifiedName, kind: routine.kind, text: routine.definition, encrypted: routine.encrypted, parameters: routine.parameters, returns: routine.returns ?? [] });
   return withTenant(pool, input.tenantId, async (client) => {
     const profiled = new Set((await client.query<{ qualified_name: string }>(`SELECT qualified_name FROM graph.assets WHERE tenant_id=$1 AND source_id=$2 AND asset_type='dataset' AND active`, [input.tenantId, input.connectionId])).rows.map((row) => row.qualified_name));
     const outOfScope = new Set((await client.query<{ qualified_name: string }>(`SELECT qualified_name FROM registry.connection_scopes WHERE tenant_id=$1 AND connection_id=$2 AND scope_mode IN ('list_only','exclude')`, [input.tenantId, input.connectionId])).rows.map((row) => row.qualified_name));
@@ -105,14 +105,14 @@ export async function captureDefinitions(pool: Pool, input: { tenantId: string; 
       if (row.kind === 'view' ? !profiled.has(row.qualifiedName) : outOfScope.has(row.qualifiedName) || outOfScope.has(bare)) continue;
       const scrubbed = row.encrypted || row.text === null ? null : scrubDefinition(row.text);
       const analysis = analyseDefinition({ name: bare, text: scrubbed, defaultSchema });
-      const hash = createHash('sha256').update(JSON.stringify([row.kind, scrubbed, row.encrypted, row.parameters, analysis])).digest();
+      const hash = createHash('sha256').update(JSON.stringify([row.kind, scrubbed, row.encrypted, row.parameters, row.returns, analysis])).digest();
       seen.add(row.qualifiedName); if (row.encrypted) encrypted++;
       const previous = current.get(row.qualifiedName);
       if (previous?.text_hash && Buffer.compare(previous.text_hash, hash) === 0) continue;
       const version = (await client.query<{ next: number }>('SELECT coalesce(max(version),0)+1 AS next FROM graph.definitions WHERE tenant_id=$1 AND source_id=$2 AND qualified_name=$3', [input.tenantId, input.connectionId, row.qualifiedName])).rows[0]!.next;
       await client.query('UPDATE graph.definitions SET active=false WHERE tenant_id=$1 AND source_id=$2 AND qualified_name=$3 AND active', [input.tenantId, input.connectionId, row.qualifiedName]);
-      await client.query(`INSERT INTO graph.definitions(tenant_id,source_id,qualified_name,version,kind,scrubbed_text,encrypted,parameters,analysis,text_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10)`,
-        [input.tenantId, input.connectionId, row.qualifiedName, version, row.kind, scrubbed, row.encrypted, JSON.stringify(row.parameters), JSON.stringify(analysis), hash]);
+      await client.query(`INSERT INTO graph.definitions(tenant_id,source_id,qualified_name,version,kind,scrubbed_text,encrypted,parameters,returned_columns,analysis,text_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb,$11)`,
+        [input.tenantId, input.connectionId, row.qualifiedName, version, row.kind, scrubbed, row.encrypted, JSON.stringify(row.parameters), JSON.stringify(row.returns), JSON.stringify(analysis), hash]);
       changed++;
     }
     const gone = [...current.keys()].filter((name) => !seen.has(name));

@@ -84,12 +84,11 @@ Notes on the counts:
 
 ## Open items
 
-1. **Standard and custom objects need classifying.** The Dictionary no longer calls everything Standard. On test_emr it now shows:
-   - Standard: 0, because no vendor dictionary has been imported;
-   - Custom: 52 functions flagged as near-identical copies of other functions (91% to 100% similar);
-   - Not classified yet: the 272 tables and the other 67 functions.
+1. **Standard and custom objects: changed by decision 64, not yet seen on test_emr.** Standard and Custom now follow the object type, automatically, with no classifying to do. Once this change is deployed, test_emr should show:
+   - Standard: the 272 tables;
+   - Custom: the 119 functions, of which 52 carry a "Copy" badge (near-identical to another function, 91% to 100% similar).
 
-   Importing the vendor's dictionary, or adding name, schema or owner rules in Controls, will classify the rest.
+   A function's inputs are now listed apart from the columns it returns (test_emr's e02_a1c showed "Parameters 16" for 3 inputs). Stored functions are corrected on the next profile or nightly run.
 2. **Nightly refresh repeats the full profile.** The nightly run doesn't yet remember which tables are unchanged, so it re-profiles all 272 (about 28 minutes a night).
 3. **The identifier step still takes 23 minutes.** It reads every identifier column again on each run. Reusing what earlier runs already fingerprinted is the next improvement.
 4. **Stage times aren't stored.** The times for the 04:55 run were read from the job record while it ran. Recording each stage's start and end, and the time per table, is planned.

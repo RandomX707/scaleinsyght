@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import { withTenant } from '@scaleinsyght/db';
-import { DEFAULT_CLASSIFICATION, type ClassificationRules, type ReadOnlyConnector } from '@scaleinsyght/connectors';
+import type { ReadOnlyConnector } from '@scaleinsyght/connectors';
 import { scrubDefinition } from '@scaleinsyght/classification';
 import { renderDictionaryHtml, type HtmlSource } from './dictionary-html.js';
 
@@ -21,55 +21,37 @@ export type DictionaryDeps = {
 };
 
 export type ObjectKind = 'table' | 'view' | 'materialized_view' | 'procedure' | 'function' | 'package' | 'sheet' | 'model' | 'source' | 'datasource' | 'worksheet' | 'calculated_field';
-export type Origin = 'standard' | 'custom' | 'unclassified';
-export type OriginReason = 'in_vendor_dictionary' | 'not_in_vendor_dictionary' | 'name_prefix' | 'schema' | 'owner' | 'copy' | 'built_in_bi_tool' | null;
+export type Origin = 'standard' | 'custom';
 export type ListedObject = { name: string; kind: ObjectKind; procedureKind: string | null; columns: number | null; custom: boolean;
-  origin: Origin; originReason: OriginReason; copyOf?: string; copySimilarity?: number };
-
-const ownName = (qualifiedName: string) => qualifiedName.replace(/\(.*\)$/, '').split('.').at(-1) ?? qualifiedName;
-const schemaOf = (qualifiedName: string) => { const parts = qualifiedName.replace(/\(.*\)$/, '').split('.'); return parts.length > 1 ? parts.at(-2)! : ''; };
-const glob = (pattern: string, value: string) => new RegExp(`^${pattern.split('*').map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`, 'i').test(value);
-
-/** A custom name prefix at the start of the object's own name or after an underscore (X_READMIT, usp_X_LOAD), any case. */
-export function hasCustomPrefix(qualifiedName: string, prefixes: string[] = DEFAULT_CLASSIFICATION.customPrefixes): boolean {
-  const own = ownName(qualifiedName).toLowerCase();
-  return prefixes.some((prefix) => { const p = prefix.toLowerCase(); return own.startsWith(p) || own.includes(`_${p}`); });
-}
+  origin: Origin; copyOf?: string; copySimilarity?: number };
 
 /**
- * Standard means vendor-delivered and Custom customer-built (CLAUDE.md glossary), so it is about who built an object,
- * not its type (decision 62). An imported vendor dictionary decides for the kinds it lists: in it, Standard; not in it,
- * Custom. Otherwise the Controls rules (name prefixes, schemas, owner patterns) mark Custom, and so does a procedure or
- * function that is a near-identical copy of another. Anything else is not classified yet: never Standard by default.
+ * Decision 64: Standard and Custom are decided by object type from the catalog, for every source, automatically. Base
+ * data is Standard: tables, workbook sheets, dbt sources and BI data sources. Everything built over it is Custom: views,
+ * materialized views, procedures, functions, packages, dbt models, worksheets and calculated fields. No scoring, rules,
+ * vendor-dictionary comparison or per-object approval. A near-identical copy of another routine is shown as a "Copy of"
+ * badge for information only; it never changes the tab.
  */
-export function classifyObject(object: { name: string; kind: ObjectKind }, context: { vendor: Set<string> | null; rules: ClassificationRules; owner: string | null; copy: { copyOf: string; similarity: number } | null }): { origin: Origin; reason: OriginReason } {
-  if (['worksheet', 'calculated_field'].includes(object.kind)) return { origin: 'custom', reason: 'built_in_bi_tool' };
-  if (context.vendor && ['table', 'view', 'materialized_view'].includes(object.kind))
-    return context.vendor.has(object.name.toLowerCase()) ? { origin: 'standard', reason: 'in_vendor_dictionary' } : { origin: 'custom', reason: 'not_in_vendor_dictionary' };
-  if (hasCustomPrefix(object.name, context.rules.customPrefixes)) return { origin: 'custom', reason: 'name_prefix' };
-  const schema = schemaOf(object.name).toLowerCase();
-  if (schema && context.rules.customSchemas.some((item) => item.toLowerCase() === schema)) return { origin: 'custom', reason: 'schema' };
-  if (context.owner && context.rules.ownerPatterns.some((pattern) => glob(pattern, context.owner!))) return { origin: 'custom', reason: 'owner' };
-  if (context.copy) return { origin: 'custom', reason: 'copy' };
-  return { origin: 'unclassified', reason: null };
-}
+export const STANDARD_KINDS: ReadonlySet<ObjectKind> = new Set<ObjectKind>(['table', 'sheet', 'source', 'datasource']);
+export const originOf = (kind: ObjectKind): Origin => STANDARD_KINDS.has(kind) ? 'standard' : 'custom';
+
+/** Kinds whose description Scale Insyght drafts from metadata; dbt and BI objects bring their own or none. */
+export const DRAFTED_KINDS: ReadonlySet<ObjectKind> = new Set<ObjectKind>(['table', 'sheet', 'view', 'materialized_view', 'procedure', 'function', 'package']);
 
 const PROCEDURE_GROUPS: Record<string, string> = { fact_loader: 'Fact loaders', report: 'Report procedures', data_check: 'Data checks', archive: 'Archive', utility: 'Utilities' };
-const GROUP_ORDER = ['tables', 'sheets', 'models', 'sources', 'datasources', 'views', 'materialized_views', 'custom_tables', 'proc_fact_loader', 'proc_report', 'proc_data_check', 'proc_archive', 'proc_utility', 'procedures', 'functions', 'custom_materialized_views', 'custom_views', 'packages', 'worksheets', 'calculated_fields'];
+const GROUP_ORDER = ['tables', 'sheets', 'sources', 'datasources', 'views', 'materialized_views', 'proc_fact_loader', 'proc_report', 'proc_data_check', 'proc_archive', 'proc_utility', 'functions', 'packages', 'models', 'worksheets', 'calculated_fields'];
 
-/** The left-panel group an object belongs to, with its label. Standard and Custom tabs have different groups. */
-export function groupFor(object: Pick<ListedObject, 'name' | 'kind' | 'procedureKind' | 'columns' | 'custom'>): { key: string; label: string } {
-  const custom = object.custom;
+/** The left-panel group an object belongs to, with its label. Procedures are grouped by what their parsed SQL does. */
+export function groupFor(object: Pick<ListedObject, 'kind' | 'procedureKind'>): { key: string; label: string } {
   switch (object.kind) {
-    case 'table': return custom ? { key: 'custom_tables', label: 'Custom tables' } : { key: 'tables', label: 'Tables' };
+    case 'table': return { key: 'tables', label: 'Tables' };
     case 'sheet': return { key: 'sheets', label: 'Sheets' };
     case 'model': return { key: 'models', label: 'Models' };
     case 'source': return { key: 'sources', label: 'Sources' };
     case 'datasource': return { key: 'datasources', label: 'Data sources' };
-    case 'view': return custom ? { key: 'custom_views', label: 'Custom views' } : { key: 'views', label: 'Views' };
-    case 'materialized_view': return custom ? { key: 'custom_materialized_views', label: 'Materialized views' } : { key: 'materialized_views', label: 'Materialized views' };
+    case 'view': return { key: 'views', label: 'Views' };
+    case 'materialized_view': return { key: 'materialized_views', label: 'Materialized views' };
     case 'procedure': {
-      if (!custom) return { key: 'procedures', label: 'Procedures' };
       const kind = object.procedureKind && PROCEDURE_GROUPS[object.procedureKind] ? object.procedureKind : 'utility';
       return { key: `proc_${kind}`, label: `Procedures · ${PROCEDURE_GROUPS[kind]}` };
     }
@@ -109,16 +91,11 @@ async function importedTables(client: PoolClient, tenantId: string, connectionId
 
 /** Every object of a source, names and kinds only (no columns), cheap enough for 5,000-table sources. */
 export async function listObjects(client: PoolClient, tenantId: string, source: Source): Promise<ListedObject[]> {
-  const imported = await importedTables(client, tenantId, source.connection_id);
-  const saved = (await client.query<{ policy: { classification?: ClassificationRules } }>('SELECT policy FROM registry.connection_controls WHERE tenant_id=$1 AND connection_id=$2', [tenantId, source.connection_id])).rows[0];
-  const rules: ClassificationRules = { ...DEFAULT_CLASSIFICATION, ...saved?.policy.classification };
-  const origins = new Map((await client.query<{ qualified_name: string; owner: string | null; copy_of: string | null; copy_similarity: string | null }>(
-    'SELECT qualified_name,owner,copy_of,copy_similarity::text FROM graph.object_origins WHERE tenant_id=$1 AND source_id=$2', [tenantId, source.connection_id])).rows.map((row) => [row.qualified_name, row]));
+  const copies = new Map((await client.query<{ qualified_name: string; copy_of: string; copy_similarity: string }>(
+    'SELECT qualified_name,copy_of,copy_similarity::text FROM graph.object_origins WHERE tenant_id=$1 AND source_id=$2 AND copy_of IS NOT NULL', [tenantId, source.connection_id])).rows.map((row) => [row.qualified_name, row]));
   const classify = (name: string, kind: ObjectKind) => {
-    const origin = origins.get(name);
-    const copy = origin?.copy_of ? { copyOf: origin.copy_of, similarity: Number(origin.copy_similarity) } : null;
-    const decided = classifyObject({ name, kind }, { vendor: imported, rules, owner: origin?.owner ?? null, copy });
-    return { custom: decided.origin === 'custom', origin: decided.origin, originReason: decided.reason, ...(copy ? { copyOf: copy.copyOf, copySimilarity: copy.similarity } : {}) };
+    const copy = copies.get(name); const origin = originOf(kind);
+    return { custom: origin === 'custom', origin, ...(copy ? { copyOf: copy.copy_of, copySimilarity: Number(copy.copy_similarity) } : {}) };
   };
   if (source.connector_type === 'dbt') {
     const objects = source.dbt_import?.objects ?? [];
@@ -159,13 +136,91 @@ export function draftDescription(input: { kind: ObjectKind; name: string; encryp
     if (input.analysis.calls.length) text += `. It runs ${list(input.analysis.calls)}`;
     return `${text}.`;
   }
-  if (input.kind === 'view' || input.kind === 'materialized_view') return `View over ${input.analysis?.reads.length ? list(input.analysis.reads.slice(0, 4)) : 'other tables'}${input.columns ? `, with ${input.columns} columns` : ''}.`;
-  let text = `${input.kind === 'sheet' ? 'Sheet' : 'Table'} ${short(own).split('.').at(-1)}${input.columns ? ` with ${input.columns} columns` : ''}`;
+  const columns = (count: number) => `${count} ${count === 1 ? 'column' : 'columns'}`;
+  if (input.kind === 'view' || input.kind === 'materialized_view') return `View over ${input.analysis?.reads.length ? list(input.analysis.reads.slice(0, 4)) : 'other tables'}${input.columns ? `, with ${columns(input.columns)}` : ''}.`;
+  let text = `${input.kind === 'sheet' ? 'Sheet' : 'Table'} ${short(own).split('.').at(-1)}${input.columns ? ` with ${columns(input.columns)}` : ''}`;
   if (input.references?.length) text += `, linked by declared keys to ${list(input.references.slice(0, 3))}`;
   text += '.';
   if (input.builtBy?.length) text += ` Loaded by ${list(input.builtBy.map((item) => item.name))}.`;
   if (input.readBy) text += ` Read by ${input.readBy} ${input.readBy === 1 ? 'object' : 'objects'}.`;
   return text;
+}
+
+/**
+ * Drafted descriptions for many objects at once, from metadata only (names, column counts, declared keys and parsed
+ * SQL), in a fixed number of queries whatever the source size. One path for the object view, single approval,
+ * Approve all and the export, so what a person approves is exactly the text they were shown (decision 64).
+ */
+export async function draftDescriptions(client: PoolClient, tenantId: string, source: Source, objects: ListedObject[]): Promise<Map<string, string>> {
+  const wanted = objects.filter((object) => DRAFTED_KINDS.has(object.kind));
+  if (!wanted.length || source.connector_type === 'dbt' || source.connector_type === 'tableau') return new Map();
+  const names = wanted.map((object) => object.name);
+  const definitions = (await client.query<{ qualified_name: string; kind: string; encrypted: boolean; analysis: { writes?: Array<{ table: string; mode: string }>; reads?: string[]; calls?: string[] } }>(
+    `SELECT qualified_name,kind,encrypted,analysis FROM graph.definitions WHERE tenant_id=$1 AND source_id=$2 AND active AND kind<>'calculated_field' ORDER BY qualified_name`, [tenantId, source.connection_id])).rows;
+  const columnCounts = new Map((await client.query<{ qualified_name: string; n: number }>(
+    `SELECT d.qualified_name,count(f.asset_id)::int AS n FROM graph.assets d
+       JOIN graph.relationships c ON c.tenant_id=d.tenant_id AND c.family='structural' AND c.relationship_type='CONTAINS' AND c.from_asset_id=d.asset_id
+       JOIN graph.assets f ON f.tenant_id=c.tenant_id AND f.asset_id=c.to_asset_id AND f.active
+     WHERE d.tenant_id=$1 AND d.source_id=$2 AND d.active AND d.asset_type='dataset' AND d.qualified_name=ANY($3::text[]) GROUP BY d.qualified_name`, [tenantId, source.connection_id, names])).rows.map((row) => [row.qualified_name, row.n]));
+  // Tables this one is linked to by a declared foreign key (inferred links are probable and never described as keys).
+  const references = new Map<string, string[]>();
+  for (const row of (await client.query<{ from_table: string; to_table: string }>(
+    `SELECT DISTINCT fd.qualified_name AS from_table,td.qualified_name AS to_table FROM graph.assets fd
+       JOIN graph.relationships fc ON fc.tenant_id=fd.tenant_id AND fc.family='structural' AND fc.relationship_type='CONTAINS' AND fc.from_asset_id=fd.asset_id
+       JOIN graph.relationships r ON r.tenant_id=fc.tenant_id AND r.family='structural' AND r.relationship_type='REFERENCES' AND r.from_asset_id=fc.to_asset_id
+       JOIN graph.assets f ON f.tenant_id=r.tenant_id AND f.asset_id=r.from_asset_id AND f.active JOIN graph.assets t ON t.tenant_id=r.tenant_id AND t.asset_id=r.to_asset_id AND t.active
+       JOIN graph.relationships tc ON tc.tenant_id=r.tenant_id AND tc.family='structural' AND tc.relationship_type='CONTAINS' AND tc.to_asset_id=t.asset_id
+       JOIN graph.assets td ON td.tenant_id=tc.tenant_id AND td.asset_id=tc.from_asset_id
+     WHERE fd.tenant_id=$1 AND fd.source_id=$2 AND fd.active AND fd.asset_type='dataset' AND fd.qualified_name=ANY($3::text[])
+       AND EXISTS(SELECT 1 FROM graph.assertions s WHERE s.tenant_id=r.tenant_id AND s.relationship_id=r.relationship_id AND s.valid_to IS NULL AND s.evidence_method='declared' AND s.review_status NOT IN ('rejected','stale','disputed'))
+     ORDER BY 1,2`, [tenantId, source.connection_id, names])).rows) references.set(row.from_table, [...(references.get(row.from_table) ?? []), row.to_table]);
+  const builtBy = new Map<string, Array<{ name: string; mode: string }>>(); const readBy = new Map<string, number>();
+  for (const definition of definitions) {
+    for (const write of definition.analysis.writes ?? []) {
+      const key = write.table.toLowerCase(); const loaders = builtBy.get(key) ?? [];
+      if (key !== definition.qualified_name.toLowerCase() && !loaders.some((item) => item.name === definition.qualified_name)) builtBy.set(key, [...loaders, { name: definition.qualified_name, mode: write.mode }]);
+    }
+    for (const read of new Set((definition.analysis.reads ?? []).map((item) => item.toLowerCase()))) if (read !== definition.qualified_name.toLowerCase()) readBy.set(read, (readBy.get(read) ?? 0) + 1);
+  }
+  const byName = new Map(definitions.map((definition) => [definition.qualified_name, definition]));
+  const drafts = new Map<string, string>();
+  for (const object of wanted) {
+    const definition = byName.get(object.name); const lower = object.name.toLowerCase();
+    const analysis = definition ? { writes: definition.analysis.writes ?? [], reads: definition.analysis.reads ?? [], calls: definition.analysis.calls ?? [] } : undefined;
+    drafts.set(object.name, draftDescription({ kind: object.kind, name: object.name, encrypted: definition?.encrypted ?? false, columns: columnCounts.get(object.name) ?? 0,
+      references: references.get(object.name) ?? [], builtBy: builtBy.get(lower) ?? [], readBy: readBy.get(lower) ?? 0, ...(analysis ? { analysis } : {}) }));
+  }
+  return drafts;
+}
+
+/** Objects whose description comes from an imported dictionary or dbt, or that a person approved or edited. */
+async function describedNames(client: PoolClient, tenantId: string, connectionId: string): Promise<Set<string>> {
+  return new Set((await client.query<{ name: string }>(
+    `SELECT table_name AS name FROM graph.dictionary_descriptions WHERE tenant_id=$1 AND source_id=$2 AND column_name=''
+     UNION SELECT qualified_name FROM graph.description_reviews WHERE tenant_id=$1 AND source_id=$2 AND field_name='' AND status<>'draft'`, [tenantId, connectionId])).rows.map((row) => row.name));
+}
+
+/** Objects still showing a drafted description: ones Scale Insyght drafts that nobody has approved, edited or imported. */
+const stillDrafted = (objects: ListedObject[], described: Set<string>, source: Source) =>
+  source.connector_type === 'dbt' || source.connector_type === 'tableau' ? [] : objects.filter((object) => DRAFTED_KINDS.has(object.kind) && !described.has(object.name));
+
+/** The objects a tab and search show, with column-name match counts, shared by the list and by Approve all. */
+async function objectsInView(client: PoolClient, tenantId: string, source: Source, objects: ListedObject[], view: { tab: Origin | null; search: string }) {
+  // Column-name matches are counted per object so the list can show "N col".
+  const columnHits = new Map<string, number>();
+  if (view.search) {
+    const datasetSource = source.connector_type === 'dbt' && source.source_ref?.startsWith('warehouse:') ? source.source_ref.slice('warehouse:'.length) : source.connection_id;
+    const rows = await client.query<{ table_name: string; hits: number }>(
+      `SELECT d.qualified_name AS table_name,count(*)::int AS hits FROM graph.assets f
+         JOIN graph.relationships c ON c.tenant_id=f.tenant_id AND c.family='structural' AND c.relationship_type='CONTAINS' AND c.to_asset_id=f.asset_id
+         JOIN graph.assets d ON d.tenant_id=c.tenant_id AND d.asset_id=c.from_asset_id AND d.active
+       WHERE f.tenant_id=$1 AND f.source_id=$2 AND f.active AND f.asset_type='field' AND split_part(f.qualified_name,'.',array_length(string_to_array(f.qualified_name,'.'),1)) ILIKE '%'||$3||'%'
+       GROUP BY d.qualified_name`, [tenantId, datasetSource, view.search.replace(/[\\%_]/g, (character) => `\\${character}`)]);
+    for (const row of rows.rows) columnHits.set(row.table_name, row.hits);
+  }
+  const shown = objects.filter((object) => !view.tab || object.origin === view.tab)
+    .filter((object) => !view.search || object.name.toLowerCase().includes(view.search.toLowerCase()) || columnHits.has(object.name));
+  return { shown, columnHits };
 }
 
 const q = (value: unknown, max = 200) => typeof value === 'string' ? value.trim().slice(0, max) : '';
@@ -198,7 +253,8 @@ export function registerDictionaryRoutes(app: FastifyInstance, deps: DictionaryD
       const latest = imported.rows[0] ?? null;
       const datasetSource = source.connector_type === 'dbt' && source.source_ref?.startsWith('warehouse:') ? source.source_ref.slice('warehouse:'.length) : source.connection_id;
       const dbtNames = source.connector_type === 'dbt' ? objects.map((object) => object.name) : null;
-      // Documented: an imported or dbt description, or a draft a person approved or edited. Unapproved drafts don't count.
+      // Reviewed: an imported or dbt description, or a draft a person approved or edited. Drafts are used as they are
+      // (decision 64), so the landing shows them as described, with how many are still drafted.
       const coverage = await client.query<{ tables: number; documented_tables: number; columns: number; documented_columns: number }>(
         `WITH datasets AS (SELECT a.asset_id,a.qualified_name FROM graph.assets a WHERE a.tenant_id=$1 AND a.source_id=$2 AND a.active AND a.asset_type='dataset' AND ($4::text[] IS NULL OR a.qualified_name=ANY($4))),
            fields AS (SELECT d.qualified_name AS table_name,split_part(f.qualified_name,'.',array_length(string_to_array(f.qualified_name,'.'),1)) AS column_name FROM datasets d
@@ -217,17 +273,24 @@ export function registerDictionaryRoutes(app: FastifyInstance, deps: DictionaryD
       const tests = source.connector_type === 'dbt' ? Number((await client.query<{ n: number }>('SELECT count(*)::int AS n FROM graph.dbt_tests WHERE tenant_id=$1 AND source_id=$2', [current.tenantId, source.connection_id])).rows[0]!.n) : null;
       const count = (kinds: ObjectKind[]) => objects.filter((object) => kinds.includes(object.kind)).length;
       const coverageRow = coverage.rows[0]!;
+      const drafted = stillDrafted(objects, await describedNames(client, current.tenantId, source.connection_id), source);
+      // Coverage counts every dataset, views included, so drafts are counted the same way.
+      const draftedTables = drafted.filter((object) => ['table', 'sheet', 'view', 'materialized_view'].includes(object.kind)).length;
+      // Information only: which tables an imported vendor dictionary lists. It never changes Standard or Custom.
+      const vendor = await importedTables(client, current.tenantId, source.connection_id);
       return {
         source: { connectionId: source.connection_id, name: source.name, type: source.connector_type },
         importedDictionary: latest ? { fileName: latest.file_name, importedAt: latest.imported_at, importedBy: latest.imported_by, tables: latest.table_count, columns: latest.column_count } : null,
         hasVendorDictionary: (await importedTables(client, current.tenantId, source.connection_id)) !== null,
         counts: {
-          standard: objects.filter((object) => object.origin === 'standard').length, custom: objects.filter((object) => object.origin === 'custom').length, unclassified: objects.filter((object) => object.origin === 'unclassified').length,
-          tables: count(['table', 'sheet', 'model', 'source', 'datasource']), customTables: objects.filter((object) => object.kind === 'table' && object.custom).length,
+          standard: objects.filter((object) => object.origin === 'standard').length, custom: objects.filter((object) => object.origin === 'custom').length,
+          tables: count(['table', 'sheet', 'model', 'source', 'datasource']),
+          tablesNotInDictionary: vendor ? objects.filter((object) => object.kind === 'table' && !vendor.has(object.name.toLowerCase())).length : null,
           views: count(['view', 'materialized_view']), procedures: count(['procedure']), functions: count(['function']), packages: count(['package']),
           worksheets: count(['worksheet']), calculatedFields: count(['calculated_field']), dbtTests: tests,
         },
-        coverage: { tables: { documented: coverageRow.documented_tables, total: coverageRow.tables }, columns: { documented: coverageRow.documented_columns, total: coverageRow.columns } },
+        coverage: { tables: { documented: coverageRow.documented_tables + draftedTables, drafted: draftedTables, total: coverageRow.tables }, columns: { documented: coverageRow.documented_columns, total: coverageRow.columns } },
+        drafted: drafted.length,
         newerThanDictionary: latest ? { count: newerCount, names: newer!.rows.slice(0, 20).map((row) => row.qualified_name) } : null,
       };
     });
@@ -237,30 +300,19 @@ export function registerDictionaryRoutes(app: FastifyInstance, deps: DictionaryD
 
   app.get<{ Params: { connectionId: string }; Querystring: { tab?: string; q?: string; group?: string; offset?: string } }>('/api/connections/:connectionId/dictionary/objects', async (request, reply) => {
     const current = await authed(request, reply); if (!current) return;
-    const asked = (['standard', 'custom', 'unclassified'] as const).find((item) => item === request.query.tab);
+    const asked = (['standard', 'custom'] as const).find((item) => item === request.query.tab);
     const search = q(request.query.q, 100); const onlyGroup = q(request.query.group, 60) || null;
     const offset = Math.max(0, Math.min(1_000_000, Number.parseInt(request.query.offset ?? '0', 10) || 0));
     const body = await withTenant(deps.pool, current.tenantId, async (client) => {
       const source = await sourceFor(client, current.tenantId, request.params.connectionId); if (!source) return null;
       const objects = await listObjects(client, current.tenantId, source);
       const hasVendorDictionary = (await importedTables(client, current.tenantId, source.connection_id)) !== null;
-      // Column-name matches are counted per object so the list can show "N col".
-      const columnHits = new Map<string, number>();
-      if (search) {
-        const datasetSource = source.connector_type === 'dbt' && source.source_ref?.startsWith('warehouse:') ? source.source_ref.slice('warehouse:'.length) : source.connection_id;
-        const rows = await client.query<{ table_name: string; hits: number }>(
-          `SELECT d.qualified_name AS table_name,count(*)::int AS hits FROM graph.assets f
-             JOIN graph.relationships c ON c.tenant_id=f.tenant_id AND c.family='structural' AND c.relationship_type='CONTAINS' AND c.to_asset_id=f.asset_id
-             JOIN graph.assets d ON d.tenant_id=c.tenant_id AND d.asset_id=c.from_asset_id AND d.active
-           WHERE f.tenant_id=$1 AND f.source_id=$2 AND f.active AND f.asset_type='field' AND split_part(f.qualified_name,'.',array_length(string_to_array(f.qualified_name,'.'),1)) ILIKE '%'||$3||'%'
-           GROUP BY d.qualified_name`, [current.tenantId, datasetSource, search.replace(/[\\%_]/g, (character) => `\\${character}`)]);
-        for (const row of rows.rows) columnHits.set(row.table_name, row.hits);
-      }
-      const counts = { standard: objects.filter((object) => object.origin === 'standard').length, custom: objects.filter((object) => object.origin === 'custom').length, unclassified: objects.filter((object) => object.origin === 'unclassified').length };
-      // Decision 62: never Standard by default; without one, the page opens on what is not classified yet.
-      const tab = asked ?? (counts.standard ? 'standard' : counts.unclassified ? 'unclassified' : 'custom');
-      const inTab = objects.filter((object) => object.origin === tab)
-        .filter((object) => !search || object.name.toLowerCase().includes(search.toLowerCase()) || columnHits.has(object.name));
+      const counts = { standard: objects.filter((object) => object.origin === 'standard').length, custom: objects.filter((object) => object.origin === 'custom').length };
+      // Decision 64: Standard first, unless a source has only Custom objects (a Tableau workbook's worksheets, say).
+      const tab: Origin = asked ?? (counts.standard ? 'standard' : 'custom');
+      const { shown: inTab, columnHits } = await objectsInView(client, current.tenantId, source, objects, { tab, search });
+      // How many of the shown objects still have a drafted description, for "Approve all" on this tab or filter.
+      const drafted = stillDrafted(inTab, await describedNames(client, current.tenantId, source.connection_id), source).length;
       const grouped = new Map<string, { key: string; label: string; items: ListedObject[] }>();
       for (const object of inTab) { const group = groupFor(object); const entry = grouped.get(group.key) ?? { ...group, items: [] }; entry.items.push(object); grouped.set(group.key, entry); }
       const groups = [...grouped.values()].sort((a, b) => GROUP_ORDER.indexOf(a.key) - GROUP_ORDER.indexOf(b.key))
@@ -270,7 +322,7 @@ export function registerDictionaryRoutes(app: FastifyInstance, deps: DictionaryD
           const start = onlyGroup ? offset : 0; const page = group.items.slice(start, start + GROUP_PAGE);
           return { key: group.key, label: group.label, total: group.items.length,
             items: page.map((object) => ({ name: object.name, kind: object.kind, columns: object.columns, ...(columnHits.has(object.name) ? { matchedColumns: columnHits.get(object.name) } : {}),
-              ...(object.originReason ? { originReason: object.originReason } : {}), ...(object.copyOf ? { copyOf: object.copyOf, copySimilarity: object.copySimilarity } : {}) })),
+              ...(object.copyOf ? { copyOf: object.copyOf, copySimilarity: object.copySimilarity } : {}) })),
             nextOffset: start + page.length < group.items.length ? start + page.length : null };
         });
       let sqlHits: Array<{ name: string; kind: string; matches: number; lines: Array<{ line: number; text: string }> }> = [];
@@ -284,7 +336,7 @@ export function registerDictionaryRoutes(app: FastifyInstance, deps: DictionaryD
       // How much procedure SQL could be read here, as the prototype shows on the Custom tab.
       const coverage = (await client.query<{ routines: number; encrypted: number }>(`SELECT count(*)::int AS routines,count(*) FILTER (WHERE encrypted)::int AS encrypted FROM graph.definitions
         WHERE tenant_id=$1 AND source_id=$2 AND active AND kind IN ('procedure','function','package')`, [current.tenantId, source.connection_id])).rows[0]!;
-      return { tab, hasVendorDictionary, counts, groups, sqlHits,
+      return { tab, hasVendorDictionary, counts, drafted, groups, sqlHits,
         sqlCoverage: coverage.routines ? { routines: coverage.routines, captured: coverage.routines - coverage.encrypted, encrypted: coverage.encrypted } : null };
     });
     if (!body) return reply.code(404).send({ error: 'connection_not_found' });
@@ -304,12 +356,51 @@ export function registerDictionaryRoutes(app: FastifyInstance, deps: DictionaryD
     const name = q(request.body?.name, 500); const column = q(request.body?.column, 200); const action = request.body?.action;
     const text = typeof request.body?.text === 'string' ? request.body.text.trim() : '';
     if (!name || (action !== 'approve' && action !== 'edit') || (action === 'edit' && (!text || text.length > 2000))) return reply.code(400).send({ error: 'description_review_invalid' });
-    const updated = await withTenant(deps.pool, current.tenantId, (client) => client.query<{ status: string; final_text: string; decided_at: Date }>(
-      `UPDATE graph.description_reviews SET status=$5,final_text=CASE WHEN $5='edited' THEN $6 ELSE drafted_text END,decided_by=$7,decided_at=clock_timestamp()
-       WHERE tenant_id=$1 AND source_id=$2 AND qualified_name=$3 AND field_name=$4 RETURNING status,final_text,decided_at`,
-      [current.tenantId, request.params.connectionId, name, column, action === 'approve' ? 'approved' : 'edited', text || null, current.userId]));
-    if (!updated.rows[0]) return reply.code(404).send({ error: 'description_draft_not_found' });
-    return reply.send({ status: updated.rows[0].status, text: updated.rows[0].final_text, decidedAt: updated.rows[0].decided_at });
+    const updated = await withTenant(deps.pool, current.tenantId, async (client) => {
+      // Drafts are table-level only; a column has none to approve.
+      if (column) return null;
+      const source = await sourceFor(client, current.tenantId, request.params.connectionId); if (!source) return null;
+      const listed = (await listObjects(client, current.tenantId, source)).find((object) => object.name === name); if (!listed) return null;
+      const drafted = (await draftDescriptions(client, current.tenantId, source, [listed])).get(name); if (!drafted) return null;
+      const status = action === 'approve' ? 'approved' : 'edited';
+      return (await client.query<{ status: string; final_text: string; decided_at: Date }>(
+        `INSERT INTO graph.description_reviews(tenant_id,source_id,qualified_name,field_name,drafted_text,drafted_by,status,final_text,decided_by,decided_at)
+         VALUES($1,$2,$3,'',$4,'code',$5,$6,$7,clock_timestamp())
+         ON CONFLICT(tenant_id,source_id,qualified_name,field_name) DO UPDATE SET drafted_text=EXCLUDED.drafted_text,drafted_at=clock_timestamp(),status=EXCLUDED.status,final_text=EXCLUDED.final_text,decided_by=EXCLUDED.decided_by,decided_at=EXCLUDED.decided_at
+         RETURNING status,final_text,decided_at`, [current.tenantId, source.connection_id, name, drafted, status, status === 'edited' ? text : drafted, current.userId])).rows[0] ?? null;
+    });
+    if (!updated) return reply.code(404).send({ error: 'description_draft_not_found' });
+    return reply.send({ status: updated.status, text: updated.final_text, decidedAt: updated.decided_at });
+  });
+
+  // Approve all (decision 64): every drafted description a tab, a search or the whole source shows, after one
+  // confirmation in the page. Optional and never required: drafts are shown and used as they are. Each approved row
+  // records who approved it and when, like a single approval.
+  app.post<{ Params: { connectionId: string }; Body: { tab?: string; q?: string } }>('/api/connections/:connectionId/dictionary/descriptions/approve-all', async (request, reply) => {
+    const current = await authed(request, reply); if (!current) return;
+    const tab = (['standard', 'custom'] as const).find((item) => item === request.body?.tab) ?? null;
+    if (request.body?.tab !== undefined && !tab) return reply.code(400).send({ error: 'approve_all_invalid' });
+    const search = q(request.body?.q, 100);
+    const approved = await withTenant(deps.pool, current.tenantId, async (client) => {
+      const source = await sourceFor(client, current.tenantId, request.params.connectionId); if (!source) return null;
+      const objects = await listObjects(client, current.tenantId, source);
+      const { shown } = await objectsInView(client, current.tenantId, source, objects, { tab, search });
+      const pending = stillDrafted(shown, await describedNames(client, current.tenantId, source.connection_id), source);
+      const drafts = await draftDescriptions(client, current.tenantId, source, pending);
+      const names = pending.map((object) => object.name).filter((objectName) => drafts.has(objectName));
+      for (let start = 0; start < names.length; start += 5_000) {
+        const batch = names.slice(start, start + 5_000);
+        await client.query(
+          `INSERT INTO graph.description_reviews(tenant_id,source_id,qualified_name,field_name,drafted_text,drafted_by,status,final_text,decided_by,decided_at)
+           SELECT $1,$2,n,'',t,'code','approved',t,$5,clock_timestamp() FROM unnest($3::text[],$4::text[]) AS u(n,t)
+           ON CONFLICT(tenant_id,source_id,qualified_name,field_name) DO UPDATE SET drafted_text=EXCLUDED.drafted_text,drafted_at=clock_timestamp(),status='approved',final_text=EXCLUDED.final_text,decided_by=EXCLUDED.decided_by,decided_at=EXCLUDED.decided_at
+           WHERE graph.description_reviews.status='draft'`,
+          [current.tenantId, source.connection_id, batch, batch.map((objectName) => drafts.get(objectName)!), current.userId]);
+      }
+      return names.length;
+    });
+    if (approved === null) return reply.code(404).send({ error: 'connection_not_found' });
+    return reply.send({ approved });
   });
 
   // "Show original": the definition exactly as the source holds it, fetched now and never stored or logged (decision 53).
@@ -450,8 +541,8 @@ async function objectDetail(client: PoolClient, tenantId: string, connectionId: 
        LEFT JOIN LATERAL(SELECT statistics,structural_attributes FROM graph.asset_versions WHERE tenant_id=a.tenant_id AND asset_id=a.asset_id ORDER BY version DESC LIMIT 1)v ON true
      WHERE a.tenant_id=$1 AND a.source_id=ANY($2::uuid[]) AND a.qualified_name=$3 AND a.active AND a.asset_type IN ('dataset','report','field')
      ORDER BY (a.source_id=$4) DESC LIMIT 1`, [tenantId, [datasetSource, connectionId], name, datasetSource])).rows[0] ?? null;
-  const definition = (await client.query<{ kind: string; scrubbed_text: string | null; encrypted: boolean; parameters: Array<{ name: string; dataType: string; mode: string }>; analysis: { writes?: Array<{ table: string; mode: string }>; reads?: string[]; calls?: string[]; steps?: string[]; kind?: string }; captured_at: Date; version: number }>(
-    `SELECT kind,scrubbed_text,encrypted,parameters,analysis,captured_at,version FROM graph.definitions WHERE tenant_id=$1 AND source_id=$2 AND qualified_name=$3 AND active`, [tenantId, connectionId, name])).rows[0] ?? null;
+  const definition = (await client.query<{ kind: string; scrubbed_text: string | null; encrypted: boolean; parameters: Array<{ name: string; dataType: string; mode: string }>; returned_columns: Array<{ name: string; dataType: string }>; analysis: { writes?: Array<{ table: string; mode: string }>; reads?: string[]; calls?: string[]; steps?: string[]; kind?: string }; captured_at: Date; version: number }>(
+    `SELECT kind,scrubbed_text,encrypted,parameters,returned_columns,analysis,captured_at,version FROM graph.definitions WHERE tenant_id=$1 AND source_id=$2 AND qualified_name=$3 AND active`, [tenantId, connectionId, name])).rows[0] ?? null;
   const lower = name.toLowerCase();
   // Stored definitions of this source that read, write or call this object (parsed from SQL).
   const related = (await client.query<{ qualified_name: string; kind: string; analysis: { writes?: Array<{ table: string; mode: string }>; reads?: string[]; calls?: string[] } }>(
@@ -512,22 +603,19 @@ async function objectDetail(client: PoolClient, tenantId: string, connectionId: 
   }
   const tests = source.connector_type === 'dbt' ? (await client.query<{ column_name: string; test_name: string }>('SELECT column_name,test_name FROM graph.dbt_tests WHERE tenant_id=$1 AND source_id=$2 AND model=$3 ORDER BY column_name,test_name', [tenantId, connectionId, name])).rows.map((row) => ({ column: row.column_name || null, test: row.test_name })) : [];
 
-  // Description: imported or dbt text wins; otherwise a code-drafted one that a person approves or edits.
+  // Description: imported or dbt text wins; then one a person approved or edited; otherwise the code-drafted one,
+  // shown and used as "Drafted" (decision 64). Approval is optional and never blocks anything.
   const documented = (await client.query<{ description: string; origin: string; imported_at: Date }>(
     `SELECT description,origin,imported_at FROM graph.dictionary_descriptions WHERE tenant_id=$1 AND source_id=$2 AND table_name=$3 AND column_name=''`, [tenantId, connectionId, name])).rows[0];
   let description: Record<string, unknown> | null = null;
   if (documented) description = { text: documented.description, origin: documented.origin, at: documented.imported_at };
   else {
-    const analysis = definition?.analysis ? { writes: definition.analysis.writes ?? [], reads: definition.analysis.reads ?? [], calls: definition.analysis.calls ?? [] } : undefined;
-    const drafted = listed.kind === 'calculated_field' || listed.kind === 'worksheet' || listed.kind === 'datasource' || listed.kind === 'model' || listed.kind === 'source' ? null
-      : draftDescription({ kind: listed.kind, name, encrypted: definition?.encrypted ?? false, columns: columns.length, references: [...new Set(keys.map((key) => String(key.references).split('.').slice(0, -1).join('.')))], builtBy, readBy: readBy.length, ...(analysis ? { analysis } : {}) });
-    if (drafted) await client.query(`INSERT INTO graph.description_reviews(tenant_id,source_id,qualified_name,field_name,drafted_text,drafted_by) VALUES($1,$2,$3,'',$4,'code')
-      ON CONFLICT(tenant_id,source_id,qualified_name,field_name) DO UPDATE SET drafted_text=EXCLUDED.drafted_text,drafted_at=clock_timestamp()
-      WHERE graph.description_reviews.status='draft' AND graph.description_reviews.drafted_text<>EXCLUDED.drafted_text`, [tenantId, connectionId, name, drafted]);
-    const review = (await client.query<{ drafted_text: string; status: string; final_text: string | null; decided_at: Date | null; decided_by: string | null }>(
-      `SELECT r.drafted_text,r.status,r.final_text,r.decided_at,u.display_name AS decided_by FROM graph.description_reviews r LEFT JOIN core.users u ON u.tenant_id=r.tenant_id AND u.user_id=r.decided_by
-       WHERE r.tenant_id=$1 AND r.source_id=$2 AND r.qualified_name=$3 AND r.field_name=''`, [tenantId, connectionId, name])).rows[0];
-    if (review) description = { text: review.final_text ?? review.drafted_text, origin: review.status === 'draft' ? 'drafted' : review.status, by: review.decided_by, at: review.decided_at };
+    const review = (await client.query<{ status: string; final_text: string | null; decided_at: Date | null; decided_by: string | null }>(
+      `SELECT r.status,r.final_text,r.decided_at,u.display_name AS decided_by FROM graph.description_reviews r LEFT JOIN core.users u ON u.tenant_id=r.tenant_id AND u.user_id=r.decided_by
+       WHERE r.tenant_id=$1 AND r.source_id=$2 AND r.qualified_name=$3 AND r.field_name='' AND r.status<>'draft'`, [tenantId, connectionId, name])).rows[0];
+    const drafted = review ? undefined : (await draftDescriptions(client, tenantId, source, [listed])).get(name);
+    if (review) description = { text: review.final_text, origin: review.status, by: review.decided_by, at: review.decided_at };
+    else if (drafted) description = { text: drafted, origin: 'drafted' };
   }
 
   // Tables and columns a definition touches: columns named in its SQL are marked used; a used column that an earlier
@@ -552,7 +640,7 @@ async function objectDetail(client: PoolClient, tenantId: string, connectionId: 
 
   return {
     source: { connectionId, name: source.name, type: source.connector_type },
-    name, kind: listed.kind, custom: listed.custom, origin: listed.origin, originReason: listed.originReason, ...(listed.copyOf ? { copyOf: listed.copyOf, copySimilarity: listed.copySimilarity } : {}), procedureKind: listed.procedureKind,
+    name, kind: listed.kind, custom: listed.custom, origin: listed.origin, ...(listed.copyOf ? { copyOf: listed.copyOf, copySimilarity: listed.copySimilarity } : {}), procedureKind: listed.procedureKind,
     description,
     stats: dataset ? { rows: typeof dataset.statistics?.row_count === 'number' ? dataset.statistics.row_count : null, ...(dataset.statistics?.row_count_estimated ? { rowsEstimated: true } : {}), lastProfiled, dependentReports, builtBy: builtBy.map((item) => item.name) } : null,
     columns, keys, joins, tests,
@@ -560,7 +648,8 @@ async function objectDetail(client: PoolClient, tenantId: string, connectionId: 
       ...flowUsers.map((item) => ({ name: item.name, kind: item.type === 'report' ? 'report' : 'dataset', how: 'data flows into it', source: item.source }))],
     definition: definition ? {
       kind: definition.kind, encrypted: definition.encrypted, text: definition.scrubbed_text, literalsHidden: true, version: definition.version, capturedAt: definition.captured_at,
-      parameters: definition.parameters.map((parameter) => ({ ...parameter, declared: true })),
+      // Inputs (and a procedure's OUT parameters) apart from the columns a function returns (decision 64).
+      parameters: definition.parameters.map((parameter) => ({ ...parameter, declared: true })), returns: definition.returned_columns,
       writes: definition.analysis.writes ?? [], reads: definition.analysis.reads ?? [], calls: definition.analysis.calls ?? [], steps: definition.analysis.steps ?? [],
       calledBy, runBy: [] as string[], tablesAndColumns,
       originalAvailable: !definition.encrypted && definition.kind !== 'calculated_field',
@@ -587,6 +676,9 @@ async function exportSource(client: PoolClient, tenantId: string, connectionId: 
   const descriptions = (await client.query<{ table_name: string; text: string }>(
     `SELECT table_name,description AS text FROM graph.dictionary_descriptions WHERE tenant_id=$1 AND source_id=$2 AND column_name=''
      UNION ALL SELECT qualified_name,final_text FROM graph.description_reviews WHERE tenant_id=$1 AND source_id=$2 AND field_name='' AND status<>'draft'`, [tenantId, connectionId])).rows;
+  // Drafted descriptions are exported too, marked as drafted (decision 64).
+  const described = new Set(descriptions.map((row) => row.table_name));
+  const drafts = await draftDescriptions(client, tenantId, source, objects.filter((object) => !described.has(object.name)));
   const relationships = (await client.query<{ from_name: string; to_name: string; evidence_method: string; review_status: string }>(
     `SELECT DISTINCT ON (r.relationship_id) f.qualified_name AS from_name,t.qualified_name AS to_name,a.evidence_method,a.review_status FROM graph.relationships r
        JOIN graph.assets f ON f.tenant_id=r.tenant_id AND f.asset_id=r.from_asset_id AND f.active AND f.source_id=$2 JOIN graph.assets t ON t.tenant_id=r.tenant_id AND t.asset_id=r.to_asset_id AND t.active AND t.source_id=$2
@@ -604,7 +696,8 @@ async function exportSource(client: PoolClient, tenantId: string, connectionId: 
     // Out-of-scope objects appear only in the name-and-type list (non-negotiable 11).
     objects: objects.filter((object) => !excluded.has(object.name)).map((object) => {
       const definition = byDefinition.get(object.name);
-      return { name: object.name, kind: object.kind, custom: object.custom, origin: object.origin, group: groupFor(object).label, description: byDescription.get(object.name) ?? null,
+      const drafted = byDescription.has(object.name) ? undefined : drafts.get(object.name);
+      return { name: object.name, kind: object.kind, custom: object.custom, origin: object.origin, group: groupFor(object).label, description: byDescription.get(object.name) ?? drafted ?? null, ...(drafted ? { descriptionDrafted: true } : {}),
         columns: (byTable.get(object.name) ?? []).map((row) => {
           const withheld = (row.tags ?? []).length > 0;
           return { name: row.name, label: row.label, dataType: row.data_type, tags: row.tags ?? [], statsWithheld: withheld,
