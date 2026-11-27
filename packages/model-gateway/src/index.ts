@@ -6,10 +6,12 @@ import type { Pool } from 'pg';
 export type ModelAlias='cheap'|'default'|'planning';
 export type ModelPrice={inputPerMillionUsd:number;outputPerMillionUsd:number};
 export type GatewayConfig={baseUrl:string;apiKey:string;cheapModel:string;defaultModel:string;planningModel:string;dailyCostCapUsd:number;dailyUserCostCapUsd:number;fingerprintKey:string;prices:Record<string,ModelPrice>};
-export type GatewayRequest={tenantId:string;/** The person the call is made for; their own daily USD cap applies. */principalId?:string;alias:ModelAlias;question:string;metadata:ModelMetadataInput;identifierValues?:string[];maxOutputTokens?:number;purpose?:'answer'|'plan'|'verify';responseSchema?:Record<string,unknown>};
+export type GatewayRequest={tenantId:string;/** The person the call is made for; their own daily USD cap applies. */principalId?:string;alias:ModelAlias;question:string;metadata:ModelMetadataInput;identifierValues?:string[];maxOutputTokens?:number;purpose?:'answer'|'plan'|'verify'|'describe';responseSchema?:Record<string,unknown>};
 const SYSTEM_INSTRUCTIONS={
   answer:'Answer only from the disclosed metadata. Do not infer hidden row values. If metadata is insufficient, say so.',
   verify:'You check whether a typed, read-only query plan answers a question exactly: the same subject, measure, grouping, conditions, ranking and sources. You never see row values. Respond with a single JSON object.',
+  // Decision 66: plain-language Dictionary descriptions from structural metadata and scrubbed SQL only.
+  describe:'You write short, plain descriptions of database objects for people who are not engineers, from disclosed metadata only: names, column names, keys and SQL with literal values hidden. You never see row values or statistics. Say what each object is or does in one or two sentences, in sentence case, without jargon or a list of tables. Respond with a single JSON object.',
   plan:'You write typed, read-only query plans from disclosed metadata. You never see row values, and you do not need to: a category, label or date named in the question is used as a filter value on the matching column, and is bound as a query parameter. Return an empty plan only when no table or column in the metadata can express the request. Never return SQL. Respond with a single JSON object.',
 } as const;
 export type GatewayResponse={text:string;requestId:string;model:string;inputTokens:number;outputTokens:number;costUsd:number};

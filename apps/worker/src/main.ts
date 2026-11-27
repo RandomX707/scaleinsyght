@@ -15,7 +15,7 @@ import { OpenAIModelGateway } from '@scaleinsyght/model-gateway';
 import { authorise } from '@scaleinsyght/policy';
 import { checkStepAgent } from '@scaleinsyght/registry';
 import { answerLineageRequest } from '@scaleinsyght/graph';
-import { connectorForConnection, checkQueryScope, OutOfScopeError, queueDueNightly, runNextDiscovery } from '@scaleinsyght/profiler';
+import { connectorForConnection, checkQueryScope, draftModelDescriptions, OutOfScopeError, queueDueNightly, runNextDiscovery } from '@scaleinsyght/profiler';
 import { claimDueSchedule, markScheduleSlotSkipped, markScheduleSlotStarted, persistReportSnapshot, startScheduledReportRun } from '@scaleinsyght/reports';
 
 config({path:fileURLToPath(new URL('../../../.env',import.meta.url))});
@@ -103,12 +103,20 @@ async function processPlanning(claim: StepClaim): Promise<boolean> {
   });
   return true;
 }
+/** Decision 66: after a profile, the Dictionary's descriptions are drafted through the model gateway (cheap alias,
+ * tenant budget). Without a configured gateway, objects keep the code template. Counts only in the log. */
+async function describeAfterProfile(tenantId:string,connectionId:string):Promise<void>{
+ let gateway:OpenAIModelGateway;
+ try{gateway=new OpenAIModelGateway(pool);}catch{console.error(`Descriptions for connection ${connectionId}: model gateway not configured; template kept`);return;}
+ const result=await draftModelDescriptions(pool,{tenantId,connectionId,complete:(request)=>gateway.complete(request)});
+ console.error(`Descriptions for connection ${connectionId}: ${result.drafted} drafted, ${result.kept} kept as template, ${result.pending} pending of ${result.objects}, ${result.calls} calls${result.stopped?`, stopped: ${result.stopped}`:''}`);
+}
 /** Profiling runs in its own loop beside run steps (decision 57): a discovery or nightly profile of a large source can
  * take minutes, and must never hold up a question being answered. */
 async function profilingLoop():Promise<void>{
  while(!stopping){
   try{
-   if(await runNextDiscovery(pool,(tenantId,connectionId)=>connectorForConnection(pool,tenantId,connectionId,artifactStore??undefined)))continue;
+   if(await runNextDiscovery(pool,(tenantId,connectionId)=>connectorForConnection(pool,tenantId,connectionId,artifactStore??undefined),undefined,undefined,describeAfterProfile))continue;
    if(await dispatchDueNightly())continue;
   }catch(error){console.error('Profiling loop failed:',error instanceof Error&&/^[a-z_]+$/.test(error.message)?error.message:error);}
   await new Promise(resolve=>setTimeout(resolve,500));

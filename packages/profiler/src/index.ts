@@ -603,6 +603,7 @@ export async function retireConnection(
 }
 
 export { runIdAgent, formatPattern, ID_FINGERPRINT_LIMIT } from './id-agent.js';
+export { DESCRIPTION_LIMITS, descriptionBatches, descriptionSubjects, describeInput, describeRequest, draftModelDescriptions, inputHash, validDraft, type DescribeCall, type DescribeRequest, type DescriptionSubject } from './descriptions.js';
 export { isObjectError, sourceErrorCode } from './source-errors.js';
 export { COPY_SIMILARITY, detectCopies, normaliseRoutine, routineSimilarity } from './copies.js';
 export { queueProfileJob, type ProfileJobType } from './discovery-jobs.js';
@@ -618,7 +619,9 @@ export { getControls, saveControls, listControlChanges, decideControlChange } fr
  * the job by code: FAILED before anything was written, PARTIAL when the profile was stored but relationships, lineage
  * or findings could not be mapped. A job this worker no longer holds is left to its new owner.
  */
-export async function runNextDiscovery(pool: Pool, connectorFor: (tenantId: string, connectionId: string) => Promise<ReadOnlyConnector>, onlyTenant?: string, leaseMs?: number): Promise<boolean> {
+export async function runNextDiscovery(pool: Pool, connectorFor: (tenantId: string, connectionId: string) => Promise<ReadOnlyConnector>, onlyTenant?: string, leaseMs?: number,
+  /** Runs after a profile has been stored (decision 66: description drafting). It can never fail the profile. */
+  afterProfile?: (tenantId: string, connectionId: string) => Promise<void>): Promise<boolean> {
   const job = await claimDiscovery(pool, leaseMs, onlyTenant);
   if (!job) return false;
   let connector: ReadOnlyConnector | undefined;
@@ -628,6 +631,10 @@ export async function runNextDiscovery(pool: Pool, connectorFor: (tenantId: stri
   try {
     connector = await connectorFor(job.tenantId, job.connectionId);
     await runProfile(pool, { tenantId: job.tenantId, connectionId: job.connectionId, connector, jobType: job.jobType ?? 'discovery', job, beat });
+    if (afterProfile) {
+      try { await afterProfile(job.tenantId, job.connectionId); }
+      catch (error) { console.error(`After-profile step failed for connection ${job.connectionId}: ${error instanceof Error && /^[\w:-]{1,80}$/.test(error.message) ? error.message : 'after_profile_failed'}`); }
+    }
   } catch (error) {
     if (error instanceof StaleDiscoveryJobError) return true;
     const code = sourceErrorCode(error);
