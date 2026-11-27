@@ -8,6 +8,7 @@ import { createPostgresConnector, type ReadOnlyConnector } from '@scaleinsyght/c
 import { runProfile } from '@scaleinsyght/profiler';
 import { buildServer } from '@scaleinsyght/api/server';
 import { createTenant } from '../../scripts/tenant-create.js';
+import JSZip from 'jszip';
 
 // Decision 64 (overrides decision 62): Standard and Custom are decided by object type from the catalog, for every
 // source, automatically. Standard is base tables; Custom is views, materialized views, procedures, functions and
@@ -166,6 +167,13 @@ describe('decision 64 Standard and Custom by object type', () => {
     expect(html.statusCode).toBe(200);
     expect(html.body).toContain('linked by declared keys to');
     expect(html.body).toContain('"descriptionDrafted":true');
+    // Markdown and Word carry the same descriptions, drafted ones marked (tables and views; routines are not in them).
+    const markdown = await inject('GET', `/api/connections/${connectionId}/dictionary/export?format=markdown`);
+    expect(markdown.body).toContain(`## ${schema}.X_READMITS\n\n**Drafted:** Table X_READMITS with 1 column, linked by declared keys to ${schema}.encounters.`);
+    expect(markdown.body).toContain('| Encounter key |');
+    const word = await inject('GET', `/api/connections/${connectionId}/dictionary/export?format=docx`);
+    const document = await (await JSZip.loadAsync(word.rawPayload)).file('word/document.xml')!.async('string');
+    expect(document).toContain('Drafted: Table X_READMITS with 1 column');
   });
 
   it('c6_approve_all_approves_a_filter_a_tab_or_a_source_in_one_request', async () => {
@@ -180,6 +188,8 @@ describe('decision 64 Standard and Custom by object type', () => {
     expect(edited.statusCode, edited.body).toBe(200);
     expect((await inject('POST', `/api/connections/${connectionId}/dictionary/descriptions/approve-all`, { tab: 'custom' })).json()).toEqual({ approved: routines.length });
     expect((await detail(`${schema}.v_ward_census`)).description).toMatchObject({ text: 'Stays per ward.', origin: 'edited' });
+    // An edited description exports as it is, unmarked.
+    expect((await inject('GET', `/api/connections/${connectionId}/dictionary/export?format=markdown`)).body).toContain(`## ${schema}.v_ward_census\n\nStays per ward.\n`);
     expect((await inject('POST', `/api/connections/${connectionId}/dictionary/descriptions/approve-all`, {})).json()).toEqual({ approved: 2 });
     const after = await get(`/api/connections/${connectionId}/dictionary/summary`);
     expect(after.drafted).toBe(0); expect(after.coverage.tables).toEqual({ documented: 4, drafted: 0, total: 4 });

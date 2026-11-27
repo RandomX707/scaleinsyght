@@ -15,7 +15,7 @@ import { createTenant } from '../../scripts/tenant-create.js';
 config({ path: '.env' });
 if (!process.env.SQLSERVER_TESTBED_PASSWORD) throw new Error('SQLSERVER_TESTBED_PASSWORD is required; run pnpm testbed:sqlserver:up and pnpm testbed:dictionary. Never skipped.');
 const truth = JSON.parse(readFileSync('testbed/dictionary/truth.json', 'utf8')).sqlserver as {
-  tables: string[]; views: string[]; foreignKeys: string[][]; hardCodedLiterals: string[]; sqlSearch: { query: string; object: string };
+  tables: string[]; views: string[]; functions: Record<string, { parameters: string[]; returns: string[][]; reads: string[] }>; foreignKeys: string[][]; hardCodedLiterals: string[]; sqlSearch: { query: string; object: string };
   procedures: Record<string, { group: string; writes: Array<{ table: string; mode: string }>; reads: string[]; calls: string[]; parameters: string[]; encrypted: boolean; calledBy?: string[] }>;
 };
 const url = (key: string) => { const value = process.env[key]; if (!value) throw new Error(`${key} is required`); const parsed = new URL(value); parsed.pathname = `/${process.env.SI_TEST_DATABASE ?? 'si_test'}`; return parsed.toString(); };
@@ -63,6 +63,19 @@ describe('Dictionary on the SQL Server testbed', () => {
     }
   });
 
+  it('c7_table_valued_function_lists_returned_columns_apart_from_parameters', async () => {
+    // Decision 64: SQL Server keeps a table-valued function's columns in sys.columns, not sys.parameters.
+    for (const [name, expected] of Object.entries(truth.functions)) {
+      const detail = await get(`/api/connections/${connectionId}/dictionary/object?name=${encodeURIComponent(name)}`);
+      expect(detail).toMatchObject({ kind: 'function', origin: 'custom' });
+      expect(detail.definition.parameters.map((parameter: { name: string; mode: string }) => [parameter.name, parameter.mode]), name).toEqual(expected.parameters.map((parameter) => [parameter, 'in']));
+      expect(detail.definition.returns.map((column: { name: string; dataType: string }) => [column.name, column.dataType]), name).toEqual(expected.returns);
+      expect(detail.definition.reads, name).toEqual(expected.reads);
+    }
+    const custom = await get(`/api/connections/${connectionId}/dictionary/objects?tab=custom`);
+    expect(custom.groups.find((group: { label: string }) => group.label === 'Functions').items.map((item: { name: string }) => item.name)).toEqual(Object.keys(truth.functions));
+  });
+
   it('c7_dictionary_tables_show_keys_joins_and_who_builds_them', async () => {
     const encounters = await get(`/api/connections/${connectionId}/dictionary/object?name=dbo.encounters`);
     expect(encounters.keys.map((key: { column: string; references: string }) => [`dbo.encounters.${key.column}`, key.references]).sort()).toEqual([...truth.foreignKeys].sort());
@@ -78,7 +91,7 @@ describe('Dictionary on the SQL Server testbed', () => {
 
   it('c7_stored_definitions_hold_no_literal_values_and_show_original_is_live_only', async () => {
     const stored = await withTenant(migrate, tenantId, (db) => db.query<{ scrubbed_text: string | null; parameters: unknown; analysis: unknown }>('SELECT scrubbed_text,parameters,analysis FROM graph.definitions WHERE tenant_id=$1', [tenantId]));
-    expect(stored.rows.length).toBe(Object.keys(truth.procedures).length + truth.views.length);
+    expect(stored.rows.length).toBe(Object.keys(truth.procedures).length + Object.keys(truth.functions).length + truth.views.length);
     for (const literal of truth.hardCodedLiterals) expect(JSON.stringify(stored.rows)).not.toContain(literal);
     const loader = await get(`/api/connections/${connectionId}/dictionary/object?name=dbo.usp_X_LOAD_READMIT_FLAGS`);
     expect(loader.definition.text).toContain('<number>'); expect(loader.definition.literalsHidden).toBe(true);

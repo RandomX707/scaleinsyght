@@ -3,6 +3,8 @@ import { DRAFTED_KINDS, draftDescription, groupFor, originOf, sqlSnippets, type 
 import { renderDictionaryHtml, scriptJson } from '@scaleinsyght/api/dictionary-html';
 import { analyseDefinition } from '@scaleinsyght/profiler';
 import { splitRoutineArguments } from '@scaleinsyght/connectors';
+import { dictionaryDocx, dictionaryMarkdown } from '@scaleinsyght/reports';
+import JSZip from 'jszip';
 import { listTitles, objectTitle } from '../../apps/web/src/dictionary.js';
 
 describe('Standard and Custom by object type (decision 64)', () => {
@@ -33,6 +35,23 @@ describe('routine arguments (decision 64)', () => {
   });
   it('keeps a procedure\'s OUT arguments as output parameters', () => {
     expect(splitRoutineArguments('procedure', [arg('ward', 'in'), arg('n', 'out')])).toEqual({ parameters: [{ name: 'ward', dataType: 'integer', mode: 'in' }, { name: 'n', dataType: 'integer', mode: 'out' }], returns: [] });
+  });
+});
+
+describe('Markdown and Word exports carry table descriptions (decision 64)', () => {
+  const input = { sourceName: 'Ward source', generatedAt: '2026-11-27', tables: [
+    { name: 'dbo.encounters', description: { text: 'Table encounters with 5 columns.', drafted: true }, columns: [{ name: 'dbo.encounters.ward', label: null, dataType: 'text', tags: [], nullRate: 0, distinctCount: 4, description: 'Ward code' }] },
+    { name: 'dbo.wards', description: { text: 'One row per ward.', drafted: false }, columns: [] },
+    { name: 'dbo.beds', description: null, columns: [] }] };
+  it('marks drafted descriptions "Drafted", as the product and the HTML export do', async () => {
+    const markdown = dictionaryMarkdown(input);
+    expect(markdown).toContain('## dbo.encounters\n\n**Drafted:** Table encounters with 5 columns.\n');
+    expect(markdown).toContain('## dbo.wards\n\nOne row per ward.\n');
+    expect(markdown).toContain('| Ward code |');
+    const document = await (await JSZip.loadAsync(await dictionaryDocx(input))).file('word/document.xml')!.async('string');
+    expect(document).toContain('Drafted: Table encounters with 5 columns.');
+    expect(document).toContain('>One row per ward.<');
+    expect(document).not.toContain('Drafted: One row per ward.');
   });
 });
 

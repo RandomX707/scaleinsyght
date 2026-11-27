@@ -657,6 +657,22 @@ async function objectDetail(client: PoolClient, tenantId: string, connectionId: 
   };
 }
 
+/**
+ * Every object's description for the exports (HTML, Markdown and Word): imported or dbt text, or one a person approved
+ * or edited, or else the drafted one, marked drafted (decision 64). Null when the connection is not found.
+ */
+export async function sourceDescriptions(client: PoolClient, tenantId: string, connectionId: string): Promise<Map<string, { text: string; drafted: boolean }> | null> {
+  const source = await sourceFor(client, tenantId, connectionId); if (!source) return null;
+  const objects = await listObjects(client, tenantId, source);
+  const rows = (await client.query<{ table_name: string; text: string }>(
+    `SELECT table_name,description AS text FROM graph.dictionary_descriptions WHERE tenant_id=$1 AND source_id=$2 AND column_name=''
+     UNION ALL SELECT qualified_name,final_text FROM graph.description_reviews WHERE tenant_id=$1 AND source_id=$2 AND field_name='' AND status<>'draft'`, [tenantId, connectionId])).rows;
+  const described = new Map(rows.map((row) => [row.table_name, { text: row.text, drafted: false }]));
+  const drafts = await draftDescriptions(client, tenantId, source, objects.filter((object) => !described.has(object.name)));
+  for (const [name, text] of drafts) described.set(name, { text, drafted: true });
+  return described;
+}
+
 /** One source for the offline export: names, types, descriptions, columns with withheld statistics left out,
  * scrubbed definitions and relationships. Out-of-scope objects by name and type only (non-negotiable 11). */
 async function exportSource(client: PoolClient, tenantId: string, connectionId: string): Promise<HtmlSource | null> {
@@ -673,12 +689,8 @@ async function exportSource(client: PoolClient, tenantId: string, connectionId: 
      WHERE d.tenant_id=$1 AND d.source_id=$2 AND d.active AND d.qualified_name=ANY($4::text[]) ORDER BY d.qualified_name,f.qualified_name`, [tenantId, datasetSource, connectionId, names])).rows;
   const definitions = (await client.query<{ qualified_name: string; scrubbed_text: string | null; encrypted: boolean; analysis: { writes?: Array<{ table: string; mode: string }>; reads?: string[]; calls?: string[] } }>(
     `SELECT qualified_name,scrubbed_text,encrypted,analysis FROM graph.definitions WHERE tenant_id=$1 AND source_id=$2 AND active`, [tenantId, connectionId])).rows;
-  const descriptions = (await client.query<{ table_name: string; text: string }>(
-    `SELECT table_name,description AS text FROM graph.dictionary_descriptions WHERE tenant_id=$1 AND source_id=$2 AND column_name=''
-     UNION ALL SELECT qualified_name,final_text FROM graph.description_reviews WHERE tenant_id=$1 AND source_id=$2 AND field_name='' AND status<>'draft'`, [tenantId, connectionId])).rows;
   // Drafted descriptions are exported too, marked as drafted (decision 64).
-  const described = new Set(descriptions.map((row) => row.table_name));
-  const drafts = await draftDescriptions(client, tenantId, source, objects.filter((object) => !described.has(object.name)));
+  const byDescription = (await sourceDescriptions(client, tenantId, connectionId)) ?? new Map<string, { text: string; drafted: boolean }>();
   const relationships = (await client.query<{ from_name: string; to_name: string; evidence_method: string; review_status: string }>(
     `SELECT DISTINCT ON (r.relationship_id) f.qualified_name AS from_name,t.qualified_name AS to_name,a.evidence_method,a.review_status FROM graph.relationships r
        JOIN graph.assets f ON f.tenant_id=r.tenant_id AND f.asset_id=r.from_asset_id AND f.active AND f.source_id=$2 JOIN graph.assets t ON t.tenant_id=r.tenant_id AND t.asset_id=r.to_asset_id AND t.active AND t.source_id=$2
@@ -689,15 +701,14 @@ async function exportSource(client: PoolClient, tenantId: string, connectionId: 
   const byTable = new Map<string, typeof columnRows>();
   for (const row of columnRows) byTable.set(row.table_name, [...(byTable.get(row.table_name) ?? []), row]);
   const byDefinition = new Map(definitions.map((row) => [row.qualified_name, row]));
-  const byDescription = new Map(descriptions.map((row) => [row.table_name, row.text]));
   const excluded = new Set(outOfScope.map((row) => row.qualified_name));
   return {
     name: source.name, type: source.connector_type,
     // Out-of-scope objects appear only in the name-and-type list (non-negotiable 11).
     objects: objects.filter((object) => !excluded.has(object.name)).map((object) => {
       const definition = byDefinition.get(object.name);
-      const drafted = byDescription.has(object.name) ? undefined : drafts.get(object.name);
-      return { name: object.name, kind: object.kind, custom: object.custom, origin: object.origin, group: groupFor(object).label, description: byDescription.get(object.name) ?? drafted ?? null, ...(drafted ? { descriptionDrafted: true } : {}),
+      const described = byDescription.get(object.name);
+      return { name: object.name, kind: object.kind, custom: object.custom, origin: object.origin, group: groupFor(object).label, description: described?.text ?? null, ...(described?.drafted ? { descriptionDrafted: true } : {}),
         columns: (byTable.get(object.name) ?? []).map((row) => {
           const withheld = (row.tags ?? []).length > 0;
           return { name: row.name, label: row.label, dataType: row.data_type, tags: row.tags ?? [], statsWithheld: withheld,

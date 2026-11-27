@@ -5,7 +5,8 @@ import JSZip from 'jszip';
  * Statistics on tagged columns are already withheld by the profiler (contract 7); no row values exist here. */
 export type DictionaryExport = {
   sourceName: string; generatedAt: string;
-  tables: Array<{ name: string; columns: Array<{ name: string; label: string | null; dataType: string | null; tags: string[]; nullRate: number | null; distinctCount: number | null; description: string | null }> }>;
+  /** description: the table's own description; drafted ones are marked "Drafted", as in the product (decision 64). */
+  tables: Array<{ name: string; description?: { text: string; drafted: boolean } | null; columns: Array<{ name: string; label: string | null; dataType: string | null; tags: string[]; nullRate: number | null; distinctCount: number | null; description: string | null }> }>;
 };
 export type DictionaryFormat = 'markdown' | 'docx';
 
@@ -13,13 +14,15 @@ const percent = (value: number | null) => value === null ? 'not measured' : `${(
 const number = (value: number | null) => value === null ? 'not measured' : value.toLocaleString('en-US');
 const cell = (value: string) => value.replaceAll('|', '\\|').replace(/\s+/g, ' ');
 const column = (name: string) => name.slice(name.lastIndexOf('.') + 1);
+const tableDescription = (description: { text: string; drafted: boolean } | null | undefined) => description ? `${description.drafted ? 'Drafted: ' : ''}${description.text}` : null;
 
 export function dictionaryMarkdown(input: DictionaryExport): string {
   const columns = input.tables.reduce((total, table) => total + table.columns.length, 0);
   const documented = input.tables.reduce((total, table) => total + table.columns.filter((item) => item.description).length, 0);
   const lines = [`# Data dictionary: ${input.sourceName}`, '', `Generated ${input.generatedAt} by Scale Insyght. ${input.tables.length.toLocaleString('en-US')} tables, ${columns.toLocaleString('en-US')} columns, ${documented.toLocaleString('en-US')} documented.`, ''];
   for (const table of input.tables) {
-    lines.push(`## ${table.name}`, '', '| Column | Type | Sensitivity | Nulls | Distinct | Description |', '|---|---|---|---|---|---|');
+    const described = tableDescription(table.description);
+    lines.push(`## ${table.name}`, '', ...(described ? [described.replace(/^Drafted: /, '**Drafted:** '), ''] : []), '| Column | Type | Sensitivity | Nulls | Distinct | Description |', '|---|---|---|---|---|---|');
     for (const item of table.columns) {
       const withheld = item.tags.length ? 'withheld' : null;
       lines.push(`| ${cell(item.label && item.label !== column(item.name) ? `${column(item.name)} (${item.label})` : column(item.name))} | ${cell(item.dataType ?? 'unknown')} | ${item.tags.length ? item.tags.join(', ') : 'none'} | ${withheld ?? percent(item.nullRate)} | ${withheld ?? number(item.distinctCount)} | ${cell(item.description ?? '')} |`);
@@ -38,6 +41,7 @@ export async function dictionaryDocx(input: DictionaryExport): Promise<Buffer> {
   const body: string[] = [paragraph(`Data dictionary: ${input.sourceName}`, 'Title'), paragraph(`Generated ${input.generatedAt} by Scale Insyght.`)];
   for (const table of input.tables) {
     body.push(paragraph(table.name, 'Heading1'));
+    const described = tableDescription(table.description); if (described) body.push(paragraph(described));
     body.push(`<w:tbl><w:tblPr><w:tblStyle w:val="TableGrid"/><w:tblW w:w="0" w:type="auto"/><w:tblBorders><w:top w:val="single" w:sz="4"/><w:bottom w:val="single" w:sz="4"/><w:insideH w:val="single" w:sz="4"/></w:tblBorders></w:tblPr>${row(['Column', 'Type', 'Sensitivity', 'Nulls', 'Distinct', 'Description'], true)}${table.columns.map((item) => row([
       item.label && item.label !== column(item.name) ? `${column(item.name)} (${item.label})` : column(item.name), item.dataType ?? 'unknown', item.tags.length ? item.tags.join(', ') : 'none',
       item.tags.length ? 'withheld' : percent(item.nullRate), item.tags.length ? 'withheld' : number(item.distinctCount), item.description ?? ''])).join('')}</w:tbl>`);

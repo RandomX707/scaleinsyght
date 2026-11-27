@@ -15,7 +15,7 @@ const postgres = new URL(process.env.DATABASE_URL_TESTBED ?? '');
 if (!postgres.hostname || !process.env.SQLSERVER_TESTBED_PASSWORD) throw new Error('The PostgreSQL and SQL Server testbeds are required; run pnpm testbed:up (it includes pnpm testbed:dictionary).');
 type Procedure = { group: string; writes: Array<{ table: string; mode: string }>; reads: string[]; calls: string[]; parameters: string[]; encrypted: boolean };
 const truth = JSON.parse(readFileSync('testbed/dictionary/truth.json', 'utf8')) as {
-  sqlserver: { tables: string[]; views: string[]; procedures: Record<string, Procedure>; hardCodedLiterals: string[]; sqlSearch: { query: string; object: string } };
+  sqlserver: { tables: string[]; views: string[]; functions: Record<string, { parameters: string[]; returns: string[][]; reads: string[] }>; procedures: Record<string, Procedure>; hardCodedLiterals: string[]; sqlSearch: { query: string; object: string } };
   postgres: { tables: string[]; views: string[]; functions: Record<string, { reads: string[]; parameters: string[] }>; withheldColumns: Record<string, string[]> };
   dbt: { models: string[]; descriptions: Record<string, string>; tests: Record<string, string[][]> };
   tableau: { workbook: string; calculatedFields: Record<string, string>; hiddenLiterals: string[] };
@@ -113,7 +113,18 @@ test('s9_dictionary_matches_testbed_truth_for_every_connector_type_and_exports_o
   for (const [name, procedure] of Object.entries(truth.sqlserver.procedures)) await expect.poll(() => names(page, procedure.group), name).toContain(title(name));
   await expect(side(page).locator('.dict-group h3', { hasText: /^Custom tables/ })).toHaveCount(0);
   const routines = Object.values(truth.sqlserver.procedures); const encrypted = routines.filter((procedure) => procedure.encrypted).length;
-  await expect(side(page)).toContainText(`SQL captured for ${routines.length - encrypted} of ${routines.length} procedures and functions · ${encrypted} encrypted`);
+  const routineCount = routines.length + Object.keys(truth.sqlserver.functions).length;
+  await expect(side(page)).toContainText(`SQL captured for ${routineCount - encrypted} of ${routineCount} procedures and functions · ${encrypted} encrypted`);
+  // A table-valued function: its inputs under Parameters, its returned columns listed apart (decision 64).
+  const [tvf, tvfTruth] = Object.entries(truth.sqlserver.functions)[0]!;
+  await side(page).getByRole('button', { name: title(tvf), exact: true }).click();
+  await expect(header.locator('.dict-kv > div', { hasText: 'Returns' })).toContainText(`A table with ${tvfTruth.returns.length} columns`);
+  await page.getByRole('tab', { name: `Parameters ${tvfTruth.parameters.length}` }).click();
+  const parametersCard = page.locator('.dict-card', { hasText: 'Parameters' });
+  for (const parameter of tvfTruth.parameters) await expect(parametersCard.locator('tbody').first()).toContainText(parameter);
+  await expect(parametersCard).toContainText(`Returns a table with ${tvfTruth.returns.length} columns`);
+  for (const [column] of tvfTruth.returns) await expect(parametersCard.locator('table').nth(1)).toContainText(column!);
+  await page.screenshot({ path: screen('function-returns') });
   const loader = 'dbo.usp_X_LOAD_READMIT_FLAGS'; const expected = truth.sqlserver.procedures[loader]!;
   await side(page).getByRole('button', { name: short(loader), exact: true }).click();
   const what = page.locator('.dict-card', { hasText: 'What it does' });

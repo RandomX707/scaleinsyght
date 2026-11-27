@@ -29,7 +29,7 @@ Status: **approved 25 Nov 2026 with Option A** (section 4; decision 53). Require
 - Imported dictionary file name and date.
 - Table counts: standard, custom, total.
 - **Objects newer than the dictionary:** assets first seen after the import.
-- **Described versus harvested coverage**, for tables and for columns. Imported descriptions, dbt descriptions and drafts all count; drafts are shown and used as "Drafted", and the landing says how many are still drafted, with Approve all (decision 64).
+- **Described versus harvested coverage**, for tables and for columns. Imported descriptions, dbt descriptions and drafts all count; drafts are shown and used as "Drafted", and the landing says how many are still drafted, with Approve all (decision 64). The HTML, Markdown and Word exports carry the same descriptions, drafted ones marked "Drafted".
 - "How agents use it": fixed copy describing the planner's use of descriptions and glossary (descriptive metadata, scrubbed).
 
 ### 2.3 Left panel
