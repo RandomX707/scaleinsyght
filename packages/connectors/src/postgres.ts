@@ -5,7 +5,7 @@ import { DEFAULT_SAMPLING, SENSITIVITY_MIN_VALUES, SENSITIVITY_VALUES, type Samp
 import { createHash } from 'node:crypto';
 import { Pool } from 'pg';
 import { classifyColumn } from '@scaleinsyght/classification';
-import { POSSIBLE_REFERENCE_COVERAGE, UNMEASURED, type ColumnStatistics, type ConnectorScope, type DiscoveryResult, type Routine, type ObjectProfile, type ReadOnlyConnector , type ObjectOrigin } from './index.js';
+import { POSSIBLE_REFERENCE_COVERAGE, REFERENCE_CHECK_SAMPLE, isSkippableCheckError, withSkippedChecks, UNMEASURED, type ColumnStatistics, type ConnectorScope, type DiscoveryResult, type Routine, type ObjectProfile, type ReadOnlyConnector , type ObjectOrigin } from './index.js';
 
 export type Table = { schema_name: string; table_name: string; table_type: 'BASE TABLE' | 'VIEW'; readable?: boolean };
 type Column = { column_name: string; data_type: string; is_nullable: 'YES' | 'NO'; comment: string | null };
@@ -17,7 +17,7 @@ type RoleSafety = {
   sequence_write: boolean;
   inherited_roles: boolean;
 };
-export type PostgresStructuralReference = { from: string; to: string; fromColumn: string; toColumn: string; evidenceMethod?: 'declared'|'inferred'; confidence?:number; matchedCount?:number; sourceCount?:number };
+export type PostgresStructuralReference = { from: string; to: string; fromColumn: string; toColumn: string; evidenceMethod?: 'declared'|'inferred'; confidence?:number; matchedCount?:number; sampled?:boolean; sourceCount?:number };
 const quoteIdentifier=(value:string)=>`"${value.replaceAll('"','""')}"`;
 const POSTGRES_TEXT=new Set(['text','character varying','character']);
 const POSTGRES_MEASURABLE=new Set([...POSTGRES_TEXT,'smallint','integer','bigint','numeric','real','double precision','boolean','date','timestamp without time zone','timestamp with time zone','uuid']);
@@ -189,7 +189,7 @@ export class PostgresConnector implements ReadOnlyConnector {
     return new Map(result.rows.map(row=>[row.name,row.n===null?null:Number(row.n)]));
   }
 
-  async structuralReferences(scope?: ConnectorScope):Promise<PostgresStructuralReference[]>{
+  async structuralReferences(scope?: ConnectorScope):Promise<PostgresStructuralReference[]&{skippedChecks?:number}>{
     const result=await this.pool.query<PostgresStructuralReference>(`SELECT local_ns.nspname||'.'||local_table.relname AS "from",target_ns.nspname||'.'||target_table.relname AS "to",
       local_column.attname AS "fromColumn",target_column.attname AS "toColumn"
       FROM pg_constraint fk
@@ -241,17 +241,22 @@ export class PostgresConnector implements ReadOnlyConnector {
     found.sort((a,b)=>a.from.localeCompare(b.from)||a.to.localeCompare(b.to)||a.fromColumn.localeCompare(b.fromColumn));
     if(found.length>this.maxCatalogRows)throw new Error('postgres_connector_result_limit_exceeded');
     const inferredCandidates={rows:found};
-    const declared=new Set(references.map(item=>`${item.from}\0${item.fromColumn}\0${item.to}\0${item.toColumn}`));
+    const declared=new Set(references.map(item=>`${item.from}\0${item.fromColumn}\0${item.to}\0${item.toColumn}`));let skippedChecks=0;
     for(const candidate of inferredCandidates.rows){
       if(!permits(candidate.from,candidate.fromColumn)||!permits(candidate.to,candidate.toColumn))continue;
       if(declared.has(`${candidate.from}\0${candidate.fromColumn}\0${candidate.to}\0${candidate.toColumn}`))continue;
       const [fromSchema,fromTable]=candidate.from.split('.');const [toSchema,toTable]=candidate.to.split('.');if(!fromSchema||!fromTable||!toSchema||!toTable)continue;
-      const counts=await this.pool.query<{source_count:string;matched_count:string}>(`SELECT count(src.${quoteIdentifier(candidate.fromColumn)})::text AS source_count,count(dst.${quoteIdentifier(candidate.toColumn)})::text AS matched_count FROM ${quoteIdentifier(fromSchema)}.${quoteIdentifier(fromTable)} src LEFT JOIN ${quoteIdentifier(toSchema)}.${quoteIdentifier(toTable)} dst ON src.${quoteIdentifier(candidate.fromColumn)}=dst.${quoteIdentifier(candidate.toColumn)}`);
+      // Decision 63: the first REFERENCE_CHECK_SAMPLE non-null values, each looked up in the target's primary key.
+      const from=quoteIdentifier(candidate.fromColumn);const to=quoteIdentifier(candidate.toColumn);let counts;
+      try{counts=await this.pool.query<{source_count:string;matched_count:string}>(`SELECT count(*)::text AS source_count,
+          count(*) FILTER (WHERE EXISTS(SELECT 1 FROM ${quoteIdentifier(toSchema)}.${quoteIdentifier(toTable)} dst WHERE dst.${to}=src.v))::text AS matched_count
+        FROM (SELECT ${from} AS v FROM ${quoteIdentifier(fromSchema)}.${quoteIdentifier(fromTable)} WHERE ${from} IS NOT NULL LIMIT $1) src`,[REFERENCE_CHECK_SAMPLE]);}
+      catch(error){if(!isSkippableCheckError(error))throw error;skippedChecks++;continue;}
       const sourceCount=Number(counts.rows[0]?.source_count??0);const matchedCount=Number(counts.rows[0]?.matched_count??0);
-      if(sourceCount>0&&matchedCount/sourceCount>=POSSIBLE_REFERENCE_COVERAGE)references.push({...candidate,evidenceMethod:'inferred',confidence:matchedCount/sourceCount,matchedCount,sourceCount});
+      if(sourceCount>0&&matchedCount/sourceCount>=POSSIBLE_REFERENCE_COVERAGE)references.push({...candidate,evidenceMethod:'inferred',confidence:matchedCount/sourceCount,matchedCount,sourceCount,sampled:sourceCount>=REFERENCE_CHECK_SAMPLE});
       if(references.length>=this.maxCatalogRows)throw new Error('postgres_connector_result_limit_exceeded');
     }
-    return references;
+    return withSkippedChecks(references,skippedChecks);
   }
 
   /** Distinct values for the ID agent; with sample, only values the consistent rule keeps (decision 61), selected in SQL. */
