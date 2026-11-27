@@ -79,6 +79,9 @@ export function plannerSchema(catalog: PlannerCatalog, joins: PlannerJoin[], lin
   });
   const sensitivePaths = [...new Set(catalog.flatMap(source => source.assets.flatMap(asset =>
     asset.columns.filter(column => column.sensitivity_tags?.length).map(column => asset.qualified_name + '.' + column.name))))];
+  // Every catalog column, tagged ones included: the question's exposed columns are resolved against all of them, so
+  // code can refuse on the tag whatever else the response says (decoder, below).
+  const allPaths = [...new Set(catalog.flatMap(source => source.assets.flatMap(asset => asset.columns.map(column => asset.qualified_name + '.' + column.name))))];
   return object({
     privacy_refusal: sensitivePaths.length ? nullable(literal(sensitivePaths, 'Sensitive column the question asks to expose or group by. Set answerable false and leave intents empty. Otherwise null.')) : {type:'null'},
     lineage: lineageBranches.length ? nullable({anyOf:lineageBranches}) : {type:'null'},
@@ -89,12 +92,13 @@ export function plannerSchema(catalog: PlannerCatalog, joins: PlannerJoin[], lin
       comparison: {type:'boolean',description:'True when the question asks for values from two or more sources.'},
       every_group: {type:'boolean',description:'True when the question asks for a value for each member of the grouping (each department, every provider), so members with none should appear with 0.'},
       answerable: {type:'boolean',description:'False when the catalog has no table for the subject; then intents is empty.'},
+      exposed_columns: {type:'array',items:allPaths.length ? literal(allPaths) : {type:'null'},description:'Every catalog column whose values the answer would show: the column the answer is broken down by (the grouping) and any column the question asks to list per record. Fill it even when the question cannot be answered. Not columns used only in a condition. Empty for a single total.'},
     }),
     intents: branches.length ? {type:'array',items:{anyOf:branches}} : {type:'array',items:{type:'null'},maxItems:0},
   });
 }
 
-export type PlanDeclaration = {subject: string; grouping: string | null; conditions: string[]; comparison: boolean; answerable: boolean; every_group?: boolean};
+export type PlanDeclaration = {subject: string; grouping: string | null; conditions: string[]; comparison: boolean; answerable: boolean; every_group?: boolean; exposed_columns?: string[]};
 export type LineageRequest = {index: number; asset: string; direction: 'upstream' | 'downstream'};
 /** intent is what runs; planned is the model's plan before the display-label rule, which is what verification checks. */
 type DecodedStep = {index: number; intent: QueryIntent; planned?: QueryIntent; display?: DisplayLabel | null};
@@ -114,6 +118,19 @@ export function decodePlannerOutput(text: string, catalog: PlannerCatalog, joins
   if (!declaration || typeof declaration.answerable !== 'boolean' || typeof declaration.comparison !== 'boolean') throw new Error('missing_declaration');
   if (!Array.isArray(parsed.intents)) throw new Error('invalid_source_list');
   if (parsed.intents.length > catalog.length) throw new Error('invalid_source_list: return at most one step per source; when no single step kind computes the requested measure, declare the question unanswerable');
+  // Privacy is decided here, by the tags on the columns the question resolved to, before anything else in the response
+  // is considered: an "unanswerable" declaration, an empty plan or a missing privacy_refusal cannot override it.
+  const exposed = declaration.exposed_columns;
+  if (!Array.isArray(exposed) || exposed.some(ref => typeof ref !== 'string')) throw new Error('missing_exposed_columns');
+  const columns = catalog.flatMap(source => source.assets.flatMap(asset => asset.columns.map(column => ({path: asset.qualified_name + '.' + column.name, tags: column.sensitivity_tags ?? []}))));
+  for (const ref of exposed) {
+    const matched = columns.filter(column => column.path === ref);
+    if (!matched.length) throw new Error(`exposed_column_outside_catalog: ${ref}`);
+    const tags = [...new Set(matched.flatMap(column => column.tags))];
+    if (tags.length) throw new Error(`grouping_by_a_sensitive_column_is_not_allowed: ${ref} is tagged ${tags.join(', ')}`);
+  }
+  // A declared breakdown must name its column, so a question is never dropped as unsupported without being resolved.
+  if (declaration.grouping != null && !exposed.length) throw new Error('declared_grouping_without_exposed_column: name the catalog column the answer is broken down by in exposed_columns');
   if (parsed.privacy_refusal != null) {
     if (declaration.answerable || parsed.intents.length || parsed.lineage != null) throw new Error('privacy_refusal_with_plan');
     const [table, name] = field(parsed.privacy_refusal);

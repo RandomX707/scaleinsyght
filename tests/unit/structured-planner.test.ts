@@ -2,13 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { decodePlannerOutput, describePlan, normalizeCatalogMentions, plannerSchema, type PlannerFacts } from '../../apps/api/src/structured-planner.js';
 
 const catalog = [{name:'Operations workbook',assets: [{qualified_name:'Charges',columns:[{name:'charge_type',label:'Charge Type'},{name:'charged_on'},{name:'amount',label:'Amount'}]}]}];
-const declaration = {subject:'charges',grouping:null,conditions:[],comparison:false,answerable:true};
+const declaration = {subject:'charges',grouping:null,conditions:[],comparison:false,answerable:true,exposed_columns:[] as string[]};
 const declared = {subject_table:'Charges',measure:'count',measure_column:null,grouping_column:null,filter_columns:[] as string[]};
 const step = {
   source_index:0, declared, kind:'count',table:'Charges',join:null,groupBy:null,
   groupKey:null, entityColumn:null,operation:'count',aggregateColumn:null,order:null,limit:null,filters:[] as unknown[],
 };
-const wrap = (intent: Record<string, unknown>, top: Record<string, unknown> = declaration) => JSON.stringify({declaration:top,intents:[intent]});
+// The question's exposed columns default to the step's declared grouping column, as a model fills them.
+const exposedOf = (intent: Record<string, unknown>) => { const grouping = (intent.declared as {grouping_column?: string | null} | undefined)?.grouping_column; return grouping ? [grouping] : []; };
+const wrap = (intent: Record<string, unknown>, top: Record<string, unknown> = declaration) =>
+  JSON.stringify({declaration:{...top,exposed_columns:(top.exposed_columns as string[] | undefined)?.length ? top.exposed_columns : exposedOf(intent)},intents:[intent]});
 const grouped = {...step,kind:'group_by',groupBy:'Charges.charge_type',order:'asc',limit:2,declared:{...declared,grouping_column:'Charges.charge_type'}};
 const orders = [{name:'SQL Server hospital',assets: [{qualified_name:'dbo.orders',columns:[{name:'order_id'},{name:'department_id'}]},{qualified_name:'dbo.departments',columns:[{name:'department_id'},{name:'department_name'}]}]}];
 const orderJoins = [{source_index:0,from_name:'dbo.orders.department_id',to_name:'dbo.departments.department_id'}];
@@ -53,6 +56,22 @@ describe('structured planner with declared intent (decision 44)', () => {
     const perProvider = {...perPatient,groupBy:'dbo.encounters.provider_id',declared:{...perPatient.declared,grouping_column:'dbo.encounters.provider_id'}};
     expect(decodePlannerOutput(wrap(perProvider), encounters, []).steps[0]?.intent).toMatchObject({kind:'group_by',groupBy:'provider_id'});
   });
+  it('refuses on the tag of a resolved column even when the response declares the question unanswerable (S2, 27 Nov 2026)', () => {
+    // The live failure: privacy_refusal left empty, answerable false and no plan, so it ended as unsupported.
+    const encounters = [{name:'SQL Server hospital',assets:[{qualified_name:'dbo.encounters',columns:[{name:'patient_id',sensitivity_tags:['identifier']},{name:'provider_id',sensitivity_tags:[]}]}]}];
+    const unsupported = (exposed: string[], grouping: string | null = 'patient ID') => JSON.stringify({privacy_refusal:null,lineage:null,intents:[],
+      declaration:{subject:'encounters',grouping,conditions:[],comparison:false,answerable:false,exposed_columns:exposed}});
+    expect(() => decodePlannerOutput(unsupported(['dbo.encounters.patient_id']), encounters, [])).toThrow('grouping_by_a_sensitive_column_is_not_allowed: dbo.encounters.patient_id is tagged identifier');
+    // A declared breakdown must name its column: retried, never accepted as unsupported.
+    expect(() => decodePlannerOutput(unsupported([]), encounters, [])).toThrow('declared_grouping_without_exposed_column');
+    expect(() => decodePlannerOutput(unsupported(['dbo.encounters.not_a_column']), encounters, [])).toThrow('exposed_column_outside_catalog');
+    expect(() => decodePlannerOutput(JSON.stringify({intents:[],declaration:{subject:'encounters',grouping:null,conditions:[],comparison:false,answerable:false}}), encounters, [])).toThrow('missing_exposed_columns');
+    // Untagged resolved columns pass through to the usual handling.
+    expect(decodePlannerOutput(unsupported(['dbo.encounters.provider_id'], 'provider'), encounters, []).steps).toEqual([]);
+    // Every catalog column is offered, tagged ones included, so a tagged column can be named.
+    expect(JSON.stringify(plannerSchema(encounters, []))).toContain('"exposed_columns"');
+    expect((plannerSchema(encounters, []) as {properties:{declaration:{properties:{exposed_columns:{items:{enum:string[]}}}}}}).properties.declaration.properties.exposed_columns.items.enum).toEqual(['dbo.encounters.patient_id','dbo.encounters.provider_id']);
+  });
   it('rejects a plan that groups when the step declares a single value', () => {
     expect(() => decodePlannerOutput(wrap({...grouped,declared}), catalog, [])).toThrow('declared_single_value_but_plan_groups');
   });
@@ -78,7 +97,7 @@ describe('structured planner with declared intent (decision 44)', () => {
     expect(() => decodePlannerOutput(output,sources,joins)).toThrow('join_requires_a_join_intent');
   });
   it('rejects a column outside the selected table', () => {
-    expect(() => decodePlannerOutput(wrap({...grouped,groupBy:'Visits.charge_type',declared:{...declared,grouping_column:'Visits.charge_type'}}), catalog, [])).toThrow('column_does_not_belong_to_selected_table');
+    expect(() => decodePlannerOutput(wrap({...grouped,groupBy:'Visits.charge_type',declared:{...declared,grouping_column:'Visits.charge_type'}},{...declaration,exposed_columns:['Charges.charge_type']}), catalog, [])).toThrow('column_does_not_belong_to_selected_table');
   });
   it('preserves a closed-open date interval on one source', () => {
     const answer = decodePlannerOutput(wrap({...step,kind:'filtered_count',filters:[
