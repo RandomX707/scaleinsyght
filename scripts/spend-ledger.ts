@@ -22,6 +22,12 @@ export function runLabel(env: NodeJS.ProcessEnv = process.env): string {
     return branch === 'HEAD' ? commit : `${branch} ${commit}`;
   } catch { return 'unknown run'; }
 }
+/** The stamp written on a fresh test database, so the next reset knows which run the recorded spend belongs to. */
+export const stamp = (label: string, at: Date) => JSON.stringify({ spendLabel: label, startedAt: at.toISOString() });
+export function readStamp(comment: string | null | undefined): { label: string; startedAt: Date } | null {
+  try { const value = JSON.parse(comment ?? '') as { spendLabel?: unknown; startedAt?: unknown };
+    return typeof value.spendLabel === 'string' && typeof value.startedAt === 'string' ? { label: value.spendLabel, startedAt: new Date(value.startedAt) } : null; } catch { return null; }
+}
 /** Appends one line when the run made model calls; returns the line, or null when nothing was recorded. */
 export function recordSpend(input: { template: string | undefined; at: Date; label: string; costUsd: number; calls: number; database: string }): string | null {
   if (!input.template || input.calls === 0) return null;

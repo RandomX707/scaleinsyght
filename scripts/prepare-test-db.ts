@@ -1,7 +1,7 @@
 import { resolve } from 'node:path';
 import { config } from 'dotenv';
 import { Client } from 'pg';
-import { recordSpend, runLabel } from './spend-ledger.js';
+import { readStamp, recordSpend, runLabel, stamp } from './spend-ledger.js';
 
 config({ path: resolve(process.cwd(), '.env'), override: true });
 
@@ -41,12 +41,15 @@ try {
     throw new Error(`Refusing to reset ${testDatabase} because si_migrate does not own it`);
   }
   // Opt-in spend ledger: record this test database's model cost before it is dropped (SPEND_TALLY_FILE).
+  // The line is labelled with the run that used the database (its stamp), not the run that is starting.
   if (state.rowCount && process.env.SPEND_TALLY_FILE) {
+    const comment = (await admin.query<{ comment: string | null }>(`SELECT shobj_description(oid, 'pg_database') AS comment FROM pg_database WHERE datname = $1`, [testDatabase])).rows[0]?.comment;
+    const previous = readStamp(comment);
     const ledger = new Client({ ...(process.env.DATABASE_URL_ADMIN ? { connectionString: process.env.DATABASE_URL_ADMIN } : { host: process.env.PGHOST || '/tmp', port: Number(process.env.PGPORT || 5432), user: process.env.USER || process.env.LOGNAME }), database: testDatabase });
     try {
       await ledger.connect();
       const usage = (await ledger.query<{ calls: number; cost: string }>(`SELECT count(*)::int AS calls, coalesce(sum(cost_usd),0)::text AS cost FROM core.model_usage`)).rows[0]!;
-      const line = recordSpend({ template: process.env.SPEND_TALLY_FILE, at: new Date(), label: runLabel(), costUsd: Number(usage.cost), calls: usage.calls, database: testDatabase });
+      const line = recordSpend({ template: process.env.SPEND_TALLY_FILE, at: previous?.startedAt ?? new Date(), label: previous?.label ?? 'unlabelled run', costUsd: Number(usage.cost), calls: usage.calls, database: testDatabase });
       if (line) console.log(`Spend ledger: ${line.trim()}`);
     } catch (error) {
       // A database without core.model_usage (never migrated) has no spend to record.
@@ -58,6 +61,7 @@ try {
   await admin.query(`CREATE DATABASE ${testDatabase} OWNER si_migrate`);
   await admin.query(`REVOKE CONNECT ON DATABASE ${testDatabase} FROM PUBLIC`);
   await admin.query(`GRANT CONNECT ON DATABASE ${testDatabase} TO si_migrate, si_app, si_worker`);
+  if (process.env.SPEND_TALLY_FILE) await admin.query(`COMMENT ON DATABASE ${testDatabase} IS ${admin.escapeLiteral(stamp(runLabel(), new Date()))}`);
   console.log(`Reset only ${testDatabase}; development database scale_insyght was not touched.`);
 } finally {
   await admin.end();

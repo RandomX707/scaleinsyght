@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
-import { ledgerLine, recordSpend, runLabel, tallyPath } from '../../scripts/spend-ledger.js';
+import { ledgerLine, readStamp, recordSpend, runLabel, stamp, tallyPath } from '../../scripts/spend-ledger.js';
 
 const at = new Date(2026, 10, 27, 9, 5);
 
@@ -24,4 +24,9 @@ it('appends only when the run made model calls, and does nothing when the ledger
 
 it('labels a run by SPEND_LABEL when set', () => {
   expect(runLabel({ SPEND_LABEL: '#73' } as NodeJS.ProcessEnv)).toBe('#73');
+});
+
+it('a stamp written at creation names the run when its spend is recorded later', () => {
+  expect(readStamp(stamp('#73 4567dc4', at))).toEqual({ label: '#73 4567dc4', startedAt: at });
+  expect(readStamp(null)).toBeNull(); expect(readStamp('not json')).toBeNull(); expect(readStamp('{"other":1}')).toBeNull();
 });
