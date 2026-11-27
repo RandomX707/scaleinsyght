@@ -31,7 +31,7 @@ export function formatPattern(values: string[]): string {
  * overlap. Raw values are read, fingerprinted and dropped in this process; none is stored, logged or sent to a model. */
 export async function runIdAgent(pool: Pool, input: { tenantId: string; connectionId: string; connector: ReadOnlyConnector; masterKey?: Uint8Array; scope?:ConnectorScope;
   /** K13: called after each step (a field fingerprinted, then a field matched), so a long run shows progress. */
-  onTimeout?: (field: string) => void;
+  onTimeout?: (field: string) => Promise<void>;
   onProgress?: (done: number, planned: number) => Promise<void> }): Promise<{ fields: number; fingerprinted: number; skipped: number; matches: number } | undefined> {
   if (!input.masterKey || input.masterKey.byteLength < 32 || !input.connector.distinctValues) return undefined;
   const candidates = await withTenant(pool, input.tenantId, async (client) => {
@@ -81,7 +81,7 @@ export async function runIdAgent(pool: Pool, input: { tenantId: string; connecti
     catch (error) {
       const reason = sourceErrorCode(error);
       if (!isObjectError(reason)) throw error;
-      if (reason === 'source_query_timeout') input.onTimeout?.(candidate.name);
+      if (reason === 'source_query_timeout') await input.onTimeout?.(candidate.name);
       skipped++;
       await step();
       continue;

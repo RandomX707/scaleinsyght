@@ -143,12 +143,31 @@ export async function runProfile(
   const before = await readProfileState(pool, input.tenantId, input.connectionId);
   const job = input.job;
   const ownBeat = job && !input.beat ? heartbeat(pool, job) : null; const beat = input.beat ?? ownBeat;
+  // A completed run replaces the outstanding work. Incomplete and reclaimed jobs can add skips, but cannot clear
+  // earlier ones because some of their steps may never have run.
   const prior = await withTenant(pool, input.tenantId, async client => (await client.query<{ time_skips: TimeSkip[] }>(
     `SELECT time_skips FROM profiler.jobs
-      WHERE tenant_id=$1 AND connection_id=$2 AND job_id IS DISTINCT FROM $3 AND time_skips IS NOT NULL
-      ORDER BY created_at DESC LIMIT 1`, [input.tenantId, input.connectionId, job?.jobId ?? null],
-  )).rows[0]?.time_skips ?? []);
+      WHERE tenant_id=$1 AND connection_id=$2 AND time_skips IS NOT NULL
+        AND created_at >= coalesce((
+          SELECT max(created_at) FROM profiler.jobs
+          WHERE tenant_id=$1 AND connection_id=$2 AND state='COMPLETED' AND time_skips IS NOT NULL
+        ),'-infinity'::timestamptz)`, [input.tenantId, input.connectionId],
+  )).rows.flatMap(row => row.time_skips));
   const timeSkips: TimeSkip[] = [];
+  const recordSkips = async (skips: TimeSkip[]) => {
+    if (!skips.length) return;
+    timeSkips.push(...skips);
+    if (!job) return;
+    await withTenant(pool, input.tenantId, async client => {
+      await holdDiscovery(client, job);
+      await client.query(
+        `UPDATE profiler.jobs SET time_skips=(
+           SELECT jsonb_agg(DISTINCT item)
+           FROM jsonb_array_elements(coalesce(time_skips,'[]'::jsonb)||$3::jsonb) AS entries(item)
+         ) WHERE tenant_id=$1 AND job_id=$2`, [input.tenantId, job.jobId, JSON.stringify(skips)],
+      );
+    });
+  };
   const discovery: DiscoveryResult = await (async () => { try { return await input.connector.discover(scope ? { mode, scope } : { mode }); } catch (error) { beat?.stop(); throw error; } })();
   const retry = new Set(prior.flatMap(item => item.kind === 'table' || item.kind === 'statistics' ? [item.object] : []));
   const retried = discovery.unchangedObjects.filter(object => retry.has(object.qualifiedName));
@@ -167,12 +186,12 @@ export async function runProfile(
         if (discovery.timedOutObjects?.has(object.qualifiedName)) throw new Error('source_query_timeout');
         const profile = await input.connector.profile(object.assetKey, scope, mode);
         profiles.push({ object, profile });
-        if (profile.limited === 'timeout') timeSkips.push({ kind: 'statistics', object: object.qualifiedName, reason: 'source_query_timeout' });
+        if (profile.limited === 'timeout') await recordSkips([{ kind: 'statistics', object: object.qualifiedName, reason: 'source_query_timeout' }]);
       } catch (error) {
         const code = sourceErrorCode(error);
         if (!isObjectError(code)) throw error;
         failed.set(object.qualifiedName, code);
-        if (code === 'source_query_timeout') timeSkips.push({ kind: 'table', object: object.qualifiedName, reason: code });
+        if (code === 'source_query_timeout') await recordSkips([{ kind: 'table', object: object.qualifiedName, reason: code }]);
       }
       if (job && (beat?.lost())) throw new StaleDiscoveryJobError();
       const done = profiles.length + failed.size;
@@ -182,7 +201,12 @@ export async function runProfile(
   } finally { ownBeat?.stop(); }
   const jobId = job?.jobId ?? randomUUID();
   let createdVersions = 0;
-  let referenceChecksSkipped = 0;
+  const structuralReferences = await input.connector.structuralReferences?.(scope) ?? [];
+  const referenceChecksSkipped = ('skippedChecks' in structuralReferences ? structuralReferences.skippedChecks : 0) ?? 0;
+  if ('timedOutChecks' in structuralReferences) await recordSkips((structuralReferences.timedOutChecks ?? []).map(check => ({
+    ...check, kind: 'relationship', reason: 'source_query_timeout',
+  })));
+  if (referenceChecksSkipped) console.warn(`Profile of connection ${input.connectionId}: ${referenceChecksSkipped} relationship checks skipped`);
 
   await withTenant(pool, input.tenantId, async (client) => {
     if (job) await holdDiscovery(client, job);
@@ -266,15 +290,6 @@ export async function runProfile(
         [input.tenantId,input.connectionId,unchanged]);
       for (const field of fields.rows) fieldAssets.set(field.qualified_name, field.asset_id);
     }
-    const structuralReferences=input.connector.structuralReferences?await input.connector.structuralReferences(scope):[];
-    if ('timedOutChecks' in structuralReferences) {
-      for (const check of structuralReferences.timedOutChecks ?? []) {
-        timeSkips.push({ ...check, kind: 'relationship', reason: 'source_query_timeout' });
-      }
-    }
-    // Decision 63: a candidate whose check timed out is skipped and counted, never the whole profile.
-    referenceChecksSkipped=('skippedChecks' in structuralReferences?structuralReferences.skippedChecks:0)??0;
-    if(referenceChecksSkipped)console.warn(`Profile of connection ${input.connectionId}: ${referenceChecksSkipped} relationship checks skipped (source_query_timeout)`);
     for (const reference of structuralReferences) {
       const fromId = fieldAssets.get(`${reference.from}.${reference.fromColumn}`);
       const toId = fieldAssets.get(`${reference.to}.${reference.toColumn}`);
@@ -354,7 +369,7 @@ export async function runProfile(
     };
     await client.query(
       // A background job stays RUNNING while relationships, lineage and findings are mapped; it completes after them.
-      `UPDATE profiler.jobs SET state=$6,phase=CASE WHEN $6='RUNNING' THEN 'relationships' ELSE phase END,state_version=state_version+1,listed_count=$3,profiled_count=$4,inaccessible_count=$5,limited_count=$7,failed_count=$8,time_skips=$9::jsonb,updated_at=clock_timestamp()
+      `UPDATE profiler.jobs SET state=$6,phase=CASE WHEN $6='RUNNING' THEN 'relationships' ELSE phase END,state_version=state_version+1,listed_count=$3,profiled_count=$4,inaccessible_count=$5,limited_count=$7,failed_count=$8,time_skips=CASE WHEN $6='RUNNING' THEN time_skips ELSE $9::jsonb END,updated_at=clock_timestamp()
        WHERE tenant_id=$1 AND job_id=$2`,
       [input.tenantId, jobId, summary.listed, summary.profiled, summary.inaccessible, job ? 'RUNNING' : 'COMPLETED', summary.limited, summary.failed, JSON.stringify(timeSkips)],
     );
@@ -376,7 +391,7 @@ export async function runProfile(
     await queueNewObjectReview(pool,input.tenantId,input.connectionId,discovery.listOnlyObjects.map(object=>object.qualifiedName));
   }
   const ids = await runIdAgent(pool, { ...input,
-    onTimeout: object => timeSkips.push({ kind: 'identifier', object, reason: 'source_query_timeout' }), ...(scope?{scope}:{}), ...(masterKey ? { masterKey } : {}),
+    onTimeout: object => recordSkips([{ kind: 'identifier', object, reason: 'source_query_timeout' }]), ...(scope?{scope}:{}), ...(masterKey ? { masterKey } : {}),
     ...(job ? { onProgress: (done: number, planned: number) => reportDiscovery(pool, job, { idDone: done, idPlanned: planned }) } : {}) });
   const findings: number = await recordFindings(pool, { tenantId: input.tenantId, connectionId: input.connectionId, jobId, before, inventory:new Set([...discovery.objects,...discovery.unchangedObjects,...discovery.excludedObjects,...discovery.listOnlyObjects,...discovery.inaccessibleObjects].map(object=>object.qualifiedName)), checked: discovery.objects.length + discovery.unchangedObjects.length, scannedObjects: new Set(profiles.map(({ object }) => object.qualifiedName)) });
   if (input.jobType === 'nightly' && findings > 0) {

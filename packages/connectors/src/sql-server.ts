@@ -150,21 +150,25 @@ export class SqlServerConnector implements ReadOnlyConnector {
     // Decision 59: the size comes from sys.partitions (no scan); small tables are counted exactly.
     const table = object.object_type !== 'V';
     let estimate: number | null = null;
-    if (table) { try { const partitions = await (await this.request()).input('id', sql.NVarChar, `${quote(object.schema_name)}.${quote(object.object_name)}`).query<{ rows: number | null }>('SELECT SUM(p.rows) AS rows FROM sys.partitions p WHERE p.object_id=OBJECT_ID(@id) AND p.index_id IN (0,1)'); estimate = catalogEstimate(partitions.recordset[0]?.rows === null || partitions.recordset[0]?.rows === undefined ? null : Number(partitions.recordset[0].rows)); } catch { estimate = null; } }
+    let limited: 'timeout' | undefined;
+    if (table) { try { const partitions = await (await this.request()).input('id', sql.NVarChar, `${quote(object.schema_name)}.${quote(object.object_name)}`).query<{ rows: number | null }>('SELECT SUM(p.rows) AS rows FROM sys.partitions p WHERE p.object_id=OBJECT_ID(@id) AND p.index_id IN (0,1)'); estimate = catalogEstimate(partitions.recordset[0]?.rows === null || partitions.recordset[0]?.rows === undefined ? null : Number(partitions.recordset[0].rows)); } catch (error) { if (isSourceQueryTimeout(error)) limited = 'timeout'; } }
     let rowCount: number | null = null; let rowCountEstimated = false;
     if (estimate !== null && estimate > this.limits.exactCountLimit) { rowCount = estimate; rowCountEstimated = true; }
     else {
       try {
         const counted = await (await this.request()).query<{row_count:number}>(`SELECT COUNT_BIG(*) AS row_count FROM ${fullName}`);
         rowCount = counted.recordset[0]?.row_count == null ? null : Number(counted.recordset[0].row_count);
-      } catch { if (estimate !== null) { rowCount = estimate; rowCountEstimated = true; } /* Otherwise unavailable: excluded from change comparisons. */ }
+      } catch (error) {
+        if (isSourceQueryTimeout(error)) limited = 'timeout';
+        if (estimate !== null) { rowCount = estimate; rowCountEstimated = true; }
+      }
     }
     // TABLESAMPLE works on tables only; a view is read with a plain row limit.
     const sampled = (wanted: number) => { const percent = table ? samplePercent(rowCount, wanted) : null; return percent === null ? '' : ` TABLESAMPLE SYSTEM (${percent} PERCENT)`; };
     // Bounded text samples feed the sensitivity detector only; they are discarded here and never stored or sent to a model (decision 41).
     // One query samples every text column; a sparse column gets its own non-null sample. A query that still runs out of
     // time leaves the table without samples or statistics (bug 6), so an unsampled column never gets statistics (contract 7).
-    const samples = new Map<string, string[]>(); let limited: 'timeout' | undefined;
+    const samples = new Map<string, string[]>();
     const textColumns = rowCount === null ? [] : columns.filter((column) => !columnScope(scope, qualifiedName, column.column_name) && ['nvarchar', 'varchar', 'nchar', 'char'].includes(column.data_type));
     try {
       if (textColumns.length) {

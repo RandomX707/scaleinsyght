@@ -193,7 +193,12 @@ export class PostgresConnector implements ReadOnlyConnector {
       catch(error){if(!isTimeout(error))throw error;limited='timeout';}
       const total=Number(measured?.total??0);
       if(measured&&total>0){
-        const catalog=estimated?await this.catalogDistinct(table).catch(()=>new Map<string,number|null>()):new Map<string,number|null>();
+        const catalog = estimated
+          ? await this.catalogDistinct(table).catch(error => {
+              if (isSourceQueryTimeout(error)) limited = 'timeout';
+              return new Map<string, number | null>();
+            })
+          : new Map<string, number | null>();
         measurable.forEach((column,index)=>statistics.set(column.column_name,{nullRate:1-Number(measured![`n${index}`])/total,
           distinctCount:estimated?distinctFromCatalog(catalog.get(column.column_name),rowCount):Number(measured![`d${index}`]),
           averageLength:measured![`l${index}`]===null?null:Number(measured![`l${index}`]),...(estimated?{estimated:true}:{})}));

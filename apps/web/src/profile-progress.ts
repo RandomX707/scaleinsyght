@@ -40,20 +40,24 @@ export function profileProgress(job: ProfileJob) {
         ? `${step.label}: IDs ${Math.floor((100 * Math.min(1, Number(job.id_steps_done ?? 0) / Number(job.id_steps_planned))))}% done` : step.label;
     return { label, state };
   });
-  return { percent, running: running(job), complete: job.state === 'COMPLETED', failed, steps, message: failed ? failureCopy(job) : null, notes: job.state === 'COMPLETED' ? completionNotes(job) : [] };
+  return { percent, running: running(job), complete: job.state === 'COMPLETED', failed, steps, message: failed ? failureCopy(job) : null, notes: job.state === 'COMPLETED' ? completionNotes(job) : failed ? timeSkipNotes(job) : [] };
 }
 
 /** What a completed profile could not do fully, in plain words. */
 export function completionNotes(job: ProfileJob): string[] {
   const notes: string[] = [];
-  const skipped = Number(job.time_skipped_count ?? 0);
-  if (skipped) notes.push(`${n(skipped)} ${skipped === 1 ? 'item' : 'items'} skipped for time, retried on the next run`);
+  notes.push(...timeSkipNotes(job));
   const limited = Number(job.limited_count ?? 0); const unread = Math.max(0, Number(job.failed_count ?? 0) - Number(job.time_skipped_tables ?? 0));
   if (limited) notes.push(`${n(limited)} large ${limited === 1 ? 'table was' : 'tables were'} profiled without statistics or sensitivity samples, because the source took too long to scan ${limited === 1 ? 'it' : 'them'}. ${limited === 1 ? 'Its' : 'Their'} columns and row counts are recorded.`);
   const idsSkipped = Number(job.id_fields_skipped ?? 0);
   if (idsSkipped) notes.push(`${n(idsSkipped)} ID ${idsSkipped === 1 ? 'field was' : 'fields were'} too large to read in time and ${idsSkipped === 1 ? 'was' : 'were'} skipped; earlier ID matches for ${idsSkipped === 1 ? 'it are' : 'them are'} kept.`);
   if (unread) notes.push(`${n(unread)} ${unread === 1 ? 'object' : 'objects'} could not be read and ${unread === 1 ? 'was' : 'were'} skipped. Check the login’s permissions, then run the profile again.`);
   return notes;
+}
+
+function timeSkipNotes(job: ProfileJob): string[] {
+  const skipped = Number(job.time_skipped_count ?? 0);
+  return skipped ? [`${n(skipped)} ${skipped === 1 ? 'item' : 'items'} skipped for time, retried on the next run`] : [];
 }
 
 /** Plain-language reasons with what to do; a code never reaches the screen. */

@@ -77,15 +77,16 @@ export function withSkippedChecks<T>(references: T[], skippedChecks: number, tim
 }
 
 export function isSourceQueryTimeout(error: unknown): boolean {
-  const failure = error as { message?: string; code?: string } | null;
-  return failure?.message === 'source_query_timeout' || failure?.code === '57014' || failure?.code === 'ETIMEOUT';
+  const failure = error as { message?: string; code?: string; originalError?: { code?: string } } | null;
+  return failure?.message === 'source_query_timeout'
+    || ['SOURCE_QUERY_TIMEOUT', '57014', 'ETIMEOUT'].includes(failure?.code ?? failure?.originalError?.code ?? '');
 }
 
 /** A reference check that times out, or whose table can no longer be read, skips that candidate only (decision 63). */
 export function isSkippableCheckError(error: unknown): boolean {
-  const failure = error as { message?: string; code?: unknown; number?: unknown; originalError?: { code?: unknown; number?: unknown } } | null;
+  const failure = error as { code?: unknown; number?: unknown; originalError?: { code?: unknown; number?: unknown } } | null;
   const code = String(failure?.code ?? failure?.originalError?.code ?? ''); const number = Number(failure?.number ?? failure?.originalError?.number ?? 0);
-  return failure?.message === 'source_query_timeout' || ['SOURCE_QUERY_TIMEOUT', '57014', '42501', '42P01', 'ETIMEOUT'].includes(code) || [208, 229].includes(number);
+  return isSourceQueryTimeout(error) || ['42501', '42P01'].includes(code) || [208, 229].includes(number);
 }
 
 export interface ConnectorScope {
