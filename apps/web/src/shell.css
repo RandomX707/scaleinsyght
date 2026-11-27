@@ -444,3 +444,9 @@ h3 { font-size: 14px; line-height: 1.3; }
 .er-nulls { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; }
 .er-nullbar { display:inline-block; width:60px; height:6px; border-radius:3px; background:var(--line); overflow:hidden; }
 .er-nullbar i { display:block; height:100%; background:var(--warn); }
+/* The legacy .phase3-workspace button rule paints every button on this page dark teal; nodes and the profile panel use
+   the shared button look instead (prototype explorer). */
+.phase3-workspace .er-node .ui-button,.phase3-workspace .er-profile .ui-button { background:var(--surface); color:var(--ink); border:1px solid var(--line); }
+.phase3-workspace .er-node .ui-button--ghost { background:transparent; border-color:transparent; }
+.phase3-workspace .er-node .ui-button:hover:not(:disabled),.phase3-workspace .er-profile .ui-button:hover:not(:disabled) { border-color:var(--primary); color:var(--primary-ink); }
+.er-node h3 .er-node-title[aria-pressed="true"] { color:var(--primary-ink); }
