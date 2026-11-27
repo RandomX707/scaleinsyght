@@ -5,6 +5,7 @@
  */
 export type ProfileJob = {
   state: string; phase?: string | null; listed_count?: number | null; planned_count?: number | null; profiled_count?: number | null;
+  time_skipped_count?: number; time_skipped_tables?: number;
   failure_code?: string | null; limited_count?: number | null; failed_count?: number | null; id_steps_planned?: number | null; id_steps_done?: number | null; id_fields_skipped?: number | null;
 };
 export type StepState = 'done' | 'now' | 'todo' | 'failed';
@@ -44,7 +45,10 @@ export function profileProgress(job: ProfileJob) {
 
 /** What a completed profile could not do fully, in plain words. */
 export function completionNotes(job: ProfileJob): string[] {
-  const notes: string[] = []; const limited = Number(job.limited_count ?? 0); const unread = Number(job.failed_count ?? 0);
+  const notes: string[] = [];
+  const skipped = Number(job.time_skipped_count ?? 0);
+  if (skipped) notes.push(`${n(skipped)} ${skipped === 1 ? 'item' : 'items'} skipped for time, retried on the next run`);
+  const limited = Number(job.limited_count ?? 0); const unread = Math.max(0, Number(job.failed_count ?? 0) - Number(job.time_skipped_tables ?? 0));
   if (limited) notes.push(`${n(limited)} large ${limited === 1 ? 'table was' : 'tables were'} profiled without statistics or sensitivity samples, because the source took too long to scan ${limited === 1 ? 'it' : 'them'}. ${limited === 1 ? 'Its' : 'Their'} columns and row counts are recorded.`);
   const idsSkipped = Number(job.id_fields_skipped ?? 0);
   if (idsSkipped) notes.push(`${n(idsSkipped)} ID ${idsSkipped === 1 ? 'field was' : 'fields were'} too large to read in time and ${idsSkipped === 1 ? 'was' : 'were'} skipped; earlier ID matches for ${idsSkipped === 1 ? 'it are' : 'them are'} kept.`);

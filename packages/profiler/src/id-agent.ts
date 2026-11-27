@@ -31,6 +31,7 @@ export function formatPattern(values: string[]): string {
  * overlap. Raw values are read, fingerprinted and dropped in this process; none is stored, logged or sent to a model. */
 export async function runIdAgent(pool: Pool, input: { tenantId: string; connectionId: string; connector: ReadOnlyConnector; masterKey?: Uint8Array; scope?:ConnectorScope;
   /** K13: called after each step (a field fingerprinted, then a field matched), so a long run shows progress. */
+  onTimeout?: (field: string) => void;
   onProgress?: (done: number, planned: number) => Promise<void> }): Promise<{ fields: number; fingerprinted: number; skipped: number; matches: number } | undefined> {
   if (!input.masterKey || input.masterKey.byteLength < 32 || !input.connector.distinctValues) return undefined;
   const candidates = await withTenant(pool, input.tenantId, async (client) => {
@@ -77,7 +78,14 @@ export async function runIdAgent(pool: Pool, input: { tenantId: string; connecti
       if (values && values.length > ID_SAMPLE_MINIMUM_DISTINCT) { values = values.filter(inIdSample); sampled = true; }
       else if (!values) { values = await input.connector.distinctValues!(candidate.table, candidate.column, ID_FINGERPRINT_LIMIT, { sample: true }); sampled = Boolean(values); }
     }
-    catch (error) { if (!isObjectError(sourceErrorCode(error))) throw error; skipped++; await step(); continue; }
+    catch (error) {
+      const reason = sourceErrorCode(error);
+      if (!isObjectError(reason)) throw error;
+      if (reason === 'source_query_timeout') input.onTimeout?.(candidate.name);
+      skipped++;
+      await step();
+      continue;
+    }
     const format = values ? formatPattern(values) : 'too_many_values';
     const fingerprints = values ? values.map((value) => Buffer.from(fingerprintIdentifier(input.masterKey!, input.tenantId, value), 'hex')) : null;
     // Whether each value passes the sampling rule, so a whole column can be compared with a sampled one on the same values.

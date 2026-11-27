@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import { EncryptedArtifactStore, type StoredArtifact } from '@scaleinsyght/artifacts';
-import { objectScope, type ControlsPolicy, type ConnectorScope, type DiscoveryResult, type ObjectProfile, type ReadOnlyConnector, type ScopeMode } from '@scaleinsyght/connectors';
+import { objectScope, type ControlsPolicy, type ConnectorScope, type DiscoveryResult, type ObjectProfile, type ReadOnlyConnector, type ScopeMode, type SkippedReference } from '@scaleinsyght/connectors';
 import { withTenant } from '@scaleinsyght/db';
 import { queueNewObjectReview } from './controls.js';
 import { runIdAgent } from './id-agent.js';
@@ -124,6 +124,11 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
+type TimeSkip = (
+  { kind: 'table' | 'statistics' | 'identifier'; object: string }
+  | ({ kind: 'relationship' } & SkippedReference)
+) & { reason: 'source_query_timeout' };
+
 export async function runProfile(
   pool: Pool,
   input: { tenantId: string; connectionId: string; connector: ReadOnlyConnector; jobType: 'discovery' | 'profile' | 'nightly'; scheduled?: boolean;
@@ -138,7 +143,18 @@ export async function runProfile(
   const before = await readProfileState(pool, input.tenantId, input.connectionId);
   const job = input.job;
   const ownBeat = job && !input.beat ? heartbeat(pool, job) : null; const beat = input.beat ?? ownBeat;
+  const prior = await withTenant(pool, input.tenantId, async client => (await client.query<{ time_skips: TimeSkip[] }>(
+    `SELECT time_skips FROM profiler.jobs
+      WHERE tenant_id=$1 AND connection_id=$2 AND job_id IS DISTINCT FROM $3 AND time_skips IS NOT NULL
+      ORDER BY created_at DESC LIMIT 1`, [input.tenantId, input.connectionId, job?.jobId ?? null],
+  )).rows[0]?.time_skips ?? []);
+  const timeSkips: TimeSkip[] = [];
   const discovery: DiscoveryResult = await (async () => { try { return await input.connector.discover(scope ? { mode, scope } : { mode }); } catch (error) { beat?.stop(); throw error; } })();
+  const retry = new Set(prior.flatMap(item => item.kind === 'table' || item.kind === 'statistics' ? [item.object] : []));
+  const retried = discovery.unchangedObjects.filter(object => retry.has(object.qualifiedName));
+  discovery.objects.push(...retried);
+  discovery.unchangedObjects = discovery.unchangedObjects.filter(object => !retry.has(object.qualifiedName));
+  discovery.unchanged -= retried.length;
   const profiles: Array<{ object: DiscoveryResult['objects'][number]; profile: ObjectProfile }> = [];
   const failed = new Map<string, string>();
   try {
@@ -147,13 +163,22 @@ export async function runProfile(
     for (const object of discovery.objects) {
       // One slow or unreadable object does not fail the profile (bug 6): it is recorded and the others carry on. A
       // connection-level failure (login, SSL, unreachable) still stops the job with its reason.
-      try { profiles.push({ object, profile: await input.connector.profile(object.assetKey, scope, mode) }); }
-      catch (error) { const code = sourceErrorCode(error); if (!isObjectError(code)) throw error; failed.set(object.qualifiedName, code); }
+      try {
+        if (discovery.timedOutObjects?.has(object.qualifiedName)) throw new Error('source_query_timeout');
+        const profile = await input.connector.profile(object.assetKey, scope, mode);
+        profiles.push({ object, profile });
+        if (profile.limited === 'timeout') timeSkips.push({ kind: 'statistics', object: object.qualifiedName, reason: 'source_query_timeout' });
+      } catch (error) {
+        const code = sourceErrorCode(error);
+        if (!isObjectError(code)) throw error;
+        failed.set(object.qualifiedName, code);
+        if (code === 'source_query_timeout') timeSkips.push({ kind: 'table', object: object.qualifiedName, reason: code });
+      }
       if (job && (beat?.lost())) throw new StaleDiscoveryJobError();
       const done = profiles.length + failed.size;
       if (job && (Date.now() - reported >= 1000 || done === discovery.objects.length)) { await reportDiscovery(pool, job, { profiled: done }); reported = Date.now(); }
     }
-    if (discovery.objects.length && !profiles.length) throw new Error([...failed.values()][0] ?? 'discovery_failed');
+    if (discovery.objects.length && !profiles.length && !timeSkips.length) throw new Error([...failed.values()][0] ?? 'discovery_failed');
   } finally { ownBeat?.stop(); }
   const jobId = job?.jobId ?? randomUUID();
   let createdVersions = 0;
@@ -231,7 +256,22 @@ export async function runProfile(
       }
     }
 
+    const unchanged = discovery.unchangedObjects.map(object => object.qualifiedName);
+    if (unchanged.length) {
+      const fields = await client.query<{ qualified_name: string; asset_id: string }>(
+        `SELECT f.qualified_name,f.asset_id FROM graph.assets d
+         JOIN graph.relationships r ON r.tenant_id=d.tenant_id AND r.from_asset_id=d.asset_id AND r.relationship_type='CONTAINS'
+         JOIN graph.assets f ON f.tenant_id=r.tenant_id AND f.asset_id=r.to_asset_id AND f.active
+         WHERE d.tenant_id=$1 AND d.source_id=$2 AND d.active AND d.qualified_name=ANY($3::text[])`,
+        [input.tenantId,input.connectionId,unchanged]);
+      for (const field of fields.rows) fieldAssets.set(field.qualified_name, field.asset_id);
+    }
     const structuralReferences=input.connector.structuralReferences?await input.connector.structuralReferences(scope):[];
+    if ('timedOutChecks' in structuralReferences) {
+      for (const check of structuralReferences.timedOutChecks ?? []) {
+        timeSkips.push({ ...check, kind: 'relationship', reason: 'source_query_timeout' });
+      }
+    }
     // Decision 63: a candidate whose check timed out is skipped and counted, never the whole profile.
     referenceChecksSkipped=('skippedChecks' in structuralReferences?structuralReferences.skippedChecks:0)??0;
     if(referenceChecksSkipped)console.warn(`Profile of connection ${input.connectionId}: ${referenceChecksSkipped} relationship checks skipped (source_query_timeout)`);
@@ -314,9 +354,9 @@ export async function runProfile(
     };
     await client.query(
       // A background job stays RUNNING while relationships, lineage and findings are mapped; it completes after them.
-      `UPDATE profiler.jobs SET state=$6,phase=CASE WHEN $6='RUNNING' THEN 'relationships' ELSE phase END,state_version=state_version+1,listed_count=$3,profiled_count=$4,inaccessible_count=$5,limited_count=$7,failed_count=$8,updated_at=clock_timestamp()
+      `UPDATE profiler.jobs SET state=$6,phase=CASE WHEN $6='RUNNING' THEN 'relationships' ELSE phase END,state_version=state_version+1,listed_count=$3,profiled_count=$4,inaccessible_count=$5,limited_count=$7,failed_count=$8,time_skips=$9::jsonb,updated_at=clock_timestamp()
        WHERE tenant_id=$1 AND job_id=$2`,
-      [input.tenantId, jobId, summary.listed, summary.profiled, summary.inaccessible, job ? 'RUNNING' : 'COMPLETED', summary.limited, summary.failed],
+      [input.tenantId, jobId, summary.listed, summary.profiled, summary.inaccessible, job ? 'RUNNING' : 'COMPLETED', summary.limited, summary.failed, JSON.stringify(timeSkips)],
     );
     await client.query(
       `INSERT INTO profiler.events(tenant_id,job_id,sequence,event_type,safe_payload)
@@ -335,7 +375,8 @@ export async function runProfile(
   if(input.jobType==='nightly'&&scope?.policy?.newObjects==='approve'){
     await queueNewObjectReview(pool,input.tenantId,input.connectionId,discovery.listOnlyObjects.map(object=>object.qualifiedName));
   }
-  const ids = await runIdAgent(pool, { ...input, ...(scope?{scope}:{}), ...(masterKey ? { masterKey } : {}),
+  const ids = await runIdAgent(pool, { ...input,
+    onTimeout: object => timeSkips.push({ kind: 'identifier', object, reason: 'source_query_timeout' }), ...(scope?{scope}:{}), ...(masterKey ? { masterKey } : {}),
     ...(job ? { onProgress: (done: number, planned: number) => reportDiscovery(pool, job, { idDone: done, idPlanned: planned }) } : {}) });
   const findings: number = await recordFindings(pool, { tenantId: input.tenantId, connectionId: input.connectionId, jobId, before, inventory:new Set([...discovery.objects,...discovery.unchangedObjects,...discovery.excludedObjects,...discovery.listOnlyObjects,...discovery.inaccessibleObjects].map(object=>object.qualifiedName)), checked: discovery.objects.length + discovery.unchangedObjects.length, scannedObjects: new Set(profiles.map(({ object }) => object.qualifiedName)) });
   if (input.jobType === 'nightly' && findings > 0) {
@@ -346,7 +387,11 @@ export async function runProfile(
   await withTenant(pool, input.tenantId, (client) => client.query(
     `INSERT INTO profiler.nightly_schedules(tenant_id,connection_id,next_run_at) SELECT $1,$2,clock_timestamp()+interval '1 day'
      WHERE EXISTS(SELECT 1 FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2 AND status='active') ON CONFLICT DO NOTHING`, [input.tenantId, input.connectionId]));
-  if (job && ids?.skipped) await withTenant(pool, input.tenantId, (client) => client.query('UPDATE profiler.jobs SET id_fields_skipped=$4 WHERE tenant_id=$1 AND job_id=$2 AND claim_token=$3', [input.tenantId, job.jobId, job.token, ids.skipped]));
+  await withTenant(pool, input.tenantId, async client => {
+    if (job) await holdDiscovery(client, job);
+    await client.query('UPDATE profiler.jobs SET id_fields_skipped=$3,time_skips=$4::jsonb WHERE tenant_id=$1 AND job_id=$2',
+      [input.tenantId, jobId, ids?.skipped ?? 0, JSON.stringify(timeSkips)]);
+  });
   if (job && !(await finishDiscovery(pool, job, { state: 'COMPLETED' }))) throw new StaleDiscoveryJobError();
   return {
     ...(lineage ? { lineage } : {}),
