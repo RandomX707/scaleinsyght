@@ -427,3 +427,20 @@ h3 { font-size: 14px; line-height: 1.3; }
 .profile-failure { display: grid; gap: 8px; justify-items: start; }
 .profile-failure .error { margin: 0; }
 .profile-notes { margin: 4px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px; display: grid; gap: 4px; }
+/* ER grid (prototype V.explorer): fixed part heights, matching apps/web/src/er-layout.ts, so links meet column rows. */
+.er-node { display:flex; flex-direction:column; min-height:0 !important; }
+.er-node h3 { height:34px; box-sizing:border-box; display:flex; align-items:center; padding:0 6px !important; }
+.er-node h3 .er-node-title { min-height:0; height:28px; padding:0 6px; font:600 12px var(--mono); color:var(--ink); max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; justify-content:flex-start; }
+.er-node-tags { height:28px; display:flex; align-items:center; gap:6px; padding:0 12px; }
+.er-node ul { padding:4px 12px 0 !important; }
+.er-node li { height:22px; box-sizing:border-box; padding:0 !important; align-items:center; }
+.er-node .er-more { display:block; height:18px; padding:2px 12px 0; }
+.er-node-actions { margin-top:auto; display:flex; flex-direction:column; align-items:flex-start; padding:4px 4px 8px; }
+.er-node.is-selected { box-shadow:0 0 0 2px var(--primary); }
+.er-profile { margin-top:16px; padding:16px; border:1px solid var(--line); border-radius:12px; background:var(--surface); }
+.er-profile-head { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap; }
+.er-profile-head h2 { margin:0; font-size:16px; }
+.er-profile-actions { display:flex; gap:8px; }
+.er-nulls { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; }
+.er-nullbar { display:inline-block; width:60px; height:6px; border-radius:3px; background:var(--line); overflow:hidden; }
+.er-nullbar i { display:block; height:100%; background:var(--warn); }
