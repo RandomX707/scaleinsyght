@@ -87,4 +87,23 @@ describe('contract 7 OpenAI gateway disclosure and budget boundary',()=>{
     const row=await withTenant(migrate,tenantId,async(db)=>db.query<{input_tokens:number;output_tokens:number;cost_usd:string;outcome:string}>('SELECT input_tokens,output_tokens,cost_usd,outcome FROM core.model_usage WHERE tenant_id=$1',[tenantId]));
     expect(row.rows[0]).toEqual({input_tokens:0,output_tokens:0,cost_usd:'0.00000000',outcome:'failed'});
   });
+  it('c7_replayed_model_calls_cost_nothing_and_never_reach_the_provider',async()=>{
+    const {mkdtempSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
+    const tenantId=`model-replay-${crypto.randomUUID()}`;
+    await withTenant(migrate,tenantId,async(db)=>{await db.query('INSERT INTO core.tenants(tenant_id,name) VALUES($1,$1)',[tenantId]);});
+    const dir=mkdtempSync(join(tmpdir(),'replay-contract-'));
+    const env={OPENAI_API_KEY:'synthetic-test-key-never-real',MODEL_BASE_URL:'https://gateway.invalid/v1',MODEL_CHEAP:'test-cheap',MODEL_DEFAULT:'test-strong',MODEL_DAILY_COST_CAP_USD:'2',IDENTIFIER_FINGERPRINT_KEY:'f'.repeat(48),MODEL_PRICING_JSON:JSON.stringify({'test-cheap':{inputPerMillionUsd:1,outputPerMillionUsd:2},'test-strong':{inputPerMillionUsd:3,outputPerMillionUsd:4}}),MODEL_REPLAY_DIR:join(dir,'rec'),MODEL_REPLAY_MISSES_FILE:join(dir,'misses.log')};
+    const request={tenantId,alias:'cheap' as const,question:'How many departments are there?',metadata:{classification:'METADATA_STRUCTURAL' as const,structural:{qualified_name:'public.departments'},descriptive:{},statistical:{},sensitivityTags:[]}};
+    const {replayFetcher}=await import('@scaleinsyght/model-gateway');
+    // Record through a stand-in provider, then replay with a fetcher that fails if anything goes live.
+    const recorder=new OpenAIModelGateway(app,env,replayFetcher('record',async()=>new Response(JSON.stringify({choices:[{message:{content:'There are 12 departments.'}}],usage:{prompt_tokens:40,completion_tokens:6}}),{status:200}),env));
+    expect((await recorder.complete(request)).costUsd).toBeGreaterThan(0);
+    let live=0;
+    const replayer=new OpenAIModelGateway(app,env,replayFetcher('replay',async()=>{live++;return new Response('{}');},env));
+    const replayed=await replayer.complete(request);
+    expect(replayed).toMatchObject({text:'There are 12 departments.',costUsd:0,inputTokens:40,outputTokens:6});expect(live).toBe(0);
+    await expect(replayer.complete({...request,question:'How many providers are there?'})).rejects.toMatchObject({code:'model_replay_missing'});
+    const rows=await withTenant(migrate,tenantId,async(db)=>db.query<{cost_usd:string;outcome:string;safe_error_code:string|null}>('SELECT cost_usd::text,outcome,safe_error_code FROM core.model_usage WHERE tenant_id=$1 ORDER BY created_at',[tenantId]));
+    expect(rows.rows.map(row=>[Number(row.cost_usd)>0,row.outcome,row.safe_error_code])).toEqual([[true,'completed',null],[false,'completed',null],[false,'failed','model_replay_missing']]);
+  });
 });

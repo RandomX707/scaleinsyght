@@ -857,7 +857,10 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const sources=await withTenant(options.pool,current.tenantId,async(client)=>client.query<{source_id:string;agent_id:string;group_id:string;group_version:number;display_name:string;connector_type:string}>(
       `SELECT c.connection_id AS source_id,c.connector_agent_id AS agent_id,c.source_group_id AS group_id,c.source_group_version AS group_version,c.display_name,c.connector_type
        FROM registry.connections c WHERE c.tenant_id=$1 AND c.status='active' AND c.connection_id=ANY($2::uuid[]) AND EXISTS(
-        SELECT 1 FROM core.entitlements e WHERE e.tenant_id=c.tenant_id AND e.principal_id=$3 AND e.capability_id='analytic.read' AND e.allowed AND (e.resource_id IS NULL OR e.resource_id=c.connection_id::text))`,[current.tenantId,sourceIds,current.userId]));
+        SELECT 1 FROM core.entitlements e WHERE e.tenant_id=c.tenant_id AND e.principal_id=$3 AND e.capability_id='analytic.read' AND e.allowed AND (e.resource_id IS NULL OR e.resource_id=c.connection_id::text))
+       ORDER BY c.display_name,c.created_at,c.connection_id`,[current.tenantId,sourceIds,current.userId]));
+    // A fixed source order: the planner's prompt lists sources in this order, so an unordered query made the same question
+    // plan from differently ordered catalogs from run to run (found by model replay, decision 69).
     if(sources.rowCount!==new Set(sourceIds).size)return reply.code(403).send({error:'source_not_active_or_available'});
     // Idempotent submission: the first send claims its request id; a duplicate gets the same run and conversation.
     const requestId=request.body?.requestId;

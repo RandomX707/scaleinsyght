@@ -1,0 +1,25 @@
+{
+ "hash": "57fee5f0d69626cc05389e4c21130afc",
+ "recordedAt": "2026-11-27T19:25:43.841Z",
+ "model": "gpt-6.2-sol",
+ "purpose": "answer",
+ "request": {
+  "max_completion_tokens": 400,
+  "messages": [
+   {
+    "content": "Answer only from the disclosed metadata. Do not infer hidden row values. If metadata is insufficient, say so.",
+    "role": "system"
+   },
+   {
+    "content": "{\"question\":\"Write one concise answer to the exact user question using the disclosed aggregate statistics. Include a result value. Use each executed query and its disclosed filters to interpret its statistic. Group labels appear in the results table and chart below your sentence, so name no group labels. For grouped results, summarise them: give the highest and lowest values and the spread between them, using the disclosed highest, lowest and spread statistics. If difference_between_sources is disclosed you may state it. If tie statistics are disclosed, state each tie, for example '<string>', using the question'<string>'s source field. Do not invent facts. Question: How many orders are there of each order type in the PostgreSQL testbed?\",\"metadata\":{\"structural\":{\"sources\":[{\"source\":\"PostgreSQL testbed\",\"connector_type\":\"postgres\",\"executed_query\":\"SELECT \\\"order_type\\\"::text AS group_value,count(*)::text AS value,count(*) AS cell_size FROM \\\"public\\\".\\\"orders\\\" GROUP BY \\\"order_type\\\" ORDER BY \\\"order_type\\\" ASC LIMIT 100\",\"filters\":[]}]},\"statistical\":{\"source_1_aggregate_count\":4,\"source_1_aggregate_1\":257,\"source_1_aggregate_2\":548,\"source_1_aggregate_3\":467,\"source_1_aggregate_4\":228,\"source_1_group_count\":4,\"source_1_highest\":548,\"source_1_lowest\":228,\"source_1_spread\":320}},\"identifier_fingerprints\":[]}",
+    "role": "user"
+   }
+  ],
+  "model": "gpt-6.2-sol"
+ },
+ "response": {
+  "content": "In the PostgreSQL testbed, the four order types had 228, 257, 467, and 548 orders, with a spread of 320 between the lowest and highest counts.",
+  "promptTokens": 343,
+  "completionTokens": 42
+ }
+}

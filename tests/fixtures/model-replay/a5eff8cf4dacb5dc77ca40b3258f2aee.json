@@ -1,0 +1,49 @@
+{
+ "hash": "a5eff8cf4dacb5dc77ca40b3258f2aee",
+ "recordedAt": "2026-11-27T19:26:03.453Z",
+ "model": "gpt-6.2-sol",
+ "purpose": "verify",
+ "request": {
+  "max_completion_tokens": 800,
+  "messages": [
+   {
+    "content": "You check whether a typed, read-only query plan answers a question exactly: the same subject, measure, grouping, conditions, ranking and sources. You never see row values. Respond with a single JSON object.",
+    "role": "system"
+   },
+   {
+    "content": "{\"question\":\"Question: and how many of them were cancelled?\\nPrior turns: user: How many orders does each department have in the postgresql testbed?\\nassistant: Across the 12 departments in the postgresql testbed, order counts ranged from 25 to 388, a spread of 363 orders, with two departments tied at 41 orders each.\\nPlan: PostgreSQL testbed: the number of public.orders records, joined to public.departments, for each department_name, grouped by public.departments.department_id and shown by department_name, so records with the same department_name are never merged, including every public.departments record with none, counted as 0, where order_status eq \\\"cancelled\\\", all groups, sorted highest first\\nDoes this plan answer this question? A plan over a loosely related object, a single total where a breakdown is asked for, or a missing condition does not. Counting the rows of a table counts its distinct records.\",\"metadata\":{\"structural\":{\"sources\":[{\"index\":0,\"name\":\"PostgreSQL testbed\",\"type\":\"postgres\",\"assets\":[{\"columns\":[{\"name\":\"department_id\",\"label\":null,\"data_type\":\"integer\",\"sensitivity_tags\":[]},{\"name\":\"order_amount\",\"label\":null,\"data_type\":\"numeric\",\"sensitivity_tags\":[]},{\"name\":\"order_count\",\"label\":null,\"data_type\":\"integer\",\"sensitivity_tags\":[]}],\"qualified_name\":\"public.department_order_summary\"},{\"columns\":[{\"name\":\"department_code\",\"label\":null,\"data_type\":\"text\",\"sensitivity_tags\":[]},{\"name\":\"department_id\",\"label\":null,\"data_type\":\"integer\",\"sensitivity_tags\":[]},{\"name\":\"department_name\",\"label\":null,\"data_type\":\"text\",\"sensitivity_tags\":[]}],\"qualified_name\":\"public.departments\"},{\"columns\":[{\"name\":\"admitted_at\",\"label\":null,\"data_type\":\"timestamp with time zone\",\"sensitivity_tags\":[]},{\"name\":\"department_id\",\"label\":null,\"data_type\":\"integer\",\"sensitivity_tags\":[]},{\"name\":\"discharged_at\",\"label\":null,\"data_type\":\"timestamp with time zone\",\"sensitivity_tags\":[]},{\"name\":\"encounter_id\",\"label\":null,\"data_type\":\"integer\",\"sensitivity_tags\":[\"identifier\"]},{\"name\":\"patient_id\",\"label\":null,\"data_type\":\"integer\",\"sensitivity_tags\":[\"identifier\"]},{\"name\":\"provider_id\",\"label\":null,\"data_type\":\"integer\",\"sensitivity_tags\":[]}],\"qualified_name\":\"public.encounters\"},{\"columns\":[{\"name\":\"amount\",\"label\":null,\"data_type\":\"numeric\",\"sensitivity_tags\":[]},{\"name\":\"department_id\",\"label\":null,\"data_type\":\"integer\",\"sensitivity_tags\":[]},{\"name\":\"encounter_id\",\"label\":null,\"data_type\":\"integer\",\"sensitivity_tags\":[\"identifier\"]},{\"name\":\"order_id\",\"label\":null,\"data_type\":\"integer\",\"sensitivity_tags\":[]},{\"name\":\"order_status\",\"label\":null,\"data_type\":\"text\",\"sensitivity_tags\":[]},{\"name\":\"order_type\",\"label\":null,\"data_type\":\"text\",\"sensitivity_tags\":[]},{\"name\":\"ordered_at\",\"label\":null,\"data_type\":\"timestamp with time zone\",\"sensitivity_tags\":[]}],\"qualified_name\":\"public.orders\"},{\"columns\":[{\"name\":\"encounter_count\",\"label\":null,\"data_type\":\"integer\",\"sensitivity_tags\":[]},{\"name\":\"patient_id\",\"label\":null,\"data_type\":\"integer\",\"sensitivity_tags\":[]}],\"qualified_name\":\"public.patient_encounter_summary\"},{\"columns\":[{\"name\":\"created_at\",\"label\":null,\"data_type\":\"timestamp with time zone\",\"sensitivity_tags\":[]},{\"name\":\"date_of_birth\",\"label\":null,\"data_type\":\"date\",\"sensitivity_tags\":[\"regulated\"]},{\"name\":\"mrn\",\"label\":null,\"data_type\":\"text\",\"sensitivity_tags\":[\"identifier\"]},{\"name\":\"name\",\"label\":null,\"data_type\":\"text\",\"sensitivity_tags\":[\"personal\"]},{\"name\":\"patient_id\",\"label\":null,\"data_type\":\"integer\",\"sensitivity_tags\":[]},{\"name\":\"phone\",\"label\":null,\"data_type\":\"text\",\"sensitivity_tags\":[\"personal\"]}],\"qualified_name\":\"public.patients\"},{\"columns\":[{\"name\":\"department_id\",\"label\":null,\"data_type\":\"integer\",\"sensitivity_tags\":[]},{\"name\":\"provider_id\",\"label\":null,\"data_type\":\"integer\",\"sensitivity_tags\":[]},{\"name\":\"provider_name\",\"label\":null,\"data_type\":\"text\",\"sensitivity_tags\":[]},{\"name\":\"specialty\",\"label\":null,\"data_type\":\"text\",\"sensitivity_tags\":[]}],\"qualified_name\":\"public.providers\"}]}],\"relationships\":[{\"source_index\":0,\"from_name\":\"public.encounters.department_id\",\"to_name\":\"public.departments.department_id\",\"evidence_method\":\"inferred\",\"confidence_score\":\"1.000\"},{\"source_index\":0,\"from_name\":\"public.encounters.patient_id\",\"to_name\":\"public.patients.patient_id\",\"evidence_method\":\"inferred\",\"confidence_score\":\"1.000\"},{\"source_index\":0,\"from_name\":\"public.encounters.provider_id\",\"to_name\":\"public.providers.provider_id\",\"evidence_method\":\"inferred\",\"confidence_score\":\"1.000\"},{\"source_index\":0,\"from_name\":\"public.orders.department_id\",\"to_name\":\"public.departments.department_id\",\"evidence_method\":\"declared\",\"confidence_score\":\"1.000\"},{\"source_index\":0,\"from_name\":\"public.orders.encounter_id\",\"to_name\":\"public.encounters.encounter_id\",\"evidence_method\":\"declared\",\"confidence_score\":\"1.000\"},{\"source_index\":0,\"from_name\":\"public.providers.department_id\",\"to_name\":\"public.departments.department_id\",\"evidence_method\":\"inferred\",\"confidence_score\":\"1.000\"}]},\"descriptive\":{}},\"identifier_fingerprints\":[]}",
+    "role": "user"
+   }
+  ],
+  "model": "gpt-6.2-sol",
+  "response_format": {
+   "json_schema": {
+    "name": "plan_verification",
+    "schema": {
+     "additionalProperties": false,
+     "properties": {
+      "answers_question": {
+       "type": "boolean"
+      },
+      "reason": {
+       "description": "One short sentence.",
+       "type": "string"
+      }
+     },
+     "required": [
+      "answers_question",
+      "reason"
+     ],
+     "type": "object"
+    },
+    "strict": true
+   },
+   "type": "json_schema"
+  }
+ },
+ "response": {
+  "content": "{\n  \"answers_question\": true,\n  \"reason\": \"The plan counts cancelled orders for each department in the PostgreSQL testbed, including departments with zero cancellations.\"\n}",
+  "promptTokens": 1254,
+  "completionTokens": 43
+ }
+}
