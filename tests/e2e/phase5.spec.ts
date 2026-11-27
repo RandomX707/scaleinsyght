@@ -77,6 +77,7 @@ test('my_agent_matches_the_prototype_and_everything_it_remembers_can_be_deleted'
  await expect(page.getByText('No words yet.')).toBeVisible();await expect(page.getByText('No corrections yet.')).toBeVisible();
  await page.reload();
  await expect(page.getByText('No words yet.')).toBeVisible();await expect(page.getByText('No corrections yet.')).toBeVisible();await expect(page.getByText('None yet. Questions use the sources you pick each time.')).toBeVisible();
+});
 
 test('usage_shows_users_and_connectors_against_the_plan_allowance',async({page,browser})=>{
  // CLAUDE.md 10.2 and decision 71: active users and connectors by type, against the plan's allowance.
