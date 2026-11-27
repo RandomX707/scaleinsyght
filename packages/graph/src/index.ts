@@ -300,16 +300,34 @@ export async function getImpactRadius(pool:Pool,input:{tenantId:string;assetId:s
   return {path,reports:reports.rows};
 }
 
-export async function listReports(pool:Pool,tenantId:string):Promise<Array<{asset_id:string;name:string;tool:string|null;safe_path:string|null;lineage_assertions:number}>>{
-  return withTenant(pool,tenantId,async(client)=>{
-    const result=await client.query<{asset_id:string;name:string;tool:string|null;safe_path:string|null;lineage_assertions:number}>(
+/** A report's lineage status, from its whole upstream path (rule 7): a path with an open gap is never complete, and
+ *  an inferred link not yet accepted (unreviewed or disputed) is counted as probable. "Complete" says nothing about verification. */
+export type ReportLineage={status:'none'|'gap'|'probable'|'complete';gaps:number;probable:number};
+export function reportLineageStatus(path:Pick<LineagePath,'edges'|'gaps'|'assertions'>):ReportLineage{
+  const gaps=path.gaps.filter((gap)=>gap.closed_by_assertion_id===null).length;
+  const probable=path.assertions.filter((assertion)=>assertion.evidence_method==='inferred'&&(assertion.review_status==='unreviewed'||assertion.review_status==='disputed')).length;
+  return {status:path.edges.length===0?'none':gaps>0?'gap':probable>0?'probable':'complete',gaps,probable};
+}
+export async function listReports(pool:Pool,tenantId:string):Promise<Array<{asset_id:string;name:string;tool:string|null;safe_path:string|null;lineage_assertions:number;built_on:string[];lineage:ReportLineage}>>{
+  const rows=await withTenant(pool,tenantId,async(client)=>{
+    const result=await client.query<{asset_id:string;name:string;tool:string|null;safe_path:string|null;lineage_assertions:number;inputs:Array<{name:string;type:string}>|null}>(
       `SELECT a.asset_id,a.qualified_name AS name,e.safe_metadata->>'tool' AS tool,e.safe_metadata->>'safe_path' AS safe_path,
-       (SELECT count(*)::int FROM graph.relationships r WHERE r.tenant_id=a.tenant_id AND r.to_asset_id=a.asset_id AND r.family='data_flow') AS lineage_assertions
+       (SELECT count(*)::int FROM graph.relationships r WHERE r.tenant_id=a.tenant_id AND r.to_asset_id=a.asset_id AND r.family='data_flow') AS lineage_assertions,
+       (SELECT json_agg(json_build_object('name',f.qualified_name,'type',f.asset_type)) FROM graph.relationships r JOIN graph.assets f ON f.tenant_id=r.tenant_id AND f.asset_id=r.from_asset_id
+         WHERE r.tenant_id=a.tenant_id AND r.to_asset_id=a.asset_id AND r.family='data_flow') AS inputs
        FROM graph.assets a LEFT JOIN LATERAL (SELECT safe_metadata FROM graph.evidence WHERE tenant_id=a.tenant_id AND evidence_type='report_link'
         AND safe_metadata->>'asset_id'=a.asset_id::text ORDER BY captured_at DESC LIMIT 1) e ON true
        WHERE a.tenant_id=$1 AND a.asset_type='report' AND a.active ORDER BY a.qualified_name`,[tenantId]);
     return result.rows;
   });
+  const reports=[];
+  for(const row of rows){
+    // "Built on": the datasets the report reads directly; a field input names its dataset.
+    const built_on=[...new Set((row.inputs??[]).map((input)=>input.type==='field'?input.name.slice(0,input.name.lastIndexOf('.')):input.name))].sort();
+    const lineage=reportLineageStatus(await queryLineage(pool,{tenantId,assetId:row.asset_id,direction:'upstream',maxDepth:12}));
+    reports.push({asset_id:row.asset_id,name:row.name,tool:row.tool,safe_path:row.safe_path,lineage_assertions:row.lineage_assertions,built_on,lineage});
+  }
+  return reports;
 }
 
 export async function listGraphAssertions(pool:Pool,tenantId:string):Promise<Array<{assertion_id:string;from_name:string;to_name:string;evidence_method:string;review_status:string;verification:string;confidence_score:number|null;evidence_count:number}>>{
