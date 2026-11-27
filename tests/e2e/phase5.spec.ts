@@ -78,3 +78,21 @@ test('my_agent_matches_the_prototype_and_everything_it_remembers_can_be_deleted'
  await page.reload();
  await expect(page.getByText('No words yet.')).toBeVisible();await expect(page.getByText('No corrections yet.')).toBeVisible();await expect(page.getByText('None yet. Questions use the sources you pick each time.')).toBeVisible();
 });
+
+test('usage_shows_users_and_connectors_against_the_plan_allowance',async({page,browser})=>{
+ // CLAUDE.md 10.2 and decision 71: active users and connectors by type, against the plan's allowance.
+ const tenant=await createTenant(`phase5-e2e-usage-${crypto.randomUUID().slice(0,8)}`);
+ await withTenant(setup,tenant.tenantId,db=>db.query('UPDATE core.tenants SET user_allowance=20 WHERE tenant_id=$1',[tenant.tenantId]));
+ await signIn(page,tenant.ownerEmail);await page.goto('/usage');
+ const users=page.locator('.usage-summary article').filter({hasText:'Active users'});
+ await expect(users).toContainText('of 20');await expect(page.locator('.usage-summary article').filter({has:page.getByText('Connectors',{exact:true})})).toContainText('1 of 10');
+ await expect(page.getByText('Whether tool connectors are priced like data sources is still being decided; they are counted separately either way.')).toBeVisible();
+ await withTenant(setup,tenant.tenantId,db=>db.query('UPDATE core.tenants SET user_allowance=NULL WHERE tenant_id=$1',[tenant.tenantId]));
+ await page.reload();await expect(page.getByText('Active users · no user allowance in your plan')).toBeVisible();
+ await withTenant(setup,tenant.tenantId,db=>db.query('UPDATE core.tenants SET user_allowance=20 WHERE tenant_id=$1',[tenant.tenantId]));await page.reload();
+ const {mkdirSync}=await import('node:fs');const {resolve}=await import('node:path');const {pathToFileURL}=await import('node:url');
+ mkdirSync('docs/acceptance/phase5/prototype',{recursive:true});await page.setViewportSize({width:1440,height:900});await expect(users).toContainText('of 20');await page.screenshot({path:'docs/acceptance/phase5/usage.png'});
+ const prototype=await browser.newPage({viewport:{width:1440,height:900}});
+ try{await prototype.goto(pathToFileURL(resolve('docs/prototype/index.html')).href);await prototype.getByRole('button',{name:'Sign in',exact:true}).click();await prototype.evaluate('go("usage")');await expect(prototype.getByRole('heading',{name:'Usage'})).toBeVisible();await prototype.screenshot({path:'docs/acceptance/phase5/prototype/usage.png'});}
+ finally{await prototype.close();}
+});
