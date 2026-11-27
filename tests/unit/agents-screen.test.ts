@@ -10,9 +10,10 @@ it('shows each governed agent once, by its latest version, with the version that
   expect(rows.map((row) => [row.name, row.version, row.pending, row.approvedVersion])).toEqual([['Weekly pack', 2, true, 1], ['Nightly check', 1, false, 1]]);
 });
 
-it('orders collating groups and their members by connection order, whatever order the rows arrive in', () => {
+it('orders collating groups and their members by name, whatever order the rows and connections arrive in', () => {
   const connection = (connectionId: string, displayName: string, status = 'active') => ({ connectionId, displayName, connectorType: 'postgres', status });
-  const active = [connection('c-pg', 'PostgreSQL testbed'), connection('c-sql', 'SQL Server testbed'), connection('c-xl', 'Workbook')];
+  // Newest first, as GET /api/connections returns them.
+  const active = [connection('c-xl', 'Workbook'), connection('c-sql', 'SQL Server testbed'), connection('c-pg', 'PostgreSQL testbed')];
   const row = (groupId: string, connectionId: string) => ({ groupId, version: 1, connectionId, connectorType: 'postgres' });
   const groups = collatingGroups([row('g-b', 'c-sql'), row('g-b', 'c-pg'), row('g-a', 'c-xl'), row('g-c', 'c-gone')], active);
   expect(groups.map((group) => [group.groupId, group.members.map((member) => member.displayName)])).toEqual([

@@ -29,17 +29,16 @@ export function governedRows(rows: AgentData['governed']) {
 }
 
 /**
- * Collating groups with their active members, in a stable order: members in connection order (oldest first) and
- * groups by their first member, whatever order the API returns rows in. Groups with no active member are left out.
+ * Collating groups with their active members, in a stable order that does not depend on how either list is sorted:
+ * members by name, then groups by their first member's name. Groups with no active member are left out.
  */
 export function collatingGroups(rows: AgentData['groups'], active: Connection[]): Array<{ groupId: string; members: Connection[] }> {
-  const order = new Map(active.map((item, index) => [item.connectionId, index]));
   const byId = new Map(active.map((item) => [item.connectionId, item]));
+  const byName = (a: Connection, b: Connection) => name(a).localeCompare(name(b)) || a.connectionId.localeCompare(b.connectionId);
   return [...new Set(rows.map((row) => row.groupId))]
-    .map((groupId) => ({ groupId, members: rows.filter((row) => row.groupId === groupId && byId.has(row.connectionId))
-      .sort((a, b) => order.get(a.connectionId)! - order.get(b.connectionId)!).map((row) => byId.get(row.connectionId)!) }))
+    .map((groupId) => ({ groupId, members: rows.filter((row) => row.groupId === groupId && byId.has(row.connectionId)).map((row) => byId.get(row.connectionId)!).sort(byName) }))
     .filter((group) => group.members.length)
-    .sort((a, b) => order.get(a.members[0]!.connectionId)! - order.get(b.members[0]!.connectionId)!);
+    .sort((a, b) => byName(a.members[0]!, b.members[0]!));
 }
 
 export function AgentsScreen(props: { connections: Connection[]; request: Request }) {
