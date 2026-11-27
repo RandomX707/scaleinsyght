@@ -17,6 +17,10 @@ export type DefinitionAnalysis = {
   calls: string[];
   /** Schema-qualified names the SQL uses as a table or routine that the harvested catalog does not have. */
   unresolved?: string[];
+  /** Encrypted modules only: tables and views the database catalog records the module referring to. The catalog names
+   *  the objects, not whether they are read or written, so they are never shown as Reads or Writes. */
+  uses?: string[];
+  dependencySource?: 'catalog';
   steps: string[];
   kind: ProcedureKind;
 };
@@ -80,6 +84,17 @@ function resolver(catalog: DefinitionCatalog | undefined, defaultSchema: string,
     if (routine.length && !relation.length && new Set(routine.map((item) => bare(item).toLowerCase())).size === 1) return { kind: 'routine', name: one(routine) };
     return null;
   };
+}
+
+/** Splits names the database catalog records for a module into catalog tables and views, routines, and unresolved. */
+export function classifyCatalogReferences(references: string[], catalog: DefinitionCatalog, defaultSchema: string): { uses: string[]; calls: string[]; unresolved: string[] } {
+  const resolve = resolver(catalog, defaultSchema, new Set());
+  const uses = new Set<string>(); const calls = new Set<string>(); const unresolved = new Set<string>();
+  for (const reference of references) {
+    const found = resolve(reference);
+    if (found?.kind === 'relation') uses.add(found.name); else if (found?.kind === 'routine') calls.add(found.name); else if (found?.kind === 'unresolved') unresolved.add(found.name);
+  }
+  return { uses: [...uses].sort(), calls: [...calls].sort(), unresolved: [...unresolved].sort() };
 }
 
 export function analyseDefinition(input: { name: string; text: string | null; defaultSchema: string; catalog?: DefinitionCatalog }): DefinitionAnalysis {
@@ -171,6 +186,12 @@ export async function captureDefinitions(pool: Pool, input: { tenantId: string; 
   const rows: DefinitionRow[] = [];
   for (const view of (await connector.viewDefinitions?.()) ?? []) rows.push({ qualifiedName: view.qualifiedName, kind: 'view', text: view.definition, encrypted: false, parameters: [], returns: [] });
   for (const routine of (await connector.routines?.()) ?? []) rows.push({ qualifiedName: routine.qualifiedName, kind: routine.kind, text: routine.definition, encrypted: routine.encrypted, parameters: routine.parameters, returns: routine.returns ?? [] });
+  // What each module refers to, from the database catalog: the only dependency information an encrypted module has.
+  const dependencies = new Map<string, string[]>();
+  if (connector.routineDependencies) {
+    try { for (const entry of await connector.routineDependencies()) dependencies.set(entry.routine.toLowerCase(), entry.references); }
+    catch (error) { console.error(`Routine dependencies not read for connection ${input.connectionId}: ${error instanceof Error && /^[\w:-]{1,80}$/.test(error.message) ? error.message : 'dependencies_failed'}`); }
+  }
   return withTenant(pool, input.tenantId, async (client) => {
     const profiled = new Set((await client.query<{ qualified_name: string }>(`SELECT qualified_name FROM graph.assets WHERE tenant_id=$1 AND source_id=$2 AND asset_type='dataset' AND active`, [input.tenantId, input.connectionId])).rows.map((row) => row.qualified_name));
     const outOfScope = new Set((await client.query<{ qualified_name: string }>(`SELECT qualified_name FROM registry.connection_scopes WHERE tenant_id=$1 AND connection_id=$2 AND scope_mode IN ('list_only','exclude')`, [input.tenantId, input.connectionId])).rows.map((row) => row.qualified_name));
@@ -185,7 +206,12 @@ export async function captureDefinitions(pool: Pool, input: { tenantId: string; 
       const bare = row.qualifiedName.replace(/\(.*\)$/, '');
       if (row.kind === 'view' ? !profiled.has(row.qualifiedName) : outOfScope.has(row.qualifiedName) || outOfScope.has(bare)) continue;
       const scrubbed = row.encrypted || row.text === null ? null : scrubDefinition(row.text);
-      const analysis = analyseDefinition({ name: bare, text: scrubbed, defaultSchema, catalog });
+      let analysis = analyseDefinition({ name: bare, text: scrubbed, defaultSchema, catalog });
+      const recorded = row.encrypted ? dependencies.get(bare.toLowerCase()) : undefined;
+      if (recorded) {
+        const references = classifyCatalogReferences(recorded, catalog, defaultSchema);
+        analysis = { ...analysis, uses: references.uses, calls: references.calls, ...(references.unresolved.length ? { unresolved: references.unresolved } : {}), dependencySource: 'catalog' };
+      }
       const hash = createHash('sha256').update(JSON.stringify([row.kind, scrubbed, row.encrypted, row.parameters, row.returns, analysis])).digest();
       seen.add(row.qualifiedName); if (row.encrypted) encrypted++;
       const previous = current.get(row.qualifiedName);

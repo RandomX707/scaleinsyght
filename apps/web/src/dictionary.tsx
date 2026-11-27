@@ -46,7 +46,7 @@ type Detail = {
   tests: Array<{ column: string | null; test: string }>;
   usedBy: Array<{ name: string; kind: string; how: string; source: string }>;
   definition: null | { kind: string; encrypted: boolean; text: string | null; literalsHidden: boolean; version: number; capturedAt: string; parameters: Array<{ name: string; dataType: string; mode: string; declared: boolean }>; returns?: Array<{ name: string; dataType: string }>;
-    writes: Array<{ table: string; mode: string }>; reads: string[]; calls: string[]; unresolved?: string[]; steps: string[]; calledBy: string[]; runBy: string[];
+    writes: Array<{ table: string; mode: string }>; reads: string[]; calls: string[]; unresolved?: string[]; uses?: string[]; usesFromCatalog?: boolean; steps: string[]; calledBy: string[]; runBy: string[];
     tablesAndColumns: Array<{ table: string; access: string; columns: Array<{ name: string; used: boolean; dropped: boolean }> }>; originalAvailable: boolean };
 };
 
@@ -390,7 +390,13 @@ function ObjectView(props: { detail: Detail; base: string; isOpen: (id: string) 
     {defTabs.length > 0 && <Tabs label="Definition" items={defTabs} selected={defTab} onSelect={setDefTab} />}
     {definition && defTabs.length > 0 && defTab === 'overview' && <>
       <Section id="def-what" title="What it does" open={props.isOpen('def-what')} onToggle={props.toggle}>
-        {definition.encrypted ? <p>The source encrypts this definition, so what it reads and writes is unknown.</p> : <Kv rows={[
+        {definition.encrypted ? <>
+          <p>The source encrypts this definition, so its SQL cannot be read or parsed.</p>
+          {definition.usesFromCatalog && (definition.uses?.length || definition.calls.length) ? <><Kv rows={[
+            ['Uses', definition.uses?.length ? <span className="dict-names">{definition.uses.map((use) => <Button variant="ghost" size="small" key={use} className="dict-name mono" onClick={() => props.onOpen(use)}>{shortName(use)}</Button>)}</span> : 'No tables or views'],
+            ['Runs', definition.calls.length ? <span className="dict-names">{definition.calls.map((call) => <Button variant="ghost" size="small" key={call} className="dict-name mono" onClick={() => props.onOpen(call)}>{objectTitle(call)}</Button>)}</span> : 'Nothing'],
+          ]} /><p className="dict-note"><Badge tone="muted">From the database catalog</Badge> The catalog records which objects this module refers to, not whether it reads or writes them.</p></> : <p className="dict-note">The database catalog records nothing it refers to.</p>}
+        </> : <Kv rows={[
           ['Writes', definition.writes.length ? <span className="dict-names">{definition.writes.map((write) => <Button variant="ghost" size="small" key={write.table} className="dict-name mono" onClick={() => props.onOpen(write.table)}>{shortName(write.table)}</Button>)}</span> : 'Nothing; it returns a result'],
           ...(definition.writes.length ? [['How', <span key="h">{[...new Set(definition.writes.map((write) => HOW[write.mode] ?? write.mode))].join(', ')} <Badge tone="muted">Parsed from SQL</Badge></span>]] as Array<[string, ReactNode]> : []),
           ['Reads', definition.reads.length ? <span className="dict-names">{definition.reads.map((read) => <Button variant="ghost" size="small" key={read} className="dict-name mono" onClick={() => props.onOpen(read)}>{shortName(read)}</Button>)}</span> : 'No tables'],

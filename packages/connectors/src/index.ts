@@ -118,6 +118,9 @@ export interface ReadOnlyConnector {
   routines?():Promise<Routine[]>;
   /** Primary keys and indexes of the source's tables, from the catalog only (Dictionary "Keys and indexes"). */
   keysAndIndexes?():Promise<TableKeys[]>;
+  /** What each procedure or function refers to, as the database catalog records it. Readable even when the module is
+   *  encrypted; it names the objects, not whether they are read or written. */
+  routineDependencies?():Promise<Array<{routine:string;references:string[]}>>;
   /** Who owns each table, view, procedure and function, and the order they were created: used to tell which of two
    *  near-identical routines is the copy, shown as an informational badge (decision 64). */
   objectOrigins?():Promise<ObjectOrigin[]>;
