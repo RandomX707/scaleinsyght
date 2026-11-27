@@ -9,13 +9,13 @@ import { claimNextStep, completeStep, failStep, type StepClaim } from '@scaleins
 import { planLiveQuestion, type PlanningSource } from '@scaleinsyght/api/live-planner';
 import { createAnalyticPlan, startAnalyticRun, MINIMUM_ANALYTIC_CELL_SIZE, finalizeAnalyticRun, roundForModel, summarizeGroups } from '@scaleinsyght/analytic';
 import type { AnalyticPlan } from '@scaleinsyght/contracts';
-import { createExcelConnector, createPostgresConnector, createSqlServerConnector, decryptConnectionSecret, type ReadOnlyConnector } from '@scaleinsyght/connectors';
+import { connectionConnectTimeout, connectionQueryTimeout, createExcelConnector, createPostgresConnector, createSqlServerConnector, decryptConnectionSecret, type ReadOnlyConnector } from '@scaleinsyght/connectors';
 import { EncryptedArtifactStore, artifactVolumePath } from '@scaleinsyght/artifacts';
 import { OpenAIModelGateway } from '@scaleinsyght/model-gateway';
 import { authorise } from '@scaleinsyght/policy';
 import { checkStepAgent } from '@scaleinsyght/registry';
 import { answerLineageRequest } from '@scaleinsyght/graph';
-import { connectorForConnection, checkQueryScope, OutOfScopeError, queueDueNightly, runNextDiscovery } from '@scaleinsyght/profiler';
+import { connectorForConnection, checkQueryScope, draftModelDescriptions, OutOfScopeError, queueDueNightly, runNextDiscovery, sourceErrorCode } from '@scaleinsyght/profiler';
 import { claimDueSchedule, markScheduleSlotSkipped, markScheduleSlotStarted, persistReportSnapshot, startScheduledReportRun } from '@scaleinsyght/reports';
 
 config({path:fileURLToPath(new URL('../../../.env',import.meta.url))});
@@ -103,12 +103,20 @@ async function processPlanning(claim: StepClaim): Promise<boolean> {
   });
   return true;
 }
+/** Decision 66: after a profile, the Dictionary's descriptions are drafted through the model gateway (cheap alias,
+ * tenant budget). Without a configured gateway, objects keep the code template. Counts only in the log. */
+async function describeAfterProfile(tenantId:string,connectionId:string):Promise<void>{
+ let gateway:OpenAIModelGateway;
+ try{gateway=new OpenAIModelGateway(pool);}catch{console.error(`Descriptions for connection ${connectionId}: model gateway not configured; template kept`);return;}
+ const result=await draftModelDescriptions(pool,{tenantId,connectionId,complete:(request)=>gateway.complete(request)});
+ console.error(`Descriptions for connection ${connectionId}: ${result.drafted} drafted, ${result.kept} kept as template, ${result.pending} pending of ${result.objects}, ${result.calls} calls${result.stopped?`, stopped: ${result.stopped}`:''}`);
+}
 /** Profiling runs in its own loop beside run steps (decision 57): a discovery or nightly profile of a large source can
  * take minutes, and must never hold up a question being answered. */
 async function profilingLoop():Promise<void>{
  while(!stopping){
   try{
-   if(await runNextDiscovery(pool,(tenantId,connectionId)=>connectorForConnection(pool,tenantId,connectionId,artifactStore??undefined)))continue;
+   if(await runNextDiscovery(pool,(tenantId,connectionId)=>connectorForConnection(pool,tenantId,connectionId,artifactStore??undefined),undefined,undefined,describeAfterProfile))continue;
    if(await dispatchDueNightly())continue;
   }catch(error){console.error('Profiling loop failed:',error instanceof Error&&/^[a-z_]+$/.test(error.message)?error.message:error);}
   await new Promise(resolve=>setTimeout(resolve,500));
@@ -121,8 +129,8 @@ while(!stopping){
   if(!claim){if(await dispatchDueSchedule())continue;await new Promise(resolve=>setTimeout(resolve,500));continue;}
   if(await processPlanning(claim))continue;
   const task=await withRunTenant(pool,claim.runId,async(client)=>{
-    const result=await client.query<{step_order:number;source_group_id:string|null;plan:AnalyticPlan|null;principal_id:string;connector_type:string;display_name:string;ciphertext:Buffer|null;nonce:Buffer|null;auth_tag:Buffer|null}>(
-    `SELECT s.step_order,s.source_group_id,p.plan,r.principal_id,c.connector_type,c.display_name,secret.ciphertext,secret.nonce,secret.auth_tag FROM runs.steps s JOIN runs.runs r USING(tenant_id,run_id) LEFT JOIN runs.analytic_plans p USING(tenant_id,run_id)
+    const result=await client.query<{step_order:number;source_group_id:string|null;plan:AnalyticPlan|null;principal_id:string;connector_type:string;display_name:string;analytic_query_timeout_ms:number|null;connect_timeout_ms:number|null;ciphertext:Buffer|null;nonce:Buffer|null;auth_tag:Buffer|null}>(
+    `SELECT s.step_order,s.source_group_id,p.plan,r.principal_id,c.connector_type,c.display_name,c.analytic_query_timeout_ms,c.connect_timeout_ms,secret.ciphertext,secret.nonce,secret.auth_tag FROM runs.steps s JOIN runs.runs r USING(tenant_id,run_id) LEFT JOIN runs.analytic_plans p USING(tenant_id,run_id)
      LEFT JOIN registry.connections c ON c.tenant_id=r.tenant_id AND c.connection_id=(p.plan->'steps'->(s.step_order-1)->>'source_id')::uuid
      LEFT JOIN LATERAL(SELECT ciphertext,nonce,auth_tag FROM registry.connection_secrets WHERE tenant_id=c.tenant_id AND connection_id=c.connection_id ORDER BY secret_version DESC LIMIT 1) secret ON true
      WHERE s.run_id=$1 AND s.step_id=$2`,[claim.runId,claim.stepId]);
@@ -131,7 +139,7 @@ while(!stopping){
    const planStep=row.plan.steps[row.step_order-1];
    if(!planStep||planStep.step_id!==claim.stepId)return null;
    if(!row.connector_type||!row.source_group_id)return null;
-   return{order:row.step_order,plan:row.plan,step:planStep,connectorType:row.connector_type,displayName:row.display_name,ciphertext:row.ciphertext,nonce:row.nonce,authTag:row.auth_tag,groupId:row.source_group_id,principalId:row.principal_id};
+   return{order:row.step_order,plan:row.plan,step:planStep,connectorType:row.connector_type,displayName:row.display_name,analyticQueryTimeoutMs:row.analytic_query_timeout_ms,connectTimeoutMs:row.connect_timeout_ms,ciphertext:row.ciphertext,nonce:row.nonce,authTag:row.auth_tag,groupId:row.source_group_id,principalId:row.principal_id};
   });
   if(!task)throw new Error('worker_task_missing');
   if(task.plan){
@@ -157,18 +165,20 @@ while(!stopping){
     const columns=new Set([query.column,query.groupBy,query.groupKey,query.entityColumn,aggregate?.column,...filters.map(filter=>filter.column)].filter((value):value is string=>typeof value==='string'));
     const joinColumns=new Set([query.leftColumn,query.rightColumn].filter((value):value is string=>typeof value==='string'));
     const scope=await checkQueryScope(pool,claim.tenantId,step.source_id,targets,columns,joinColumns);
+    const connectTimeoutMs=connectionConnectTimeout(task.connectTimeoutMs);
+    const statementTimeoutMs=connectionQueryTimeout('analytic',task.analyticQueryTimeoutMs);
     let connector: ReadOnlyConnector;
     if(task.connectorType==='excel'){
      // The workbook is decrypted for this step only and queried in an in-memory DuckDB copy that close() discards.
      if(!artifactStore)throw new Error('source_query_executor_unavailable');
      const stored=await withRunTenant(pool,claim.runId,client=>client.query<{artifact_id:string;key_salt:Buffer}>("SELECT w.artifact_id,w.key_salt FROM artifacts.workbooks w JOIN registry.connections c ON c.tenant_id=w.tenant_id AND c.connection_id=w.connection_id WHERE w.tenant_id=current_setting('app.tenant_id') AND w.connection_id=$1 AND c.status='active' ORDER BY w.created_at DESC LIMIT 1",[step.source_id]));
      const artifact=stored.rows[0];if(!artifact)throw new Error('source_query_executor_unavailable');
-     connector=createExcelConnector({id:step.source_id,name:task.displayName||'Workbook',workbook:await artifactStore.read(claim.tenantId,artifact.artifact_id,artifact.key_salt)});
+     connector=createExcelConnector({connectTimeoutMs,statementTimeoutMs,id:step.source_id,name:task.displayName||'Workbook',workbook:await artifactStore.read(claim.tenantId,artifact.artifact_id,artifact.key_salt)});
     }else{
     if(!task.ciphertext||!task.nonce||!task.authTag||!process.env.CONNECTION_SECRET_KEY)throw new Error('source_query_executor_unavailable');
     const secret=decryptConnectionSecret<Record<string,unknown>>({version:1,ciphertext:task.ciphertext.toString('base64'),nonce:task.nonce.toString('base64'),authTag:task.authTag.toString('base64')});
-    if(task.connectorType==='sql_server')connector=createSqlServerConnector({server:String(secret.host),port:Number(secret.port),database:String(secret.database),username:String(secret.username),password:String(secret.password),encrypt:true,trustServerCertificate:secret.trustServerCertificate===true,id:step.source_id,name:task.displayName||'SQL Server source',statementTimeoutMs:10_000,maxRows:1_000});
-    else{const sourceUrl=new URL('postgresql://placeholder');sourceUrl.hostname=String(secret.host);sourceUrl.port=String(secret.port);sourceUrl.username=String(secret.username);sourceUrl.password=String(secret.password);sourceUrl.pathname=`/${String(secret.database)}`;sourceUrl.searchParams.set('sslmode',String(secret.sslMode));connector=createPostgresConnector({connectionString:sourceUrl.toString(),id:step.source_id,name:task.displayName||'PostgreSQL source',statementTimeoutMs:10_000,maxRows:1_000});}
+    if(task.connectorType==='sql_server')connector=createSqlServerConnector({connectTimeoutMs,statementTimeoutMs,server:String(secret.host),port:Number(secret.port),database:String(secret.database),username:String(secret.username),password:String(secret.password),encrypt:true,trustServerCertificate:secret.trustServerCertificate===true,id:step.source_id,name:task.displayName||'SQL Server source',maxRows:1_000});
+    else{const sourceUrl=new URL('postgresql://placeholder');sourceUrl.hostname=String(secret.host);sourceUrl.port=String(secret.port);sourceUrl.username=String(secret.username);sourceUrl.password=String(secret.password);sourceUrl.pathname=`/${String(secret.database)}`;sourceUrl.searchParams.set('sslmode',String(secret.sslMode));connector=createPostgresConnector({connectTimeoutMs,statementTimeoutMs,connectionString:sourceUrl.toString(),id:step.source_id,name:task.displayName||'PostgreSQL source',maxRows:1_000});}
     }
     try{
       await connector.test();await connector.discover({mode:'profile',...(scope?{scope}:{})});
@@ -225,7 +235,8 @@ while(!stopping){
     }
    }catch(error){
     if(error instanceof OutOfScopeError){await failStep(pool,claim,{reasonCode:'object_out_of_scope',objects:error.objects});}else{
-    const reason=error instanceof Error&&error.message==='source_timeout'?'source_timeout':error instanceof Error&&error.message==='policy_revoked'?'authorization_revoked'
+    const sourceReason = sourceErrorCode(error);
+    const reason=sourceReason==='source_timeout'||sourceReason==='source_query_timeout'?'source_timeout':error instanceof Error&&error.message==='policy_revoked'?'authorization_revoked'
       :error instanceof Error&&['agent_not_found','agent_not_active','agent_capability_missing','connection_not_active'].includes(error.message)?error.message:'source_query_executor_unavailable';
     await failStep(pool,claim,{reasonCode:reason});}
    }

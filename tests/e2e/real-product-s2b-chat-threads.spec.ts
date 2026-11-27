@@ -23,11 +23,15 @@ async function connect(page: Page, data: Record<string, unknown>) {
 }
 
 async function answerLatest(page: Page, turns: number) {
-  // The source-choice step is part of the same turn; it must never start a new conversation.
-  const choice = page.getByRole('button', { name: 'Use SQL Server hospital' });
+  // The source-choice step is part of the same turn; it must never start a new conversation. Wait explicitly for this
+  // turn's outcome (the choice card or this turn's answer), so the path never depends on what renders first.
+  const card = page.locator('.source-choice');
   const answered = page.locator('.answer-claim').nth(turns - 1);
-  await expect(choice.or(answered)).toBeVisible({ timeout: 90_000 });
-  if (await choice.isVisible()) await choice.click();
+  await expect(card.or(answered)).toBeVisible({ timeout: 90_000 });
+  if (await card.count()) {
+    await card.getByRole('button', { name: 'Use SQL Server hospital' }).click();
+    await expect(card).toHaveCount(0);
+  }
   await expect(answered).toBeVisible({ timeout: 90_000 });
 }
 

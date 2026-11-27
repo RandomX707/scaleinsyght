@@ -1,0 +1,67 @@
+{
+ "hash": "068a489e27f375ab7cfcdb72433abd0a",
+ "recordedAt": "2026-11-27T21:43:46.028Z",
+ "model": "gpt-6-luna",
+ "purpose": "describe",
+ "request": {
+  "max_completion_tokens": 800,
+  "messages": [
+   {
+    "content": "You write short, plain descriptions of database objects for people who are not engineers, from disclosed metadata only: names, column names, keys and SQL with literal values hidden. You never see row values or statistics. Say what each object is or does in one or two sentences, in sentence case, without jargon or a list of tables. Respond with a single JSON object.",
+    "role": "system"
+   },
+   {
+    "content": "{\"question\":\"Describe each listed object in one or two plain sentences: what it holds or does and what it is for, as a business reader would understand it. Do not list its columns or tables. Use only the metadata given. Objects: dbo.departments, dbo.encounters, dbo.orders, dbo.patients, dbo.providers\",\"metadata\":{\"structural\":{\"objects\":[{\"name\":\"dbo.departments\",\"kind\":\"table\",\"columns\":[\"department_code\",\"department_id\",\"department_name\"],\"keys\":[],\"parameters\":[],\"returns\":[],\"reads\":[],\"writes\":[],\"calls\":[]},{\"name\":\"dbo.encounters\",\"kind\":\"table\",\"columns\":[\"admitted_at\",\"department_id\",\"discharged_at\",\"encounter_id\",\"patient_id\",\"provider_id\"],\"keys\":[],\"parameters\":[],\"returns\":[],\"reads\":[],\"writes\":[],\"calls\":[]},{\"name\":\"dbo.orders\",\"kind\":\"table\",\"columns\":[\"amount\",\"department_id\",\"encounter_id\",\"order_id\",\"order_status\",\"order_type\",\"ordered_at\"],\"keys\":[\"department_id references dbo.departments.department_id\",\"encounter_id references dbo.encounters.encounter_id\"],\"parameters\":[],\"returns\":[],\"reads\":[],\"writes\":[],\"calls\":[]},{\"name\":\"dbo.patients\",\"kind\":\"table\",\"columns\":[\"created_at\",\"date_of_birth\",\"mrn\",\"name\",\"patient_id\",\"phone\"],\"keys\":[],\"parameters\":[],\"returns\":[],\"reads\":[],\"writes\":[],\"calls\":[]},{\"name\":\"dbo.providers\",\"kind\":\"table\",\"columns\":[\"department_id\",\"provider_id\",\"provider_name\",\"specialty\"],\"keys\":[],\"parameters\":[],\"returns\":[],\"reads\":[],\"writes\":[],\"calls\":[]}]},\"descriptive\":{}},\"identifier_fingerprints\":[]}",
+    "role": "user"
+   }
+  ],
+  "model": "gpt-6-luna",
+  "response_format": {
+   "json_schema": {
+    "name": "dictionary_descriptions",
+    "schema": {
+     "additionalProperties": false,
+     "properties": {
+      "descriptions": {
+       "items": {
+        "additionalProperties": false,
+        "properties": {
+         "name": {
+          "enum": [
+           "dbo.departments",
+           "dbo.encounters",
+           "dbo.orders",
+           "dbo.patients",
+           "dbo.providers"
+          ],
+          "type": "string"
+         },
+         "text": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "name",
+         "text"
+        ],
+        "type": "object"
+       },
+       "type": "array"
+      }
+     },
+     "required": [
+      "descriptions"
+     ],
+     "type": "object"
+    },
+    "strict": true
+   },
+   "type": "json_schema"
+  }
+ },
+ "response": {
+  "content": "{\"descriptions\":[{\"name\":\"dbo.departments\",\"text\":\"This table holds department names and identifiers. It is used to identify departments associated with care and orders.\"},{\"name\":\"dbo.encounters\",\"text\":\"This table records patient encounters, including when they began and ended and the associated department and provider. It is used to track patient care visits or stays.\"},{\"name\":\"dbo.orders\",\"text\":\"This table records orders associated with an encounter and department, including their type, status, amount, and time. It is used to track orders placed during care.\"},{\"name\":\"dbo.patients\",\"text\":\"This table holds patient identification, contact, and birth information. It is used to identify patients in the system.\"},{\"name\":\"dbo.providers\",\"text\":\"This table holds provider names, specialties, and department associations. It is used to identify providers and their areas of practice.\"}]}",
+  "promptTokens": 498,
+  "completionTokens": 264
+ }
+}

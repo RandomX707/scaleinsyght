@@ -80,6 +80,9 @@ describe('Dictionary on the SQL Server testbed', () => {
     const encounters = await get(`/api/connections/${connectionId}/dictionary/object?name=dbo.encounters`);
     expect(encounters.keys.map((key: { column: string; references: string }) => [`dbo.encounters.${key.column}`, key.references]).sort()).toEqual([...truth.foreignKeys].sort());
     expect(encounters.columns.filter((column: { key: boolean }) => column.key).map((column: { name: string }) => column.name).sort()).toEqual(['department_id', 'patient_id']);
+    // Keys and indexes from the catalog: the primary key, and the testbed's own index on patient_id.
+    expect(encounters.indexes.primaryKey).toEqual(['encounter_id']);
+    expect(encounters.indexes.indexes).toEqual(expect.arrayContaining([{ name: 'ix_encounters_patient', columns: ['patient_id'], unique: false, primary: false }]));
     const flags = await get(`/api/connections/${connectionId}/dictionary/object?name=dbo.X_READMIT_FLAGS`);
     expect(flags).toMatchObject({ origin: 'standard', custom: false });
     expect(flags.stats.builtBy).toEqual(['dbo.usp_X_LOAD_READMIT_FLAGS']);

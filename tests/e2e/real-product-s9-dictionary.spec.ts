@@ -75,6 +75,12 @@ test('s9_dictionary_matches_testbed_truth_for_every_connector_type_and_exports_o
 
   // SQL Server: landing, standard and custom objects, procedure tabs, encrypted state, SQL search, Show original.
   await expect(page.locator('.dict-card').first()).toContainText('No vendor dictionary imported');
+  // Polish: separate Import and Export areas, a placeholder that fits, and the UI font for the Overview pill.
+  // The file control's name is on its native input (aria-label), as S2 uses it.
+  await expect(page.locator('.dict-card', { hasText: 'Import vendor dictionary' }).getByLabel('Import dictionary file')).toHaveCount(1);
+  await expect(page.locator('.dict-card', { has: page.locator('summary', { hasText: /^Export$/ }) })).toContainText('Export as interactive HTML');
+  await expect(page.locator('.dict-card').first()).toContainText('Described tables and views');
+  await expect(side(page).getByLabel('Search tables, columns or SQL code')).toHaveAttribute('placeholder', 'Search names, columns, SQL');
   await page.screenshot({ path: screen('landing') });
   // Decision 64: Standard is every table, X_ tables included; the page opens on it.
   await expect(side(page).getByRole('tab', { name: /^Standard/ })).toHaveAttribute('aria-selected', 'true');
@@ -83,28 +89,40 @@ test('s9_dictionary_matches_testbed_truth_for_every_connector_type_and_exports_o
   const header = page.locator('.dict-header');
   await expect(header.getByRole('heading', { name: 'encounters' })).toBeVisible();
   await expect(header).toContainText('Standard table');
+  const pills = page.getByRole('tablist', { name: 'Open objects' });
+  expect(await pills.getByRole('tab', { name: 'Overview' }).evaluate((element) => getComputedStyle(element).fontFamily)).toMatch(/^"?Inter/);
+  expect(await pills.getByRole('tab', { name: 'encounters' }).locator('span').evaluate((element) => getComputedStyle(element).fontFamily)).toMatch(/JetBrains Mono/);
   // Drafted descriptions are shown and used as they are; approving is optional.
   await expect(header.locator('.dict-review')).toContainText('Drafted');
   await expect(header).not.toContainText('waiting for approval');
-  await expect(page.locator('.dict-card', { hasText: 'Keys and indexes' })).toContainText('patients.patient_id');
+  const keysCard = page.locator('.dict-card', { hasText: 'Keys and indexes' });
+  await expect(keysCard).toContainText('patients.patient_id');
+  // Read from the catalog: the primary key and the testbed's index.
+  await expect(keysCard).toContainText('encounter_id Primary key');
+  await expect(keysCard).toContainText('ix_encounters_patient');
   await page.screenshot({ path: screen('table'), fullPage: false });
   // Show in ER diagram opens the ER explorer on this table and its neighbours.
   await header.getByRole('button', { name: 'Show in ER diagram' }).click();
   await expect(page.getByText('Showing dbo.encounters and its direct neighbours')).toBeVisible();
   await expect(page.locator('.er-node h3')).toContainText(['dbo.encounters']);
   await page.screenshot({ path: screen('er') });
-  await page.goBack(); await expect(page.locator('.dict-card').first()).toBeVisible();
+  // A jump across pages offers a way back that names where it came from (CLAUDE.md 10.2).
+  await page.getByRole('button', { name: 'Back to Dictionary · encounters' }).click();
+  await expect(page.locator('.dict-header').getByRole('heading', { name: 'encounters' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Back to/ })).toHaveCount(0);
   // Approve all for a search: one confirmation, then every drafted description it shows.
   await page.getByLabel('Search tables, columns or SQL code').fill('X_CENSUS');
   const approveAll = side(page).locator('.dict-approve-all');
-  await expect(approveAll).toContainText('2 drafted descriptions match this search');
+  await expect(approveAll).toContainText('Descriptions matching this search: 2 drafted');
   await approveAll.getByRole('button', { name: 'Approve all' }).click();
   const confirm = page.getByRole('dialog', { name: 'Approve all drafted descriptions' });
   await expect(confirm).toContainText('Approve 2 drafted descriptions matching “X_CENSUS” on Standard?');
   await page.screenshot({ path: screen('approve-all') });
   await confirm.getByRole('button', { name: 'Approve 2' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'approved' })).toHaveText('2 descriptions approved.');
-  await expect(approveAll).toHaveCount(0);
+  // Approved, so the line says so and there is nothing left to approve.
+  await expect(approveAll).toContainText('Descriptions matching this search: 2 approved');
+  await expect(approveAll.getByRole('button', { name: 'Approve all' })).toHaveCount(0);
   await side(page).getByRole('button', { name: 'X_CENSUS_SNAP', exact: true }).click();
   await expect(header.locator('.dict-review')).toContainText('Approved by Test Analyst');
   await page.getByLabel('Search tables, columns or SQL code').fill('');
@@ -195,6 +213,10 @@ test('s9_dictionary_matches_testbed_truth_for_every_connector_type_and_exports_o
   await side(page).getByRole('button', { name: sheet.name, exact: true }).click();
   const sheetColumns = page.locator('.dict-card', { hasText: 'Columns, with original headers' });
   for (const header of sheet.headers.filter((header, index) => header !== sheet.columns[index])) await expect(sheetColumns).toContainText(header);
+  await expect(page.locator('.dict-card', { hasText: 'Keys and indexes' })).toContainText('A workbook sheet has no keys or indexes.');
+  await page.locator('.dict-header').getByRole('button', { name: 'Ask about this' }).click();
+  await page.getByRole('button', { name: `Back to Dictionary · ${sheet.name}` }).click();
+  await expect(page.locator('.dict-header').getByRole('heading', { name: sheet.name })).toBeVisible();
   await page.screenshot({ path: screen('excel') });
 
   // dbt: models and sources with their descriptions (documented) and tests.
@@ -236,15 +258,41 @@ test('s9_dictionary_matches_testbed_truth_for_every_connector_type_and_exports_o
   const offline = await browser.newContext({ offline: true }); const requests: string[] = [];
   const viewer = await offline.newPage();
   await viewer.route('**/*', (route) => { const url = route.request().url(); if (url === `file://${file}`) return route.continue(); requests.push(url); return route.abort(); });
+  await viewer.setViewportSize({ width: 1440, height: 900 });
   await viewer.goto(`file://${file}`);
-  await expect(viewer.locator('details.object')).not.toHaveCount(0);
-  await viewer.getByLabel('Search names, columns and SQL').fill(truth.sqlserver.sqlSearch.query);
-  await expect(viewer.locator('details.object')).toHaveCount(1);
-  await viewer.getByLabel('Search names, columns and SQL').fill('');
-  await viewer.getByLabel('Standard or custom').selectOption('custom');
-  expect(await viewer.locator('details.object .name').allTextContents()).not.toContain('dbo.encounters');
-  await viewer.getByRole('button', { name: 'Expand all' }).click();
-  await expect(viewer.locator('details.object[open]').first()).toBeVisible();
+  // Item 5: the export looks and behaves like the Dictionary page: the same tabs, search, list and object view.
+  const exportSide = viewer.getByRole('navigation', { name: 'Objects' });
+  await expect(exportSide.getByRole('tab', { name: /^Standard/ })).toHaveAttribute('aria-selected', 'true');
+  await expect(viewer.getByText(/^Exported from Scale Insyght on .*Metadata only: no row data\./)).toBeVisible();
+  // One source: its name is not repeated on every row; rows show the short name with the schema as a small label.
+  await expect(exportSide.locator('li .dict-schema').first()).toHaveText('dbo');
+  await expect(exportSide.locator('li .mono')).toContainText(['departments']);
+  // Search covers names, columns and SQL.
+  await exportSide.getByLabel('Search tables, columns or SQL code').fill(truth.sqlserver.sqlSearch.query);
+  await expect(exportSide.locator('.dict-group', { hasText: 'In SQL code' })).toContainText(title(truth.sqlserver.sqlSearch.object));
+  await exportSide.getByLabel('Search tables, columns or SQL code').fill('');
+  await exportSide.getByRole('tab', { name: /^Custom/ }).click();
+  // A function: its parameters, the columns it returns and what it reads, exactly as the page shows them.
+  const [exportFn, exportFnTruth] = Object.entries(truth.sqlserver.functions)[0]!;
+  await exportSide.getByRole('button', { name: new RegExp(`^${title(exportFn)}`) }).click();
+  const exportHeader = viewer.locator('.dict-header');
+  await expect(exportHeader.getByRole('heading', { name: title(exportFn), exact: true })).toBeVisible();
+  await expect(exportHeader.locator('.dict-kv > div', { hasText: 'Full name' })).toContainText(exportFn);
+  await expect(viewer.locator('.dict-card', { hasText: 'What it does' })).toContainText(`Reads${exportFnTruth.reads.map(short).join('')}`);
+  await viewer.getByRole('tab', { name: `Parameters ${exportFnTruth.parameters.length}` }).click();
+  const exportParameters = viewer.locator('.dict-card', { hasText: 'Parameters' });
+  for (const parameter of exportFnTruth.parameters) await expect(exportParameters.locator('table').first()).toContainText(parameter);
+  await expect(exportParameters).toContainText(`Returns a table with ${exportFnTruth.returns.length} columns`);
+  // A procedure that calls another: its Reads and Calls.
+  const exportLoader = 'dbo.usp_X_LOAD_READMIT_FLAGS'; const exportLoaderTruth = truth.sqlserver.procedures[exportLoader]!;
+  await exportSide.getByRole('button', { name: new RegExp(`^${title(exportLoader)}`) }).click();
+  await expect(viewer.locator('.dict-card', { hasText: 'What it does' })).toContainText(`Reads${exportLoaderTruth.reads.map(short).join('')}`);
+  await viewer.getByRole('tab', { name: 'Calls' }).click();
+  for (const call of exportLoaderTruth.calls) await expect(viewer.locator('.dict-card', { hasText: 'Called by' })).toContainText(short(call));
+  await viewer.getByRole('tab', { name: 'Overview' }).last().click();
+  await viewer.screenshot({ path: screen('export-viewer') });
+  await viewer.getByRole('button', { name: 'Collapse all' }).click();
+  await expect(viewer.locator('details.dict-card[open]')).toHaveCount(0);
   await expect(viewer.locator('body')).not.toContainText(truth.sqlserver.hardCodedLiterals[0]!);
   expect(requests).toEqual([]);
   await offline.close();

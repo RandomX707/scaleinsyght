@@ -1,3 +1,4 @@
+export { connectionConnectTimeout, connectionQueryTimeout } from './limits.js';
 import type { ControlsPolicy } from './scope.js';
 export { objectScope, columnScope, type ControlsPolicy } from './scope.js';
 export type SourceConnectorType = 'sql_server' | 'postgres' | 'snowflake' | 'excel' | 'lake' | 'crm';
@@ -11,6 +12,9 @@ export interface DiscoveredObject {
   scopeMode: ScopeMode;
 }
 
+/** A table's primary key and indexes, read from the source catalog (metadata only). Unique constraints are reported
+ *  as unique indexes, which is how both PostgreSQL and SQL Server enforce them. */
+export type TableKeys = { table: string; primaryKey: string[]; indexes: Array<{ name: string; columns: string[]; unique: boolean; primary: boolean }> };
 /** createdOrder only orders objects within one source (PostgreSQL object id; SQL Server creation time in seconds). */
 export type ObjectOrigin = {qualifiedName:string;owner:string|null;createdOrder:number|null};
 /** parameters are what a caller passes (and, for a procedure, gets back through OUT parameters); returns are the columns a
@@ -25,6 +29,7 @@ export interface DiscoveryResult {
   coverage: { listed: number; accessible: number; inaccessible: number };
   unchanged: number;
   unchangedObjects: DiscoveredObject[];
+  timedOutObjects?: ReadonlySet<string>;
 }
 
 export interface ObjectProfile {
@@ -66,15 +71,26 @@ export const POSSIBLE_REFERENCE_COVERAGE = 0.5;
 /** Decision 63: an inferred reference is checked on at most this many non-null source values, each looked up in the
  *  target's primary key, never by joining whole tables (a full join on test_emr exceeded the source's time limit). */
 export const REFERENCE_CHECK_SAMPLE = 10_000;
-/** Attaches the count of skipped checks without changing the list itself (not enumerable, so it never shows up as an item). */
-export function withSkippedChecks<T>(references: T[], skippedChecks: number): T[] & { skippedChecks: number } {
-  return Object.defineProperty(references, 'skippedChecks', { value: skippedChecks, enumerable: false }) as T[] & { skippedChecks: number };
+export type SkippedReference = { from: string; to: string; fromColumn: string; toColumn: string };
+
+export function withSkippedChecks<T>(references: T[], skippedChecks: number, timedOutChecks: SkippedReference[]) {
+  return Object.defineProperties(references, {
+    skippedChecks: { value: skippedChecks },
+    timedOutChecks: { value: timedOutChecks },
+  }) as T[] & { skippedChecks: number; timedOutChecks: SkippedReference[] };
 }
+
+export function isSourceQueryTimeout(error: unknown): boolean {
+  const failure = error as { message?: string; code?: string; originalError?: { code?: string } } | null;
+  return failure?.message === 'source_query_timeout'
+    || ['SOURCE_QUERY_TIMEOUT', '57014', 'ETIMEOUT'].includes(failure?.code ?? failure?.originalError?.code ?? '');
+}
+
 /** A reference check that times out, or whose table can no longer be read, skips that candidate only (decision 63). */
 export function isSkippableCheckError(error: unknown): boolean {
   const failure = error as { code?: unknown; number?: unknown; originalError?: { code?: unknown; number?: unknown } } | null;
   const code = String(failure?.code ?? failure?.originalError?.code ?? ''); const number = Number(failure?.number ?? failure?.originalError?.number ?? 0);
-  return ['57014', '42501', '42P01', 'ETIMEOUT'].includes(code) || [208, 229].includes(number);
+  return isSourceQueryTimeout(error) || ['42501', '42P01'].includes(code) || [208, 229].includes(number);
 }
 
 export interface ConnectorScope {
@@ -96,10 +112,12 @@ export interface ReadOnlyConnector {
   queryAggregate?(assetKey: string, metric: 'count'): Promise<{ metric: 'count'; value: number }>;
   /** Declared and inferred references. `sampled` marks a check made on the first REFERENCE_CHECK_SAMPLE values;
    *  `skippedChecks` on the result counts candidates whose check timed out (decision 63). */
-  structuralReferences?(scope?: ConnectorScope): Promise<Array<{from:string;to:string;fromColumn:string;toColumn:string;evidenceMethod?:'declared'|'inferred';confidence?:number;matchedCount?:number;sourceCount?:number;sampled?:boolean}> & { skippedChecks?: number }>;
+  structuralReferences?(scope?: ConnectorScope): Promise<Array<{from:string;to:string;fromColumn:string;toColumn:string;evidenceMethod?:'declared'|'inferred';confidence?:number;matchedCount?:number;sourceCount?:number;sampled?:boolean}> & { skippedChecks?: number; timedOutChecks?: SkippedReference[] }>;
   /** Procedures and functions: definition text as the source returns it (null when withheld), whether the source
    *  encrypts it, and the declared parameters. Callers scrub the text before storing it (decision 53). */
   routines?():Promise<Routine[]>;
+  /** Primary keys and indexes of the source's tables, from the catalog only (Dictionary "Keys and indexes"). */
+  keysAndIndexes?():Promise<TableKeys[]>;
   /** What each procedure or function refers to, as the database catalog records it. Readable even when the module is
    *  encrypted; it names the objects, not whether they are read or written. */
   routineDependencies?():Promise<Array<{routine:string;references:string[]}>>;
@@ -119,7 +137,7 @@ export interface ReadOnlyConnector {
   close?(): Promise<void>;
 }
 
-export { PostgresConnector, createPostgresConnector, splitRoutineArguments, type PostgresStructuralReference } from './postgres.js';
+export { PostgresConnector, createPostgresConnector, groupTableKeys, splitRoutineArguments, type PostgresStructuralReference } from './postgres.js';
 export { SqlServerConnector, createSqlServerConnector, type SqlServerConnection } from './sql-server.js';
 export { encryptConnectionSecret, decryptConnectionSecret, type EncryptedConnectionSecret } from './connection-secrets.js';
 export { ExcelConnector, createExcelConnector, parseWorkbook, normaliseIdentifier, type WorkbookSheet, type WorkbookColumn } from './excel.js';
