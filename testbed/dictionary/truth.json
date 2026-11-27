@@ -1,18 +1,16 @@
 {
   "sqlserver": {
     "database": "si_testbed_dictionary",
-    "standardTables": [
+    "tables": [
+      "dbo.X_CENSUS_SNAP",
+      "dbo.X_CENSUS_SNAP_ARCH",
+      "dbo.X_JOB_LOG",
+      "dbo.X_READMIT_FLAGS",
       "dbo.departments",
       "dbo.encounters",
       "dbo.patients"
     ],
-    "customTables": [
-      "dbo.X_CENSUS_SNAP",
-      "dbo.X_CENSUS_SNAP_ARCH",
-      "dbo.X_JOB_LOG",
-      "dbo.X_READMIT_FLAGS"
-    ],
-    "customViews": [
+    "views": [
       "dbo.X_V_DEPT_CENSUS"
     ],
     "procedures": {
@@ -123,6 +121,36 @@
         "calls": [],
         "parameters": [],
         "encrypted": true
+      }
+    },
+    "functions": {
+      "dbo.fn_X_PATIENT_STAYS": {
+        "parameters": [
+          "@PatientId",
+          "@From",
+          "@To"
+        ],
+        "returns": [
+          [
+            "encounter_id",
+            "int"
+          ],
+          [
+            "department_id",
+            "int"
+          ],
+          [
+            "admitted_at",
+            "datetime2"
+          ],
+          [
+            "discharged_at",
+            "datetime2"
+          ]
+        ],
+        "reads": [
+          "dbo.encounters"
+        ]
       }
     },
     "foreignKeys": [

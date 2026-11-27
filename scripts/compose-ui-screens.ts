@@ -14,6 +14,8 @@ const pairs: Pair[] = [
   { out: 'dictionary-encrypted', app: 'docs/acceptance/s9/encrypted.png', prototype: 'docs/acceptance/s9/prototype/encrypted.png' },
   { out: 'dictionary-search', app: 'docs/acceptance/s9/search.png', prototype: 'docs/acceptance/s9/prototype/search.png' },
   { out: 'dictionary-export-notice', app: 'docs/acceptance/s9/export-notice.png', prototype: 'docs/acceptance/s9/prototype/landing.png' },
+  { out: 'dictionary-function-returns', app: 'docs/acceptance/s9/function-returns.png', prototype: 'docs/acceptance/s9/prototype/proc.png' },
+  { out: 'dictionary-approve-all', app: 'docs/acceptance/s9/approve-all.png', prototype: 'docs/acceptance/s9/prototype/table.png' },
   { out: 'dictionary-excel', app: 'docs/acceptance/s9/excel.png', prototype: 'docs/acceptance/s9/prototype/table.png' },
   { out: 'dictionary-dbt', app: 'docs/acceptance/s9/dbt.png', prototype: 'docs/acceptance/s9/prototype/table.png' },
   { out: 'dictionary-tableau', app: 'docs/acceptance/s9/tableau.png', prototype: 'docs/acceptance/s9/prototype/proc-sql.png' },

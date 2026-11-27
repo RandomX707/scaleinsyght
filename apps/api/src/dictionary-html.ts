@@ -5,7 +5,7 @@
  * product shows. Withheld statistics are absent, and out-of-scope objects appear by name and type only.
  */
 export type HtmlColumn = { name: string; label: string | null; dataType: string | null; tags: string[]; statsWithheld: boolean; nullRate: number | null; distinctCount: number | null; description: string | null };
-export type HtmlObject = { name: string; kind: string; custom: boolean; group: string; description: string | null; columns: HtmlColumn[];
+export type HtmlObject = { name: string; kind: string; custom: boolean; group: string; description: string | null; descriptionDrafted?: boolean; columns: HtmlColumn[];
   definition?: { encrypted: boolean; text: string | null; writes: Array<{ table: string; mode: string }>; reads: string[]; calls: string[] } };
 export type HtmlSource = { name: string; type: string; objects: HtmlObject[]; relationships: Array<{ from: string; to: string; evidence: string; review: string }>; outOfScope: Array<{ name: string; type: string }> };
 
@@ -59,7 +59,7 @@ function render(){
       shown++;if(shown>500)return;
       var summary=el('summary',{},[el('span',{'class':'name',text:o.name}),el('span',{'class':'chip',text:o.group}),o.custom?el('span',{'class':'chip custom',text:'Custom'}):null,el('span',{'class':'note',text:s.name})]);
       var body=el('div',{'class':'body'});
-      if(o.description)body.appendChild(el('p',{text:o.description}));
+      if(o.description)body.appendChild(el('p',{},[o.descriptionDrafted?el('span',{'class':'chip',text:'Drafted'}):null,document.createTextNode((o.descriptionDrafted?' ':'')+o.description)]));
       if(o.columns.length){
         var rows=o.columns.map(function(c){return el('tr',{},[el('td',{'class':'mono',text:c.name}),el('td',{text:c.label&&c.label!==c.name?c.label:''}),el('td',{text:c.dataType||''}),
           el('td',{},c.tags.map(function(t){return el('span',{'class':'chip tag',text:t});})),el('td',{text:c.statsWithheld?'Withheld':pct(c.nullRate)}),el('td',{text:c.statsWithheld?'Withheld':fmt(c.distinctCount)}),el('td',{text:c.description||''})]);});

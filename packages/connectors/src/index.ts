@@ -1,5 +1,5 @@
 import type { ControlsPolicy } from './scope.js';
-export { objectScope, columnScope, DEFAULT_CLASSIFICATION, type ClassificationRules, type ControlsPolicy } from './scope.js';
+export { objectScope, columnScope, type ControlsPolicy } from './scope.js';
 export type SourceConnectorType = 'sql_server' | 'postgres' | 'snowflake' | 'excel' | 'lake' | 'crm';
 export type AssetType = 'table' | 'view';
 export type ScopeMode = 'profile' | 'list_only' | 'exclude';
@@ -13,7 +13,9 @@ export interface DiscoveredObject {
 
 /** createdOrder only orders objects within one source (PostgreSQL object id; SQL Server creation time in seconds). */
 export type ObjectOrigin = {qualifiedName:string;owner:string|null;createdOrder:number|null};
-export type Routine = {qualifiedName:string;kind:'function'|'procedure';definition:string|null;encrypted:boolean;parameters:Array<{name:string;dataType:string;mode:'in'|'out'|'inout'}>};
+/** parameters are what a caller passes (and, for a procedure, gets back through OUT parameters); returns are the columns a
+ *  function returns as a table (PostgreSQL RETURNS TABLE or OUT arguments, SQL Server table-valued functions). Decision 64. */
+export type Routine = {qualifiedName:string;kind:'function'|'procedure';definition:string|null;encrypted:boolean;parameters:Array<{name:string;dataType:string;mode:'in'|'out'|'inout'}>;returns?:Array<{name:string;dataType:string}>};
 
 export interface DiscoveryResult {
   objects: DiscoveredObject[];
@@ -98,8 +100,8 @@ export interface ReadOnlyConnector {
   /** Procedures and functions: definition text as the source returns it (null when withheld), whether the source
    *  encrypts it, and the declared parameters. Callers scrub the text before storing it (decision 53). */
   routines?():Promise<Routine[]>;
-  /** Who owns each table, view, procedure and function, and the order they were created (decision 62): used to tell
-   *  customer-built objects from vendor-delivered ones and which of two near-identical routines is the copy. */
+  /** Who owns each table, view, procedure and function, and the order they were created: used to tell which of two
+   *  near-identical routines is the copy, shown as an informational badge (decision 64). */
   objectOrigins?():Promise<ObjectOrigin[]>;
   /** View definitions for SQL lineage parsing. definition is null when the source hides it (for example an encrypted module). */
   viewDefinitions?():Promise<Array<{qualifiedName:string;schema:string;definition:string|null}>>;
@@ -114,7 +116,7 @@ export interface ReadOnlyConnector {
   close?(): Promise<void>;
 }
 
-export { PostgresConnector, createPostgresConnector, type PostgresStructuralReference } from './postgres.js';
+export { PostgresConnector, createPostgresConnector, splitRoutineArguments, type PostgresStructuralReference } from './postgres.js';
 export { SqlServerConnector, createSqlServerConnector, type SqlServerConnection } from './sql-server.js';
 export { encryptConnectionSecret, decryptConnectionSecret, type EncryptedConnectionSecret } from './connection-secrets.js';
 export { ExcelConnector, createExcelConnector, parseWorkbook, normaliseIdentifier, type WorkbookSheet, type WorkbookColumn } from './excel.js';

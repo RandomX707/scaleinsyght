@@ -86,6 +86,8 @@ test('s2_empty_tenant_adds_real_sql_server_profiles_and_relationships', async ({
   await page.getByLabel('Import dictionary file').setInputFiles('testbed/s2-dictionary.csv');
   await expect(page.getByRole('status')).toContainText('1 descriptions imported.');
 
+  // Functions and procedures are Custom (decision 64).
+  await page.getByRole('navigation', { name: 'Objects' }).getByRole('tab', { name: /^Custom/ }).click();
   await expect(page.getByRole('navigation', { name: 'Objects' }).getByRole('button', { name: 'count_patient_encounters', exact: true })).toBeVisible();
   await page.screenshot({ path: 'docs/acceptance/s2/dictionary-procedures.png', fullPage: true });
   await page.goto('/'); await page.getByLabel('Ask a question').fill('How many patients are in SQL Server hospital?'); await page.getByRole('button', { name: 'Send question' }).click();

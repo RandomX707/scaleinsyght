@@ -67,6 +67,12 @@ BEGIN
   SELECT COUNT(*) FROM dbo.encounters;
 END;
 GO
+-- Decision 64: an inline table-valued function. Its 3 inputs are parameters; its 4 returned columns are not.
+CREATE FUNCTION dbo.fn_X_PATIENT_STAYS (@PatientId int, @From date, @To date)
+RETURNS TABLE AS RETURN
+  SELECT e.encounter_id, e.department_id, e.admitted_at, e.discharged_at FROM dbo.encounters e
+  WHERE e.patient_id = @PatientId AND e.admitted_at >= @From AND e.admitted_at < @To;
+GO
 INSERT INTO dbo.departments VALUES (1, N'Emergency'), (2, N'Cardiology'), (3, N'Pediatrics');
 INSERT INTO dbo.patients VALUES (1, N'MRN-0001', N'Synthetic Patient One'), (2, N'MRN-0002', N'Synthetic Patient Two'), (3, N'MRN-0003', N'Synthetic Patient Three');
 INSERT INTO dbo.encounters VALUES (1, 1, 1, '2025-01-02', '2025-01-04'), (2, 1, 1, '2025-01-20', '2025-01-21'), (3, 2, 2, '2025-02-01', NULL), (4, 3, 3, '2025-03-05', '2025-03-06');

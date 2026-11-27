@@ -15,7 +15,7 @@ import { createTenant } from '../../scripts/tenant-create.js';
 config({ path: '.env' });
 if (!process.env.SQLSERVER_TESTBED_PASSWORD) throw new Error('SQLSERVER_TESTBED_PASSWORD is required; run pnpm testbed:sqlserver:up and pnpm testbed:dictionary. Never skipped.');
 const truth = JSON.parse(readFileSync('testbed/dictionary/truth.json', 'utf8')).sqlserver as {
-  standardTables: string[]; customTables: string[]; customViews: string[]; foreignKeys: string[][]; hardCodedLiterals: string[]; sqlSearch: { query: string; object: string };
+  tables: string[]; views: string[]; functions: Record<string, { parameters: string[]; returns: string[][]; reads: string[] }>; foreignKeys: string[][]; hardCodedLiterals: string[]; sqlSearch: { query: string; object: string };
   procedures: Record<string, { group: string; writes: Array<{ table: string; mode: string }>; reads: string[]; calls: string[]; parameters: string[]; encrypted: boolean; calledBy?: string[] }>;
 };
 const url = (key: string) => { const value = process.env[key]; if (!value) throw new Error(`${key} is required`); const parsed = new URL(value); parsed.pathname = `/${process.env.SI_TEST_DATABASE ?? 'si_test'}`; return parsed.toString(); };
@@ -37,13 +37,14 @@ describe('Dictionary on the SQL Server testbed', () => {
   afterAll(async () => { await server?.close(); await connector.close(); await app.end(); await migrate.end(); });
 
   it('c7_dictionary_lists_standard_and_custom_objects_as_in_the_testbed', async () => {
-    // Decision 62: no vendor dictionary is imported here, so the vendor's tables are "Not classified yet", never Standard.
+    // Decision 64: by object type. Every table is Standard, X_ tables included; views and procedures are Custom.
     const standard = await get(`/api/connections/${connectionId}/dictionary/objects?tab=standard`);
-    const unclassified = await get(`/api/connections/${connectionId}/dictionary/objects?tab=unclassified`);
     const custom = await get(`/api/connections/${connectionId}/dictionary/objects?tab=custom`);
-    const names = (body: { groups: Array<{ label: string; items: Array<{ name: string }> }> }, label: string) => body.groups.find((group) => group.label === label)?.items.map((item) => item.name) ?? [];
-    expect(standard.counts.standard).toBe(0);
-    expect(names(unclassified, 'Tables')).toEqual(truth.standardTables);
+    const names = (body: { groups: Array<{ label: string; items: Array<{ name: string }> }> }, label: string) => (body.groups.find((group) => group.label === label)?.items.map((item) => item.name) ?? []).sort();
+    expect(standard.tab).toBe('standard');
+    expect(standard.groups.map((group: { label: string }) => group.label)).toEqual(['Tables']);
+    expect(names(standard, 'Tables')).toEqual([...truth.tables].sort());
+    expect(names(custom, 'Views')).toEqual([...truth.views].sort());
     for (const [name, procedure] of Object.entries(truth.procedures)) expect(names(custom, procedure.group), name).toContain(name);
     expect(standard.hasVendorDictionary).toBe(false);
   });
@@ -62,12 +63,25 @@ describe('Dictionary on the SQL Server testbed', () => {
     }
   });
 
+  it('c7_table_valued_function_lists_returned_columns_apart_from_parameters', async () => {
+    // Decision 64: SQL Server keeps a table-valued function's columns in sys.columns, not sys.parameters.
+    for (const [name, expected] of Object.entries(truth.functions)) {
+      const detail = await get(`/api/connections/${connectionId}/dictionary/object?name=${encodeURIComponent(name)}`);
+      expect(detail).toMatchObject({ kind: 'function', origin: 'custom' });
+      expect(detail.definition.parameters.map((parameter: { name: string; mode: string }) => [parameter.name, parameter.mode]), name).toEqual(expected.parameters.map((parameter) => [parameter, 'in']));
+      expect(detail.definition.returns.map((column: { name: string; dataType: string }) => [column.name, column.dataType]), name).toEqual(expected.returns);
+      expect(detail.definition.reads, name).toEqual(expected.reads);
+    }
+    const custom = await get(`/api/connections/${connectionId}/dictionary/objects?tab=custom`);
+    expect(custom.groups.find((group: { label: string }) => group.label === 'Functions').items.map((item: { name: string }) => item.name)).toEqual(Object.keys(truth.functions));
+  });
+
   it('c7_dictionary_tables_show_keys_joins_and_who_builds_them', async () => {
     const encounters = await get(`/api/connections/${connectionId}/dictionary/object?name=dbo.encounters`);
     expect(encounters.keys.map((key: { column: string; references: string }) => [`dbo.encounters.${key.column}`, key.references]).sort()).toEqual([...truth.foreignKeys].sort());
     expect(encounters.columns.filter((column: { key: boolean }) => column.key).map((column: { name: string }) => column.name).sort()).toEqual(['department_id', 'patient_id']);
     const flags = await get(`/api/connections/${connectionId}/dictionary/object?name=dbo.X_READMIT_FLAGS`);
-    expect(flags.custom).toBe(true);
+    expect(flags).toMatchObject({ origin: 'standard', custom: false });
     expect(flags.stats.builtBy).toEqual(['dbo.usp_X_LOAD_READMIT_FLAGS']);
     expect(flags.description).toMatchObject({ origin: 'drafted' });
     expect(flags.description.text).toContain('Loaded by usp_X_LOAD_READMIT_FLAGS');
@@ -77,7 +91,7 @@ describe('Dictionary on the SQL Server testbed', () => {
 
   it('c7_stored_definitions_hold_no_literal_values_and_show_original_is_live_only', async () => {
     const stored = await withTenant(migrate, tenantId, (db) => db.query<{ scrubbed_text: string | null; parameters: unknown; analysis: unknown }>('SELECT scrubbed_text,parameters,analysis FROM graph.definitions WHERE tenant_id=$1', [tenantId]));
-    expect(stored.rows.length).toBe(Object.keys(truth.procedures).length + truth.customViews.length);
+    expect(stored.rows.length).toBe(Object.keys(truth.procedures).length + Object.keys(truth.functions).length + truth.views.length);
     for (const literal of truth.hardCodedLiterals) expect(JSON.stringify(stored.rows)).not.toContain(literal);
     const loader = await get(`/api/connections/${connectionId}/dictionary/object?name=dbo.usp_X_LOAD_READMIT_FLAGS`);
     expect(loader.definition.text).toContain('<number>'); expect(loader.definition.literalsHidden).toBe(true);
@@ -91,10 +105,12 @@ describe('Dictionary on the SQL Server testbed', () => {
   });
 
   it('c7_dictionary_search_finds_names_columns_and_sql_lines', async () => {
-    const byName = await get(`/api/connections/${connectionId}/dictionary/objects?tab=custom&q=census`);
-    expect(byName.groups.flatMap((group: { items: Array<{ name: string }> }) => group.items.map((item) => item.name))).toEqual(expect.arrayContaining(['dbo.X_CENSUS_SNAP', 'dbo.usp_X_MERGE_CENSUS']));
-    const byColumn = await get(`/api/connections/${connectionId}/dictionary/objects?tab=unclassified&q=admitted`);
-    expect(byColumn.groups[0].items).toEqual([expect.objectContaining({ name: 'dbo.encounters', matchedColumns: 1 })]);
+    const flat = (body: { groups: Array<{ items: Array<{ name: string }> }> }) => body.groups.flatMap((group) => group.items.map((item) => item.name));
+    expect(flat(await get(`/api/connections/${connectionId}/dictionary/objects?tab=standard&q=census`))).toEqual(expect.arrayContaining(['dbo.X_CENSUS_SNAP']));
+    expect(flat(await get(`/api/connections/${connectionId}/dictionary/objects?tab=custom&q=census`))).toEqual(expect.arrayContaining(['dbo.usp_X_MERGE_CENSUS']));
+    const byColumn = await get(`/api/connections/${connectionId}/dictionary/objects?tab=standard&q=admitted`);
+    // encounters.admitted_at, and X_READMIT_FLAGS.readmitted now that every table is on Standard.
+    expect(byColumn.groups[0].items).toEqual([expect.objectContaining({ name: 'dbo.encounters', matchedColumns: 1 }), expect.objectContaining({ name: 'dbo.X_READMIT_FLAGS', matchedColumns: 1 })]);
     const inSql = await get(`/api/connections/${connectionId}/dictionary/objects?tab=custom&q=${truth.sqlSearch.query}`);
     const hit = inSql.sqlHits.find((item: { name: string }) => item.name === truth.sqlSearch.object);
     expect(hit.lines.length).toBeGreaterThan(0);
@@ -102,15 +118,14 @@ describe('Dictionary on the SQL Server testbed', () => {
   });
 
   it('c6_description_approval_is_recorded_with_person_and_time', async () => {
-    const response = await server.inject({ method: 'POST', url: `/api/connections/${connectionId}/dictionary/description`, headers: { cookie }, payload: { name: 'dbo.X_JOB_LOG', action: 'edit', text: 'One row per scheduled job run.' } });
-    expect(response.statusCode).toBe(404); // No draft until the object has been opened.
-    await get(`/api/connections/${connectionId}/dictionary/object?name=dbo.X_JOB_LOG`);
+    // Decision 64: drafts are computed, so an object can be edited without opening it first.
     const edited = await server.inject({ method: 'POST', url: `/api/connections/${connectionId}/dictionary/description`, headers: { cookie }, payload: { name: 'dbo.X_JOB_LOG', action: 'edit', text: 'One row per scheduled job run.' } });
     expect(edited.statusCode).toBe(200);
     const detail = await get(`/api/connections/${connectionId}/dictionary/object?name=dbo.X_JOB_LOG`);
     expect(detail.description).toMatchObject({ text: 'One row per scheduled job run.', origin: 'edited', by: 'Dictionary Tester' });
     expect(Date.parse(detail.description.at)).toBeGreaterThan(Date.now() - 60_000);
     const summary = await get(`/api/connections/${connectionId}/dictionary/summary`);
-    expect(summary.coverage.tables.documented).toBe(1);
+    // Every table and view is described: one edited, the rest drafted.
+    expect(summary.coverage.tables).toEqual({ documented: summary.coverage.tables.total, drafted: summary.coverage.tables.total - 1, total: truth.tables.length + truth.views.length });
   });
 });

@@ -12,12 +12,7 @@ type Policy = {
   newObjects:'approve'|'rules'|'ignore';
   leavingScope:'keep';
   approval:boolean;
-  /** Decision 62: what marks an object as customer-built when no vendor dictionary decides. */
-  classification?:{customPrefixes:string[];customSchemas:string[];ownerPatterns:string[]};
 };
-const DEFAULT_CLASSIFICATION={customPrefixes:['X_'],customSchemas:[] as string[],ownerPatterns:[] as string[]};
-const listText=(items:string[])=>items.join(', ');
-const parseList=(text:string)=>[...new Set(text.split(',').map(item=>item.trim()).filter(Boolean))].slice(0,100);
 type Controls = {revision:number;policy:Policy;overrides:Rule[];nightlyEstimateMs:number|null;objects:Array<{name:string;type:string;mode:Mode;inaccessible:boolean}>};
 const labels:Record<Mode,string>={profile:'Profile and query',list_only:'List only',exclude:'Exclude'};
 const modeOptions=Object.entries(labels).map(([key,label])=><option key={key} value={key}>{label}</option>);
@@ -52,7 +47,6 @@ export function describeChanges(baseline: Controls, draft: Controls): string[] {
   if (JSON.stringify(baseline.policy.nameRules) !== JSON.stringify(draft.policy.nameRules)) out.push(`name rules changed (${draft.policy.nameRules.length} now)`);
   if (JSON.stringify(baseline.policy.columnRules) !== JSON.stringify(draft.policy.columnRules)) out.push(`column rules changed (${draft.policy.columnRules.length} now)`);
   if (baseline.policy.newObjects !== draft.policy.newObjects || baseline.policy.approval !== draft.policy.approval) out.push('change handling updated');
-  if (JSON.stringify(baseline.policy.classification ?? DEFAULT_CLASSIFICATION) !== JSON.stringify(draft.policy.classification ?? DEFAULT_CLASSIFICATION)) out.push('standard or custom rules changed');
   return out;
 }
 
@@ -164,15 +158,6 @@ export function ConnectorControls({connectionId,request}:{connectionId:string;re
         update({columnRules:[...policy.columnRules.filter(rule=>rule.qualifiedName!==qualifiedName),{qualifiedName,mode:value.get('treatment') as 'mask'|'exclude'}]});
         form.reset();
       }}><Input name="column" aria-label="Column" placeholder="table.column, e.g. public.patients.phone"/><Select name="treatment" aria-label="Treatment"><option value="mask">Mask values</option><option value="exclude">Exclude</option></Select><Button size="small" type="submit">Add column rule</Button></form>
-    </article>
-    <article className="control-card"><div className="control-card-head"><h2>Standard or custom</h2><span>Who built an object, not its type</span></div>
-      <p className="faint">Standard means delivered by the vendor; custom means built by your team. An imported vendor dictionary decides for the tables and views it lists. Otherwise these rules mark objects as custom, and anything they don’t match stays not classified.</p>
-      {(()=>{const rules=policy.classification??DEFAULT_CLASSIFICATION;const set=(patch:Partial<typeof rules>)=>update({classification:{...rules,...patch}});
-        return <div className="control-classify">
-          <label>Custom name prefixes<Input value={listText(rules.customPrefixes)} placeholder="X_, Z_" onChange={event=>set({customPrefixes:parseList(event.target.value)})}/><small>At the start of an object’s name or after an underscore, for example X_ matches X_READMITS and usp_X_LOAD.</small></label>
-          <label>Custom schemas<Input value={listText(rules.customSchemas)} placeholder="custom, local" onChange={event=>set({customSchemas:parseList(event.target.value)})}/><small>Every object in these schemas is custom.</small></label>
-          <label>Custom owners<Input value={listText(rules.ownerPatterns)} placeholder="etl_*, analyst_team" onChange={event=>set({ownerPatterns:parseList(event.target.value)})}/><small>Database roles that own customer-built objects; * matches anything.</small></label>
-        </div>;})()}
     </article>
     <article className="control-card"><h2>When things change</h2>
       <div className="control-columns">

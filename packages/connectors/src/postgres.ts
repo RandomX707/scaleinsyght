@@ -296,15 +296,17 @@ export class PostgresConnector implements ReadOnlyConnector {
   }
 
   async routines():Promise<Routine[]>{
-    // PostgreSQL never encrypts definitions; parameters come from the declared argument names, types and modes.
+    // PostgreSQL never encrypts definitions; parameters come from the declared argument names, types and modes. Mode t
+    // (RETURNS TABLE) and a function's OUT arguments are the columns it returns, not parameters (decision 64); a
+    // procedure's OUT arguments are output parameters.
     const result=await this.pool.query<{qualified_name:string;kind:'function'|'procedure';definition:string;parameters:Array<{name:string;dataType:string;mode:string}>|null}>(`SELECT n.nspname||'.'||p.proname||'('||pg_get_function_identity_arguments(p.oid)||')' AS qualified_name,
       CASE WHEN p.prokind='p' THEN 'procedure' ELSE 'function' END AS kind,pg_get_functiondef(p.oid) AS definition,
-      (SELECT json_agg(json_build_object('name',coalesce(nullif(a.name,''),'$'||a.ord),'dataType',format_type(a.type,NULL),'mode',CASE coalesce(a.mode,'i') WHEN 'o' THEN 'out' WHEN 'b' THEN 'inout' ELSE 'in' END) ORDER BY a.ord)
+      (SELECT json_agg(json_build_object('name',coalesce(nullif(a.name,''),'$'||a.ord),'dataType',format_type(a.type,NULL),'mode',CASE coalesce(a.mode,'i') WHEN 'o' THEN 'out' WHEN 'b' THEN 'inout' WHEN 't' THEN 'table' ELSE 'in' END) ORDER BY a.ord)
          FROM unnest(coalesce(p.proallargtypes,p.proargtypes::oid[]),p.proargnames,p.proargmodes) WITH ORDINALITY AS a(type,name,mode,ord)) AS parameters
       FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_toast%'
       AND p.prokind IN ('f','p') ORDER BY n.nspname,p.proname LIMIT $1`,[this.maxCatalogRows+1]);
     if(result.rows.length>this.maxCatalogRows)throw new Error('postgres_connector_result_limit_exceeded');
-    return result.rows.map(row=>({qualifiedName:row.qualified_name,kind:row.kind,definition:row.definition,encrypted:false,parameters:(row.parameters??[]).map(parameter=>({name:parameter.name,dataType:parameter.dataType,mode:parameter.mode as 'in'|'out'|'inout'}))}));
+    return result.rows.map(row=>({qualifiedName:row.qualified_name,kind:row.kind,definition:row.definition,encrypted:false,...splitRoutineArguments(row.kind,row.parameters??[])}));
   }
 
   async categoryValues(table: string, column: string): Promise<{sql: string; values: string[]} | undefined> {
@@ -366,4 +368,13 @@ export async function compilePostgresDialectIntent(raw:unknown,deps:{table:(name
     else if(kind==='average_count_by'){const table=await resolve(intent.table);const entity=await column(table,intent.entityColumn);const group=await column(table,intent.groupBy);const limit=Math.min(Number(intent.limit)||100,100);sql=`SELECT group_value,avg(entity_count)::text AS value${cellSize} FROM (SELECT ${group} AS group_sort,${group}::text AS group_value,${entity} AS entity_key,count(*) AS entity_count FROM ${tableRef(table)} GROUP BY ${group},${entity}) entity_counts GROUP BY group_sort,group_value ORDER BY group_sort LIMIT ${limit}`;}
     else throw new Error('analytic_query_intent_invalid');
     return {sql,values};
+}
+
+/** PostgreSQL lists a routine's inputs and its returned columns as one argument list; split them (decision 64). */
+export function splitRoutineArguments(kind:'function'|'procedure',args:Array<{name:string;dataType:string;mode:string}>):Pick<Routine,'parameters'|'returns'>{
+  const returned=(mode:string)=>mode==='table'||(kind==='function'&&mode==='out');
+  return {
+    parameters:args.filter(arg=>!returned(arg.mode)).map(arg=>({name:arg.name,dataType:arg.dataType,mode:(arg.mode==='out'||arg.mode==='inout'?arg.mode:'in') as 'in'|'out'|'inout'})),
+    returns:args.filter(arg=>returned(arg.mode)).map(arg=>({name:arg.name,dataType:arg.dataType})),
+  };
 }

@@ -47,6 +47,3 @@
 .control-card .ui-table caption { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .controls-heading > div > p { margin: 6px 0 10px; color: var(--muted); }
 .view label.controls-picker { flex-direction: row; align-items: center; gap: 10px; color: var(--faint); font-size: 13px; font-weight: 400; }
-.control-classify { display: grid; gap: 12px; }
-.control-classify label { display: grid; gap: 4px; font-weight: 600; font-size: 13px; }
-.control-classify small { color: var(--faint); font-weight: 400; }

@@ -17,19 +17,19 @@ Status: **approved 25 Nov 2026 with Option A** (section 4; decision 53). Require
 
 | Type | Left panel: Standard | Left panel: Custom | Object tabs |
 |---|---|---|---|
-| PostgreSQL, SQL Server (Snowflake later) | Tables, Views | Custom tables, Procedures grouped by kind (fact loaders, report, data checks, archive, utilities), Materialized views, Custom views, SSIS packages | Table; View, Procedure, Package: Overview, Parameters, Tables and columns, Calls, SQL |
+| PostgreSQL, SQL Server (Snowflake later) | Tables | Procedures grouped by kind (fact loaders, report, data checks, archive, utilities), Functions, Materialized views, Views, SSIS packages | Table; View, Procedure, Package: Overview, Parameters, Tables and columns, Calls, SQL |
 | Excel | Sheets read as tables, with original headers | none (explained) | Table (sheet) |
-| dbt | Models and sources, with descriptions, tests and columns from manifest and catalog | none | Table (model) with tests; dbt descriptions count as documented |
+| dbt | Sources, with descriptions, tests and columns from manifest and catalog | Models | Table (model) with tests; dbt descriptions count as documented |
 | Tableau | Data sources | Worksheets; Calculated fields | Data source; Worksheet; Calculated field with formula |
 
-**Standard and custom.** "Standard" means delivered by the vendor schema, which needs an imported vendor dictionary. Without one, the panel says so ("No vendor dictionary imported, so objects are grouped by type") and groups by object type. Custom detection is by naming convention (`X_` prefix and the prototype's patterns) plus absence from the imported dictionary.
+**Standard and custom** (as built, decision 64, which replaces decisions 62 and this spec's original wording). Decided by object type from the catalog, for every source, automatically: Standard is base tables (and sheets, dbt sources, Tableau data sources); Custom is views, materialized views, procedures, functions and packages (and dbt models, Tableau worksheets and calculated fields). No naming convention, rules or vendor-dictionary comparison. A near-identical copy of another routine carries an informational "Copy" badge.
 
 ### 2.2 Landing summary (opens first)
 
 - Imported dictionary file name and date.
 - Table counts: standard, custom, total.
 - **Objects newer than the dictionary:** assets first seen after the import.
-- **Documented versus harvested coverage**, for tables and for columns. Imported descriptions, dbt descriptions and approved drafts count as documented; unapproved drafts don't.
+- **Described versus harvested coverage**, for tables and for columns. Imported descriptions, dbt descriptions and drafts all count; drafts are shown and used as "Drafted", and the landing says how many are still drafted, with Approve all (decision 64). The HTML, Markdown and Word exports carry the same descriptions, drafted ones marked "Drafted".
 - "How agents use it": fixed copy describing the planner's use of descriptions and glossary (descriptive metadata, scrubbed).
 
 ### 2.3 Left panel
@@ -98,7 +98,7 @@ Status: **approved 25 Nov 2026 with Option A** (section 4; decision 53). Require
   - c7: stored definitions follow section 4;
   - c1: tenant isolation of the new tables (row-level security catalogue check);
   - c6: description approval is recorded with person and time.
-- **Unit tests:** custom detection, search snippets, the HTML export template.
+- **Unit tests:** Standard and Custom by object type, routine arguments split from returned columns, object titles, search snippets, the HTML export template.
 - **Walkthrough** `real-product-s9-dictionary.spec.ts`: for PostgreSQL, SQL Server, Excel, dbt and Tableau testbed sources, compares the Dictionary with testbed truth (object counts, columns, keys, joins, procedure reads and writes, dbt descriptions and tests, Tableau formulas), plus the offline export check. Three consecutive passes.
 - **Screens:** 1440×900 app and prototype pairs for every state. Landing summary, Standard, Custom, table object, view, procedure (Overview and SQL), package, search with SQL hits, export notice, and the Excel, dbt and Tableau sources. Each remaining difference is listed with its reason in `docs/ui/ui-report.md`. The testbed has no SSIS package or encrypted procedure, so those states are shown from the synthetic golden dataset; if it lacks them, they're recorded as differences.
 

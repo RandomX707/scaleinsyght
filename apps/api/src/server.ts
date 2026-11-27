@@ -22,7 +22,7 @@ import { createOidcAuthorizationRequest, verifyOidcIdToken } from '@scaleinsyght
 import { createEnrollment, hashGatewaySecret, validateGatewayPlan, validateGatewayResult } from '@scaleinsyght/customer-gateway';
 import { readTableauWorkbook } from '@scaleinsyght/tableau';
 import { parseDictionaryFile } from './dictionary-file.js';
-import { registerDictionaryRoutes } from './dictionary.js';
+import { registerDictionaryRoutes, sourceDescriptions } from './dictionary.js';
 
 export interface TestSource { id: string; type: SourceConnectorType | 'dbt' | 'tableau' | 'power_bi'; name: string; }
 const DICTIONARY_SQL=`SELECT dataset.asset_id,dataset.qualified_name,
@@ -1360,13 +1360,13 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
   app.get<{Params:{connectionId:string};Querystring:{format?:string;object?:string}}>('/api/connections/:connectionId/dictionary/export',async(request,reply)=>{
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     const format=request.query.format;if(format!=='markdown'&&format!=='docx')return reply.code(400).send({error:'unsupported_export_format'});
-    const {tables,name}=await withTenant(options.pool,current.tenantId,async(client)=>({tables:(await client.query<{qualified_name:string;fields:Array<{name:string;label:string|null;dataType:string|null;tags:string[]|null;nullRate:string|number|null;distinctCount:string|number|null;description:string|null}>}>(DICTIONARY_SQL,[current.tenantId,request.params.connectionId])).rows,
+    const {tables,name,descriptions}=await withTenant(options.pool,current.tenantId,async(client)=>({descriptions:await sourceDescriptions(client,current.tenantId,request.params.connectionId),tables:(await client.query<{qualified_name:string;fields:Array<{name:string;label:string|null;dataType:string|null;tags:string[]|null;nullRate:string|number|null;distinctCount:string|number|null;description:string|null}>}>(DICTIONARY_SQL,[current.tenantId,request.params.connectionId])).rows,
       name:(await client.query<{name:string}>("SELECT coalesce(nullif(display_name,''),connector_type) AS name FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2",[current.tenantId,request.params.connectionId])).rows[0]?.name}));
     if(!name)return reply.code(404).send({error:'connection_not_found'});
     // object= exports one table (the Dictionary header card's Export buttons); without it, the whole source.
     const chosen=typeof request.query.object==='string'?tables.filter(table=>table.qualified_name===request.query.object):tables;
     if(typeof request.query.object==='string'&&!chosen.length)return reply.code(404).send({error:'object_not_found'});
-    const rendered=await renderDictionary({sourceName:name,generatedAt:new Date().toISOString().slice(0,10),tables:chosen.map(table=>({name:table.qualified_name,columns:table.fields.sort((a,b)=>a.name.localeCompare(b.name)).map(field=>({name:field.name,label:field.label,dataType:field.dataType,tags:field.tags??[],nullRate:field.nullRate===null?null:Number(field.nullRate),distinctCount:field.distinctCount===null?null:Number(field.distinctCount),description:field.description}))}))},format);
+    const rendered=await renderDictionary({sourceName:name,generatedAt:new Date().toISOString().slice(0,10),tables:chosen.map(table=>({name:table.qualified_name,description:descriptions?.get(table.qualified_name)??null,columns:table.fields.sort((a,b)=>a.name.localeCompare(b.name)).map(field=>({name:field.name,label:field.label,dataType:field.dataType,tags:field.tags??[],nullRate:field.nullRate===null?null:Number(field.nullRate),distinctCount:field.distinctCount===null?null:Number(field.distinctCount),description:field.description}))}))},format);
     return reply.type(rendered.contentType).header('content-disposition',`attachment; filename="${rendered.filename}"`).header('x-content-sha256',rendered.contentHash).send(rendered.bytes);
   });
   app.post<{Params:{connectionId:string};Body:{format:'csv'|'xlsx';filename:string;contentBase64:string}}>('/api/connections/:connectionId/dictionary/import',async(request,reply)=>{
