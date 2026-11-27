@@ -28,6 +28,20 @@ export function governedRows(rows: AgentData['governed']) {
   return [...latest.values()].map((row) => ({ ...row, approvedVersion: approved.get(row.governedId) ?? null, pending: !row.approvedBy }));
 }
 
+/**
+ * Collating groups with their active members, in a stable order: members in connection order (oldest first) and
+ * groups by their first member, whatever order the API returns rows in. Groups with no active member are left out.
+ */
+export function collatingGroups(rows: AgentData['groups'], active: Connection[]): Array<{ groupId: string; members: Connection[] }> {
+  const order = new Map(active.map((item, index) => [item.connectionId, index]));
+  const byId = new Map(active.map((item) => [item.connectionId, item]));
+  return [...new Set(rows.map((row) => row.groupId))]
+    .map((groupId) => ({ groupId, members: rows.filter((row) => row.groupId === groupId && byId.has(row.connectionId))
+      .sort((a, b) => order.get(a.connectionId)! - order.get(b.connectionId)!).map((row) => byId.get(row.connectionId)!) }))
+    .filter((group) => group.members.length)
+    .sort((a, b) => order.get(a.members[0]!.connectionId)! - order.get(b.members[0]!.connectionId)!);
+}
+
 export function AgentsScreen(props: { connections: Connection[]; request: Request }) {
   const [data, setData] = useState<AgentData | null>(null);
   const [error, setError] = useState(''); const [message, setMessage] = useState('');
@@ -35,10 +49,7 @@ export function AgentsScreen(props: { connections: Connection[]; request: Reques
   const reload = () => props.request<AgentData>('/api/agents').then(setData);
   useEffect(() => { void reload().catch(() => setError('Agents could not be loaded.')); }, []);
   const active = props.connections.filter((item) => item.status === 'active');
-  const byId = new Map(active.map((item) => [item.connectionId, item]));
-  const groups = [...new Map((data?.groups ?? []).map((group) => [group.groupId, group])).keys()]
-    .map((groupId) => ({ groupId, members: (data?.groups ?? []).filter((group) => group.groupId === groupId && byId.has(group.connectionId)).map((group) => byId.get(group.connectionId)!) }))
-    .filter((group) => group.members.length);
+  const groups = collatingGroups(data?.groups ?? [], active);
   const governed = governedRows(data?.governed ?? []);
   async function create() {
     try {
