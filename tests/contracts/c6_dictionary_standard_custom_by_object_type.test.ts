@@ -166,7 +166,7 @@ describe('decision 64 Standard and Custom by object type', () => {
     const html = await inject('POST', '/api/dictionary/export-html', { acknowledged: true, connectionIds: [connectionId] });
     expect(html.statusCode).toBe(200);
     expect(html.body).toContain('linked by declared keys to');
-    expect(html.body).toContain('"descriptionDrafted":true');
+    expect(html.body).toContain('"descriptionState":"drafted"');
     // Markdown and Word carry the same descriptions, drafted ones marked (tables and views; routines are not in them).
     const markdown = await inject('GET', `/api/connections/${connectionId}/dictionary/export?format=markdown`);
     expect(markdown.body).toContain(`## ${schema}.X_READMITS\n\n**Drafted:** Table X_READMITS with 1 column, linked by declared keys to ${schema}.encounters.`);

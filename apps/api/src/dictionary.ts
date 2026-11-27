@@ -2,7 +2,6 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool, PoolClient } from 'pg';
 import { withTenant } from '@scaleinsyght/db';
 import type { ReadOnlyConnector } from '@scaleinsyght/connectors';
-import { scrubDefinition } from '@scaleinsyght/classification';
 import { renderDictionaryHtml, type HtmlSource } from './dictionary-html.js';
 
 /**
@@ -550,9 +549,10 @@ export async function erNeighbourhood(client: PoolClient, input: { tenantId: str
 
 type ColumnRow = { name: string; label: string | null; data_type: string | null; is_nullable: boolean | null; statistics_estimated?: boolean | null; tags: string[] | null; tag_evidence: Array<{ tag: string; detection: string }> | null; null_rate: string | null; distinct_count: string | null; description: string | null; used_by: number; field_id: string };
 
-async function objectDetail(client: PoolClient, tenantId: string, connectionId: string, name: string) {
-  const source = await sourceFor(client, tenantId, connectionId); if (!source) return null;
-  const objects = await listObjects(client, tenantId, source);
+/** The page's object detail. The HTML export passes the source and its object list once, instead of per object. */
+async function objectDetail(client: PoolClient, tenantId: string, connectionId: string, name: string, prepared?: { source: Source; objects: ListedObject[] }) {
+  const source = prepared?.source ?? await sourceFor(client, tenantId, connectionId); if (!source) return null;
+  const objects = prepared?.objects ?? await listObjects(client, tenantId, source);
   const listed = objects.find((object) => object.name === name); if (!listed) return null;
   const datasetSource = source.connector_type === 'dbt' && source.source_ref?.startsWith('warehouse:') ? source.source_ref.slice('warehouse:'.length) : connectionId;
   const dataset = (await client.query<{ asset_id: string; asset_type: string; statistics: { row_count?: number; row_count_estimated?: boolean } | null; structural: { columns?: Array<{ name: string }> } | null; first_seen_at: Date }>(
@@ -692,50 +692,29 @@ export async function sourceDescriptions(client: PoolClient, tenantId: string, c
   return described;
 }
 
-/** One source for the offline export: names, types, descriptions, columns with withheld statistics left out,
- * scrubbed definitions and relationships. Out-of-scope objects by name and type only (non-negotiable 11). */
+/** One source for the offline export, from the page's own code path: the object list with its groups, and each
+ * object's detail exactly as the page's API returns it. Out-of-scope objects by name and type only (non-negotiable 11). */
 async function exportSource(client: PoolClient, tenantId: string, connectionId: string): Promise<HtmlSource | null> {
   const source = await sourceFor(client, tenantId, connectionId); if (!source) return null;
   const objects = await listObjects(client, tenantId, source);
-  const datasetSource = source.connector_type === 'dbt' && source.source_ref?.startsWith('warehouse:') ? source.source_ref.slice('warehouse:'.length) : connectionId;
-  const names = objects.map((object) => object.name);
-  const columnRows = (await client.query<{ table_name: string; name: string; label: string | null; data_type: string | null; tags: string[] | null; null_rate: string | null; distinct_count: string | null; description: string | null }>(
-    `SELECT d.qualified_name AS table_name,split_part(f.qualified_name,'.',array_length(string_to_array(f.qualified_name,'.'),1)) AS name,p.display_name AS label,p.data_type,p.sensitivity_tags AS tags,p.null_rate::text,p.distinct_count::text,dd.description
-     FROM graph.assets d JOIN graph.relationships c ON c.tenant_id=d.tenant_id AND c.family='structural' AND c.relationship_type='CONTAINS' AND c.from_asset_id=d.asset_id
-       JOIN graph.assets f ON f.tenant_id=c.tenant_id AND f.asset_id=c.to_asset_id AND f.active
-       LEFT JOIN LATERAL(SELECT display_name,data_type,sensitivity_tags,null_rate,distinct_count FROM profiler.field_profiles WHERE tenant_id=f.tenant_id AND asset_id=f.asset_id ORDER BY profile_version DESC LIMIT 1)p ON true
-       LEFT JOIN graph.dictionary_descriptions dd ON dd.tenant_id=d.tenant_id AND dd.source_id=$3 AND dd.table_name=d.qualified_name AND dd.column_name=split_part(f.qualified_name,'.',array_length(string_to_array(f.qualified_name,'.'),1))
-     WHERE d.tenant_id=$1 AND d.source_id=$2 AND d.active AND d.qualified_name=ANY($4::text[]) ORDER BY d.qualified_name,f.qualified_name`, [tenantId, datasetSource, connectionId, names])).rows;
-  const definitions = (await client.query<{ qualified_name: string; scrubbed_text: string | null; encrypted: boolean; analysis: { writes?: Array<{ table: string; mode: string }>; reads?: string[]; calls?: string[] } }>(
-    `SELECT qualified_name,scrubbed_text,encrypted,analysis FROM graph.definitions WHERE tenant_id=$1 AND source_id=$2 AND active`, [tenantId, connectionId])).rows;
-  // Drafted descriptions are exported too, marked as drafted (decision 64).
-  const byDescription = (await sourceDescriptions(client, tenantId, connectionId)) ?? new Map<string, { text: string; drafted: boolean }>();
-  const relationships = (await client.query<{ from_name: string; to_name: string; evidence_method: string; review_status: string }>(
-    `SELECT DISTINCT ON (r.relationship_id) f.qualified_name AS from_name,t.qualified_name AS to_name,a.evidence_method,a.review_status FROM graph.relationships r
-       JOIN graph.assets f ON f.tenant_id=r.tenant_id AND f.asset_id=r.from_asset_id AND f.active AND f.source_id=$2 JOIN graph.assets t ON t.tenant_id=r.tenant_id AND t.asset_id=r.to_asset_id AND t.active AND t.source_id=$2
-       JOIN LATERAL(SELECT evidence_method,review_status FROM graph.assertions s WHERE s.tenant_id=r.tenant_id AND s.relationship_id=r.relationship_id AND s.valid_to IS NULL AND s.review_status NOT IN ('rejected','stale','disputed') ORDER BY CASE WHEN s.evidence_method='declared' THEN 0 ELSE 1 END LIMIT 1)a ON true
-     WHERE r.tenant_id=$1 AND r.family='structural' AND r.relationship_type='REFERENCES' ORDER BY r.relationship_id LIMIT 20000`, [tenantId, datasetSource])).rows;
   const outOfScope = (await client.query<{ qualified_name: string; object_type: string }>(
     `SELECT qualified_name,object_type FROM registry.connection_scopes WHERE tenant_id=$1 AND connection_id=$2 AND scope_mode IN ('list_only','exclude') ORDER BY qualified_name`, [tenantId, connectionId])).rows;
-  const byTable = new Map<string, typeof columnRows>();
-  for (const row of columnRows) byTable.set(row.table_name, [...(byTable.get(row.table_name) ?? []), row]);
-  const byDefinition = new Map(definitions.map((row) => [row.qualified_name, row]));
   const excluded = new Set(outOfScope.map((row) => row.qualified_name));
+  const shown = objects.filter((object) => !excluded.has(object.name));
+  const details: Record<string, unknown> = {};
+  const states = new Map<string, string | null>();
+  for (const object of shown) {
+    const detail = await objectDetail(client, tenantId, connectionId, object.name, { source, objects });
+    if (!detail) continue;
+    // "Show original" fetches live text from the source; the export carries the scrubbed text only.
+    if (detail.definition) detail.definition = { ...detail.definition, originalAvailable: false };
+    details[object.name] = detail;
+    states.set(object.name, (detail.description as { origin?: string } | null)?.origin ?? null);
+  }
   return {
-    name: source.name, type: source.connector_type,
-    // Out-of-scope objects appear only in the name-and-type list (non-negotiable 11).
-    objects: objects.filter((object) => !excluded.has(object.name)).map((object) => {
-      const definition = byDefinition.get(object.name);
-      const described = byDescription.get(object.name);
-      return { name: object.name, kind: object.kind, custom: object.custom, origin: object.origin, group: groupFor(object).label, description: described?.text ?? null, ...(described?.drafted ? { descriptionDrafted: true } : {}),
-        columns: (byTable.get(object.name) ?? []).map((row) => {
-          const withheld = (row.tags ?? []).length > 0;
-          return { name: row.name, label: row.label, dataType: row.data_type, tags: row.tags ?? [], statsWithheld: withheld,
-            nullRate: withheld || row.null_rate === null ? null : Number(row.null_rate), distinctCount: withheld || row.distinct_count === null ? null : Number(row.distinct_count), description: row.description };
-        }),
-        ...(definition ? { definition: { encrypted: definition.encrypted, text: definition.scrubbed_text === null ? null : scrubDefinition(definition.scrubbed_text), writes: definition.analysis.writes ?? [], reads: definition.analysis.reads ?? [], calls: definition.analysis.calls ?? [] } } : {}) };
-    }),
-    relationships: relationships.map((row) => ({ from: row.from_name, to: row.to_name, evidence: row.evidence_method, review: row.review_status })),
-    outOfScope: outOfScope.map((row) => ({ name: row.qualified_name, type: row.object_type })),
+    connectionId, name: source.name, type: source.connector_type,
+    objects: shown.map((object) => { const group = groupFor(object); return { name: object.name, kind: object.kind, origin: object.origin, group: { ...group, order: GROUP_ORDER.indexOf(group.key) },
+      ...(object.copyOf ? { copyOf: object.copyOf, copySimilarity: object.copySimilarity } : {}), descriptionState: states.get(object.name) ?? null }; }),
+    details, outOfScope: outOfScope.map((row) => ({ name: row.qualified_name, type: row.object_type })),
   };
 }
