@@ -1,11 +1,11 @@
 import { columnScope, objectScope } from './scope.js';
-import { CATALOG_ROW_LIMIT } from './limits.js';
+import { CATALOG_ROW_LIMIT, sourceTimeouts, withSourceDeadline, type SourceTimeoutOptions } from './limits.js';
 import { inIdSample, sqlServerIdSampleCondition } from './id-sample.js';
 import { DEFAULT_SAMPLING, SENSITIVITY_MIN_VALUES, SENSITIVITY_VALUES, type SamplingLimits, catalogEstimate, samplePercent } from './sampling.js';
 import { createHash } from 'node:crypto';
 import sql from 'mssql';
 import { classifyColumn } from '@scaleinsyght/classification';
-import { POSSIBLE_REFERENCE_COVERAGE, REFERENCE_CHECK_SAMPLE, isSkippableCheckError, withSkippedChecks, UNMEASURED, type ColumnStatistics, type ConnectorScope, type DiscoveryResult, type ObjectProfile, type ReadOnlyConnector , type ObjectOrigin } from './index.js';
+import { POSSIBLE_REFERENCE_COVERAGE, REFERENCE_CHECK_SAMPLE, isSkippableCheckError, isSourceQueryTimeout, withSkippedChecks, type SkippedReference, UNMEASURED, type ColumnStatistics, type ConnectorScope, type DiscoveryResult, type ObjectProfile, type ReadOnlyConnector , type ObjectOrigin } from './index.js';
 
 const SQL_SERVER_TEXT = new Set(['nvarchar', 'varchar', 'nchar', 'char']);
 const SQL_SERVER_MEASURABLE = new Set([...SQL_SERVER_TEXT, 'tinyint', 'smallint', 'int', 'bigint', 'decimal', 'numeric', 'float', 'real', 'bit', 'date', 'datetime', 'datetime2', 'uniqueidentifier']);
@@ -18,14 +18,16 @@ const keyFor = (name: string) => createHash('sha256').update(`sql_server\0${name
 export type SqlServerConnection = { server: string; port: number; database: string; username: string; password: string; encrypt: true; trustServerCertificate?: boolean };
 
 /** The driver gave up on a request that ran past its time limit (mssql ETIMEOUT). */
-const isTimeout = (error: unknown) => (error as { code?: string })?.code === 'ETIMEOUT';
+const isTimeout = (error: unknown) => (error as { code?: string })?.code === 'ETIMEOUT' || (error instanceof Error && error.message === 'source_query_timeout');
 
 export class SqlServerConnector implements ReadOnlyConnector {
   readonly type = 'sql_server' as const;
   readonly modelRequests = 0;
   readonly id: string;
   readonly name: string;
-  private readonly pool: sql.ConnectionPool;
+  private readonly timeouts: ReturnType<typeof sourceTimeouts>;
+  private pool: sql.ConnectionPool;
+  private readonly newPool: () => sql.ConnectionPool;
   private readonly maxRows: number;
   /** Ceiling for catalog listings (tables, columns, keys, definitions), separate from the data-read row limit. */
   private readonly maxCatalogRows: number;
@@ -33,25 +35,54 @@ export class SqlServerConnector implements ReadOnlyConnector {
 
   /** Decision 59: when to count exactly and how many rows to sample. */
   private readonly limits: SamplingLimits;
-  constructor(input: SqlServerConnection & { id?: string; name?: string; statementTimeoutMs?: number; maxRows?: number; maxCatalogRows?: number; sampling?: Partial<SamplingLimits> }) {
+  constructor(input: SqlServerConnection & { id?: string; name?: string; maxRows?: number; maxCatalogRows?: number; sampling?: Partial<SamplingLimits> } & SourceTimeoutOptions) {
     this.limits = { ...DEFAULT_SAMPLING, ...input.sampling };
     if (!input.encrypt) throw new Error('sqlserver_encryption_required');
-    const statementTimeoutMs = input.statementTimeoutMs ?? 10_000;
+    this.timeouts = sourceTimeouts(input);
     this.maxRows = input.maxRows ?? 1_000;
     this.maxCatalogRows = input.maxCatalogRows ?? CATALOG_ROW_LIMIT;
-    if (!Number.isSafeInteger(statementTimeoutMs) || statementTimeoutMs < 1) throw new Error('sqlserver_statement_timeout_invalid');
     if (!Number.isSafeInteger(this.maxRows) || this.maxRows < 1) throw new Error('sqlserver_row_limit_invalid');
     if (!Number.isSafeInteger(this.maxCatalogRows) || this.maxCatalogRows < 1) throw new Error('sqlserver_catalog_limit_invalid');
-    this.pool = new sql.ConnectionPool({
+    this.newPool = () => new sql.ConnectionPool({
       server: input.server, port: input.port, database: input.database, user: input.username, password: input.password,
       options: { encrypt: true, trustServerCertificate: input.trustServerCertificate ?? false },
-      connectionTimeout: 5_000, requestTimeout: statementTimeoutMs, pool: { max: 2, min: 0, idleTimeoutMillis: 30_000 },
+      connectionTimeout: this.timeouts.connect, requestTimeout: this.timeouts.query, pool: { max: 2, min: 0, idleTimeoutMillis: 30_000 },
     });
+    this.pool = this.newPool();
     this.id = input.id ?? 'sql-server-source';
     this.name = input.name ?? 'SQL Server source';
   }
 
-  private async request() { if (!this.pool.connected) await this.pool.connect(); return this.pool.request(); }
+  private async request() {
+    const pool = this.pool;
+    if (!pool.connected) {
+      const opening = pool.connect();
+      try {
+        await withSourceDeadline(opening, this.timeouts.connect, 'source_unreachable', () => {
+          if (this.pool !== pool) return;
+          this.pool = this.newPool();
+          // The driver cannot close during login. Dispose this pool if a delayed login still succeeds.
+          void opening.then(() => pool.close()).catch(() => undefined);
+        });
+      } catch (error) {
+        if ((error as { code?: string })?.code === 'ETIMEOUT') throw new Error('source_unreachable', { cause: error });
+        throw error;
+      }
+      if (this.pool !== pool) throw new Error('source_unreachable');
+    }
+    const request = pool.request();
+    const query = request.query.bind(request);
+    return {
+      input(name: string, typeOrValue: unknown, ...values: unknown[]) {
+        if (values.length === 0) request.input(name, typeOrValue);
+        else request.input(name, typeOrValue as Parameters<sql.Request['input']>[1], values[0]);
+        return this;
+      },
+      query: <T>(text: string) => withSourceDeadline(
+        query<T>(text), this.timeouts.query, 'source_query_timeout', () => request.cancel(),
+      ),
+    };
+  }
 
   async test(): Promise<{ ok: true; capabilities: ['discover', 'profile']; readOnly: true }> {
     const request = await this.request();
@@ -119,21 +150,25 @@ export class SqlServerConnector implements ReadOnlyConnector {
     // Decision 59: the size comes from sys.partitions (no scan); small tables are counted exactly.
     const table = object.object_type !== 'V';
     let estimate: number | null = null;
-    if (table) { try { const partitions = await (await this.request()).input('id', sql.NVarChar, `${quote(object.schema_name)}.${quote(object.object_name)}`).query<{ rows: number | null }>('SELECT SUM(p.rows) AS rows FROM sys.partitions p WHERE p.object_id=OBJECT_ID(@id) AND p.index_id IN (0,1)'); estimate = catalogEstimate(partitions.recordset[0]?.rows === null || partitions.recordset[0]?.rows === undefined ? null : Number(partitions.recordset[0].rows)); } catch { estimate = null; } }
+    let limited: 'timeout' | undefined;
+    if (table) { try { const partitions = await (await this.request()).input('id', sql.NVarChar, `${quote(object.schema_name)}.${quote(object.object_name)}`).query<{ rows: number | null }>('SELECT SUM(p.rows) AS rows FROM sys.partitions p WHERE p.object_id=OBJECT_ID(@id) AND p.index_id IN (0,1)'); estimate = catalogEstimate(partitions.recordset[0]?.rows === null || partitions.recordset[0]?.rows === undefined ? null : Number(partitions.recordset[0].rows)); } catch (error) { if (isSourceQueryTimeout(error)) limited = 'timeout'; } }
     let rowCount: number | null = null; let rowCountEstimated = false;
     if (estimate !== null && estimate > this.limits.exactCountLimit) { rowCount = estimate; rowCountEstimated = true; }
     else {
       try {
         const counted = await (await this.request()).query<{row_count:number}>(`SELECT COUNT_BIG(*) AS row_count FROM ${fullName}`);
         rowCount = counted.recordset[0]?.row_count == null ? null : Number(counted.recordset[0].row_count);
-      } catch { if (estimate !== null) { rowCount = estimate; rowCountEstimated = true; } /* Otherwise unavailable: excluded from change comparisons. */ }
+      } catch (error) {
+        if (isSourceQueryTimeout(error)) limited = 'timeout';
+        if (estimate !== null) { rowCount = estimate; rowCountEstimated = true; }
+      }
     }
     // TABLESAMPLE works on tables only; a view is read with a plain row limit.
     const sampled = (wanted: number) => { const percent = table ? samplePercent(rowCount, wanted) : null; return percent === null ? '' : ` TABLESAMPLE SYSTEM (${percent} PERCENT)`; };
     // Bounded text samples feed the sensitivity detector only; they are discarded here and never stored or sent to a model (decision 41).
     // One query samples every text column; a sparse column gets its own non-null sample. A query that still runs out of
     // time leaves the table without samples or statistics (bug 6), so an unsampled column never gets statistics (contract 7).
-    const samples = new Map<string, string[]>(); let limited: 'timeout' | undefined;
+    const samples = new Map<string, string[]>();
     const textColumns = rowCount === null ? [] : columns.filter((column) => !columnScope(scope, qualifiedName, column.column_name) && ['nvarchar', 'varchar', 'nchar', 'char'].includes(column.data_type));
     try {
       if (textColumns.length) {
@@ -173,7 +208,7 @@ export class SqlServerConnector implements ReadOnlyConnector {
       JOIN sys.schemas rs ON rs.schema_id=rt.schema_id JOIN sys.columns rc ON rc.object_id=f.referenced_object_id AND rc.column_id=f.referenced_column_id ORDER BY [from],[to]`);
     if (rows.recordset.length > this.maxCatalogRows) throw new Error('sqlserver_connector_result_limit_exceeded');
     const permits=(table:string,column:string)=>objectScope(scope,table,'table')==='profile'&&!columnScope(scope,table,column);
-    let skippedChecks = 0;
+    let skippedChecks = 0; const timedOutChecks: SkippedReference[] = [];
     const references: Array<{ from: string; to: string; fromColumn: string; toColumn: string; evidenceMethod: 'declared' | 'inferred'; confidence?:number; matchedCount?:number; sourceCount?:number; sampled?:boolean }> = rows.recordset.filter(item=>permits(item.from,item.fromColumn)&&permits(item.to,item.toColumn)).map((row) => ({ ...row, evidenceMethod: 'declared' }));
     const candidates = await (await this.request()).query<{ from: string; to: string; fromColumn: string; toColumn: string }>(`SELECT TOP (${this.maxCatalogRows}) ss.name+'.'+st.name AS [from],ts.name+'.'+tt.name AS [to],sc.name AS fromColumn,tc.name AS toColumn
       FROM sys.columns sc JOIN sys.tables st ON st.object_id=sc.object_id JOIN sys.schemas ss ON ss.schema_id=st.schema_id
@@ -194,12 +229,12 @@ export class SqlServerConnector implements ReadOnlyConnector {
       try { count = await (await this.request()).query<{ source_count: number; matched_count: number }>(`SELECT COUNT_BIG(*) AS source_count, COUNT_BIG(dst.${quote(candidate.toColumn)}) AS matched_count
         FROM (SELECT TOP (${REFERENCE_CHECK_SAMPLE}) ${quote(candidate.fromColumn)} AS v FROM ${quote(fromSchema)}.${quote(fromName)} WHERE ${quote(candidate.fromColumn)} IS NOT NULL) src
         LEFT JOIN ${quote(toSchema)}.${quote(toName)} dst ON dst.${quote(candidate.toColumn)} = src.v`); }
-      catch (error) { if (!isSkippableCheckError(error)) throw error; skippedChecks++; continue; }
+      catch (error) { if (!isSkippableCheckError(error)) throw error; skippedChecks++; if (isSourceQueryTimeout(error)) timedOutChecks.push(candidate); continue; }
       const sourceCount = Number(count.recordset[0]?.source_count ?? 0); const matchedCount = Number(count.recordset[0]?.matched_count ?? 0);
       if (sourceCount > 0 && matchedCount / sourceCount >= POSSIBLE_REFERENCE_COVERAGE) references.push({ ...candidate, evidenceMethod: 'inferred',confidence:matchedCount/sourceCount,matchedCount,sourceCount,sampled:sourceCount>=REFERENCE_CHECK_SAMPLE });
       if (references.length > this.maxCatalogRows) throw new Error('sqlserver_connector_result_limit_exceeded');
     }
-    return withSkippedChecks(references, skippedChecks);
+    return withSkippedChecks(references, skippedChecks, timedOutChecks);
   }
 
   /** Distinct values for the ID agent; with sample, only values the consistent rule keeps (decision 61), selected in SQL. */
@@ -289,7 +324,7 @@ export class SqlServerConnector implements ReadOnlyConnector {
   }
 
   async queryAggregate(assetKey: string, metric: 'count') { if (metric !== 'count') throw new Error('connector_query_not_supported'); const found = [...this.objects].find(([name]) => keyFor(name) === assetKey); if (!found) throw new Error('asset_not_found'); const object = found[1]; const result = await (await this.request()).query<{ value: number }>(`SELECT TOP (1) COUNT_BIG(*) AS value FROM ${quote(object.schema_name)}.${quote(object.object_name)}`); return { metric: 'count' as const, value: Number(result.recordset[0]?.value ?? 0) }; }
-  async close() { if (this.pool.connected) await this.pool.close(); }
+  async close() { await withSourceDeadline(this.pool.close(), this.timeouts.connect, 'source_close_timeout').catch(() => undefined); }
 }
 
-export function createSqlServerConnector(input: SqlServerConnection & { id?: string; name?: string; statementTimeoutMs?: number; maxRows?: number; maxCatalogRows?: number; sampling?: Partial<SamplingLimits> }) { return new SqlServerConnector(input); }
+export function createSqlServerConnector(input: SqlServerConnection & { id?: string; name?: string; maxRows?: number; maxCatalogRows?: number; sampling?: Partial<SamplingLimits> } & SourceTimeoutOptions) { return new SqlServerConnector(input); }
