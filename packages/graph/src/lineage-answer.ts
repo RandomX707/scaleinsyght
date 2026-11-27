@@ -60,7 +60,7 @@ export async function answerLineageRequest(pool: Pool, input: { tenantId: string
     if (ids.length) claims.push(ClaimSchema.parse({ claim_id: randomUUID(), kind: 'lineage', statement: `${names.get(edge.to_asset_id)} is ${derived ? 'computed from' : edge.granularity === 'dataset' ? 'built from' : 'copied from'} ${names.get(edge.from_asset_id)} (${LABEL[method].toLowerCase()}${method === 'inferred' ? ', not verified' : ''}).`, evidence_ids: ids }));
   }
   steps.sort((a, b) => a.hop - b.hop || a.from.localeCompare(b.from) || a.to.localeCompare(b.to));
-  const gaps = path.gaps.flatMap((gap) => gap.between_asset_ids.filter((id) => hop.has(id)).map((id) => ({ asset: names.get(id) ?? '', reason: gap.reason })));
+  const gaps = path.gaps.filter(gap => !gap.closed_by_assertion_id).flatMap((gap) => gap.between_asset_ids.filter((id) => hop.has(id)).map((id) => ({ asset: names.get(id) ?? '', reason: gap.reason })));
   methods.gap = gaps.length;
   const related = [...hop.keys()].filter((id) => id !== assetId).length;
   const summary = input.direction === 'upstream'

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { withTenant, type Pool } from '@scaleinsyght/db';
-import { parseStatementLineage, statementHash, writeStatementLineage, SqlParserUnavailable, type LineageDialect, type StatementLineage } from './sql-lineage.js';
+import { withTenant, type Pool, type PoolClient } from '@scaleinsyght/db';
+import { parseStatementLineage, statementHash, writeFlowEdge, writeStatementLineage, SqlParserUnavailable, type LineageDialect, type StatementLineage } from './sql-lineage.js';
 
 type Node = { resource_type?: unknown; name?: unknown; alias?: unknown; schema?: unknown; identifier?: unknown; compiled_code?: unknown; depends_on?: { nodes?: unknown }; description?: unknown; columns?: Record<string, { name?: unknown; description?: unknown }>; attached_node?: unknown; column_name?: unknown; test_metadata?: { name?: unknown } };
 type CatalogEntry = { metadata?: { schema?: unknown; name?: unknown }; columns?: Record<string, { type?: unknown; name?: unknown }> };
@@ -71,6 +71,7 @@ export async function importDbtArtifacts(pool: Pool, input: { tenantId: string; 
     catch (error) { parsed.set(model.relation, error instanceof SqlParserUnavailable ? 'The SQL parser was unavailable, so this model\'s column lineage was not collected' : `The model's compiled SQL could not be parsed (${error instanceof Error ? error.message.replaceAll('_', ' ') : 'parse failed'})`); }
   }
   return withTenant(pool, input.tenantId, async (client) => {
+    await lockDbtWarehouse(client, input.tenantId, input.warehouseConnectionId);
     const known = await client.query<{ asset_id: string; qualified_name: string; asset_type: string; source_id: string }>(
       `SELECT asset_id,qualified_name,asset_type,source_id FROM graph.assets WHERE tenant_id=$1 AND source_id=ANY($2::uuid[]) AND active AND asset_type IN ('dataset','field')`,
       [input.tenantId, [input.warehouseConnectionId, input.dbtConnectionId]]);
@@ -101,7 +102,7 @@ export async function importDbtArtifacts(pool: Pool, input: { tenantId: string; 
       const written = await writeStatementLineage(client, { tenantId: input.tenantId, target: model.relation, lineage: usable,
         assets: { dataset: (name) => datasets.get(name), field: (name) => fields.get(name) }, declaredReads: model.declaredReads,
         evidenceMethod: 'declared', collector: 'dbt-artifacts-v1', evidenceType: 'dbt_manifest', statementHash: model.sql ? statementHash(model.sql) : '',
-        missingReason: (table) => `dbt reads ${table}, which no connected source exposes` });
+        missingReason: sourceGapReason });
       totals.tableEdges += written.tableEdges; totals.columnEdges += written.columnEdges; totals.gaps += written.gaps;
       if (typeof lineage === 'string') {
         const targetId = datasets.get(model.relation)!;
@@ -119,11 +120,82 @@ export async function importDbtArtifacts(pool: Pool, input: { tenantId: string; 
     await client.query('DELETE FROM graph.dbt_tests WHERE tenant_id=$1 AND source_id=$2', [input.tenantId, input.dbtConnectionId]);
     for (const item of artifacts.testList) await client.query('INSERT INTO graph.dbt_tests(tenant_id,source_id,model,column_name,test_name) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING',
       [input.tenantId, input.dbtConnectionId, item.relation, item.column, item.test]);
+    const sourceNames = new Set(artifacts.objects.filter(object => object.type === 'source').map(object => object.name));
+    const sourceDependencies = artifacts.models.flatMap(model => model.declaredReads
+      .filter(source => sourceNames.has(source)).map(source => ({ source, model: model.relation })));
     await client.query(
       `UPDATE registry.connections SET dbt_import=jsonb_build_object(
-        'importedAt',clock_timestamp(),'models',$3::integer,'tests',$4::integer,'objects',$5::jsonb)
+        'importedAt',clock_timestamp(),'models',$3::integer,'tests',$4::integer,'objects',$5::jsonb,'sourceDependencies',$6::jsonb)
         WHERE tenant_id=$1 AND connection_id=$2 AND connector_type='dbt'`,
-      [input.tenantId,input.dbtConnectionId,artifacts.models.length,artifacts.tests,JSON.stringify(artifacts.objects)]);
+      [input.tenantId,input.dbtConnectionId,artifacts.models.length,artifacts.tests,JSON.stringify(artifacts.objects),JSON.stringify(sourceDependencies)]);
+    await relinkDbtWarehouseSources(client, input.tenantId, input.warehouseConnectionId);
     return { models: artifacts.models.length, tests: artifacts.tests, sources: artifacts.sources, ...totals, modelsNotInWarehouse: notInWarehouse.sort() };
   });
+}
+
+const sourceGapReason = (source: string) => `dbt reads ${source}, which no connected source exposes`;
+const COLLECTOR = 'dbt-artifacts-v1';
+
+async function lockDbtWarehouse(client: PoolClient, tenantId: string, warehouseId: string) {
+  await client.query('SELECT 1 FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2 FOR NO KEY UPDATE', [tenantId, warehouseId]);
+}
+
+/** Resolve the import's declared dataset dependencies against the warehouse's current assets. Historic gaps
+ * keep their IDs and point to the closing assertion. Compiled statements and field lineage are independent. */
+export async function relinkDbtWarehouseSources(client: PoolClient, tenantId: string, warehouseId: string): Promise<void> {
+  await lockDbtWarehouse(client, tenantId, warehouseId);
+  const matches = await client.query<{
+    gap_id: string; project_id: string; source_id: string; model_id: string;
+    warehouse_model_id: string | null; source_name: string; model_name: string;
+  }>(
+    `WITH linked AS (
+       SELECT connection_id,dbt_import FROM registry.connections
+       WHERE tenant_id=$1 AND connector_type='dbt' AND status='active' AND source_ref='warehouse:'||$2::uuid::text AND dbt_import IS NOT NULL
+     ), candidates AS (
+       SELECT g.gap_id,p.connection_id AS project_id,s.asset_id AS source_id,m.asset_id AS model_id,
+              current_model.asset_id AS warehouse_model_id,s.qualified_name AS source_name,m.qualified_name AS model_name,
+              count(*) OVER (PARTITION BY g.gap_id) AS matches
+       FROM graph.gaps g
+       JOIN graph.assets m ON m.tenant_id=g.tenant_id AND g.between_asset_ids=ARRAY[m.asset_id] AND m.active AND m.asset_type='dataset'
+       JOIN linked p ON m.source_id IN (p.connection_id,$2::uuid)
+       JOIN graph.assets s ON s.tenant_id=g.tenant_id AND s.source_id=$2::uuid AND s.active AND s.asset_type='dataset'
+        AND g.reason='dbt reads '||s.qualified_name||', which no connected source exposes'
+       LEFT JOIN graph.assets current_model ON current_model.tenant_id=g.tenant_id AND current_model.source_id=$2::uuid
+        AND current_model.active AND current_model.asset_type='dataset' AND current_model.qualified_name=m.qualified_name
+       WHERE g.tenant_id=$1 AND g.closed_by_assertion_id IS NULL AND (
+         p.dbt_import->'sourceDependencies' @> jsonb_build_array(jsonb_build_object('source',s.qualified_name,'model',m.qualified_name))
+         OR (NOT p.dbt_import ? 'sourceDependencies'
+           AND p.dbt_import->'objects' @> jsonb_build_array(
+             jsonb_build_object('type','source','name',s.qualified_name),
+             jsonb_build_object('type','model','name',m.qualified_name)))
+       )
+     )
+     SELECT * FROM candidates WHERE matches=1 ORDER BY gap_id`,
+    [tenantId, warehouseId],
+  );
+  for (const row of matches.rows) {
+    if (row.source_id === row.model_id) continue;
+    const evidence = await client.query<{ evidence_id: string }>(
+      `INSERT INTO graph.evidence(tenant_id,evidence_type,safe_metadata)
+       VALUES($1,'dbt_manifest',$2::jsonb) RETURNING evidence_id`,
+      [tenantId, JSON.stringify({ collector: COLLECTOR, project_id: row.project_id, source: row.source_name, target: row.model_name, prior_gap_id: row.gap_id })],
+    );
+    const edge = {
+      tenantId, fromId: row.source_id, granularity: 'dataset' as const, method: 'declared' as const,
+      explanation: 'Dependency declared by the dbt project', transformation: null,
+      collector: COLLECTOR, evidenceId: evidence.rows[0]!.evidence_id,
+    };
+    const relationship = await writeFlowEdge(client, { ...edge, toId: row.model_id });
+    if (row.warehouse_model_id && row.warehouse_model_id !== row.model_id && row.warehouse_model_id !== row.source_id) {
+      await writeFlowEdge(client, { ...edge, toId: row.warehouse_model_id });
+    }
+    await client.query(
+      `UPDATE graph.gaps SET closed_by_assertion_id=(
+         SELECT assertion_id FROM graph.assertions WHERE tenant_id=$1 AND relationship_id=$3
+           AND evidence_method='declared' AND collector_version=$4 AND valid_to IS NULL
+         ORDER BY captured_at DESC LIMIT 1
+       ) WHERE tenant_id=$1 AND gap_id=$2 AND closed_by_assertion_id IS NULL`,
+      [tenantId, row.gap_id, relationship, COLLECTOR],
+    );
+  }
 }
