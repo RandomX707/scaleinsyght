@@ -18,6 +18,13 @@ export function sourceTimeouts(options: SourceTimeoutOptions = {}) {
   };
 }
 
+/** An explicit connection setting wins over the workload-specific and legacy deployment settings. */
+export function connectionQueryTimeout(workload: 'profile' | 'analytic', override: number | null): number {
+  const configured = override ?? Number(process.env[workload === 'profile'
+    ? 'SOURCE_PROFILE_QUERY_TIMEOUT_MS' : 'SOURCE_ANALYTIC_QUERY_TIMEOUT_MS'] ?? process.env.SOURCE_QUERY_TIMEOUT_MS ?? 10_000);
+  return sourceTimeouts({ statementTimeoutMs: configured }).query;
+}
+
 export function withSourceDeadline<T>(operation: Promise<T>, ms: number, reason: string, cancel?: () => void): Promise<T> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {

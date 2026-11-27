@@ -1,3 +1,4 @@
+export { connectionQueryTimeout } from './limits.js';
 import type { ControlsPolicy } from './scope.js';
 export { objectScope, columnScope, type ControlsPolicy } from './scope.js';
 export type SourceConnectorType = 'sql_server' | 'postgres' | 'snowflake' | 'excel' | 'lake' | 'crm';

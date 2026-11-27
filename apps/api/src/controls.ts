@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import type { Pool } from '@scaleinsyght/db';
+import { withTenant, type Pool } from '@scaleinsyght/db';
+import { connectionQueryTimeout } from '@scaleinsyght/connectors';
 import type { ControlsPolicy } from '@scaleinsyght/connectors';
 import { decideControlChange, getControls, listControlChanges, saveControls, type ScopeRule } from '@scaleinsyght/profiler';
 
@@ -45,6 +46,40 @@ export function registerControlsRoutes(app:FastifyInstance,pool:Pool,session:(re
         if(error instanceof Error&&statusByError[error.message])return reply.code(statusByError[error.message]!).send({error:error.message});
         throw error;
       }
+    });
+  const validTimeout = (value: unknown) => value === null || (typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 120000);
+  type Limits = {profileMs:number|null;analyticMs:number|null};
+  const queryLimits = '/api/connections/:connectionId/query-limits';
+  const limitsResponse = (limits: Limits) => ({
+    ...limits, effectiveProfileMs: connectionQueryTimeout('profile',limits.profileMs),
+    effectiveAnalyticMs: connectionQueryTimeout('analytic',limits.analyticMs),
+  });
+  app.get<{Params:{connectionId:string}}>(queryLimits,{schema:{params:object({connectionId:uuid})}},async(request,reply)=>{
+    const current=await session(request);
+    if(!current)return reply.code(401).send({error:'unauthorized'});
+    const {rows:[limits]}=await withTenant(pool,current.tenantId,db=>db.query<Limits>(
+      `SELECT profile_query_timeout_ms AS "profileMs",analytic_query_timeout_ms AS "analyticMs" FROM registry.connections
+       WHERE tenant_id=$1 AND connection_id=$2 AND status IN ('draft','active') AND connector_type IN ('postgres','sql_server','excel')`,
+      [current.tenantId,request.params.connectionId]));
+    return limits ? limitsResponse(limits) : reply.code(404).send({error:'connection_not_found'});
+  });
+  app.put<{Params:{connectionId:string};Body:Limits}>(queryLimits,
+    {schema:{params:object({connectionId:uuid}),body:{type:'object',required:['profileMs','analyticMs']}}},async(request,reply)=>{
+      const current=await session(request);
+      if(!current)return reply.code(401).send({error:'unauthorized'});
+      if(!validTimeout(request.body.profileMs)||!validTimeout(request.body.analyticMs))return reply.code(400).send({error:'invalid_query_limits'});
+      return withTenant(pool,current.tenantId,async db=>{
+        const allowed=await db.query(
+          "SELECT 1 FROM core.entitlements WHERE tenant_id=$1 AND principal_id=$2 AND capability_id='tenant.admin' AND allowed AND resource_id IS NULL",
+          [current.tenantId,current.userId]);
+        if(!allowed.rowCount)return reply.code(403).send({error:'tenant_admin_required'});
+        const {rows:[limits]}=await db.query<Limits>(
+          `UPDATE registry.connections SET profile_query_timeout_ms=$3,analytic_query_timeout_ms=$4
+           WHERE tenant_id=$1 AND connection_id=$2 AND status IN ('draft','active') AND connector_type IN ('postgres','sql_server','excel')
+           RETURNING profile_query_timeout_ms AS "profileMs",analytic_query_timeout_ms AS "analyticMs"`,
+          [current.tenantId,request.params.connectionId,request.body.profileMs,request.body.analyticMs]);
+        return limits ? limitsResponse(limits) : reply.code(404).send({error:'connection_not_found'});
+      });
     });
   app.get('/api/control-changes',async(request,reply)=>{
     const current=await session(request);
