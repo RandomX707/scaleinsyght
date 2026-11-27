@@ -2,6 +2,8 @@ import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { prepareMetadataForModel, type ModelMetadataInput } from '@scaleinsyght/classification';
 import { withTenant } from '@scaleinsyght/db';
 import type { Pool } from 'pg';
+import { ModelReplayMissingError, REPLAY_HEADER, replayFetcher, replayModeFrom } from './replay.js';
+export * from './replay.js';
 
 export type ModelAlias='cheap'|'default'|'planning';
 export type ModelPrice={inputPerMillionUsd:number;outputPerMillionUsd:number};
@@ -80,7 +82,9 @@ function priceTokens(price:ModelPrice,input:number,output:number):number{return 
 
 export class OpenAIModelGateway{
   private readonly config:GatewayConfig;
-  constructor(private readonly pool:Pool,env:NodeJS.ProcessEnv=process.env,private readonly fetcher:FetchLike=fetch){this.config=readConfig(env);if(!Number.isFinite(this.config.dailyCostCapUsd)||this.config.dailyCostCapUsd<=0||!Number.isFinite(this.config.dailyUserCostCapUsd)||this.config.dailyUserCostCapUsd<=0)throw new ModelGatewayError('invalid_model_budget_config');}
+  // The default fetcher honours MODEL_REPLAY (decision 69): tests replay recordings and never reach the live model.
+  private readonly fetcher:FetchLike;
+  constructor(private readonly pool:Pool,env:NodeJS.ProcessEnv=process.env,fetcher?:FetchLike){this.fetcher=fetcher??replayFetcher(replayModeFrom(env),fetch,env);this.config=readConfig(env);if(!Number.isFinite(this.config.dailyCostCapUsd)||this.config.dailyCostCapUsd<=0||!Number.isFinite(this.config.dailyUserCostCapUsd)||this.config.dailyUserCostCapUsd<=0)throw new ModelGatewayError('invalid_model_budget_config');}
 
   async complete(input:GatewayRequest):Promise<GatewayResponse>{
     if(!input.tenantId||input.question.length>4000||!input.question.trim())throw new ModelGatewayError('invalid_model_request');
@@ -118,14 +122,15 @@ export class OpenAIModelGateway{
       const text=typeof data.choices?.[0]?.message?.content==='string'?data.choices[0].message.content:null;
       const inputTokens=data.usage?.prompt_tokens,outputTokens=data.usage?.completion_tokens;
       if(text===null||typeof inputTokens!=='number'||typeof outputTokens!=='number'||!Number.isInteger(inputTokens)||!Number.isInteger(outputTokens)||inputTokens<0||outputTokens<0)throw new ModelGatewayError('model_provider_response_invalid');
-      const costUsd=priceTokens(price,inputTokens,outputTokens);
+      // A replayed response costs nothing; its recorded token counts are kept.
+      const costUsd=response.headers.get(REPLAY_HEADER)==='1'?0:priceTokens(price,inputTokens,outputTokens);
       await withTenant(this.pool,input.tenantId,async(client)=>{
         await client.query('INSERT INTO core.model_usage(tenant_id,request_id,model_alias,model_name,input_tokens,output_tokens,cost_usd,outcome,principal_id) VALUES($1,$2,$3,$4,$5,$6,$7,\'completed\',$8)',[input.tenantId,id,input.alias,model,inputTokens,outputTokens,costUsd,input.principalId??null]);
         await client.query('DELETE FROM core.model_budget_reservations WHERE tenant_id=$1 AND request_id=$2',[input.tenantId,id]);
       });
       return {text,requestId:id,model,inputTokens,outputTokens,costUsd};
     }catch(error){
-      const code=error instanceof ModelGatewayError?error.code:'model_provider_request_failed';
+      const code=error instanceof ModelGatewayError||error instanceof ModelReplayMissingError?error.code:'model_provider_request_failed';
       await withTenant(this.pool,input.tenantId,async(client)=>{
         await client.query('INSERT INTO core.model_usage(tenant_id,request_id,model_alias,model_name,input_tokens,output_tokens,cost_usd,outcome,safe_error_code,principal_id) VALUES($1,$2,$3,$4,0,0,0,\'failed\',$5,$6)',[input.tenantId,id,input.alias,model,code,input.principalId??null]);
         await client.query('DELETE FROM core.model_budget_reservations WHERE tenant_id=$1 AND request_id=$2',[input.tenantId,id]);

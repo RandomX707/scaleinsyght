@@ -3,7 +3,7 @@ import { DESCRIPTION_LIMITS, descriptionBatches, describeRequest, validDraft, ty
 
 const subject = (name: string, kind = 'table', sql: string | null = null): DescriptionSubject => ({ name, kind, columns: ['id', 'name'], keys: [], parameters: [], returns: [], reads: [], writes: [], calls: [], sql });
 
-describe('model-drafted descriptions (decision 66)', () => {
+describe('model-drafted descriptions (decision 67)', () => {
   it('accepts one or two plain sentences in sentence case only', () => {
     expect(validDraft('Lists each customer with their region and account manager.')).toBe(true);
     expect(validDraft('Holds daily order totals. Refreshed each night from the orders table.')).toBe(true);
