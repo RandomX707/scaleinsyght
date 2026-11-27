@@ -1493,7 +1493,11 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     if(!options.artifactStore)return reply.code(503).send({error:'artifact_store_unavailable'});
     if(!Buffer.isBuffer(request.body)||request.body.length===0)return reply.code(400).send({error:'workbook_body_required'});
-    let sheets;try{sheets=await createExcelConnector({id:request.params.connectionId,name:'Workbook',workbook:request.body}).describe();}catch(error){const code=error instanceof Error?error.message:'excel_workbook_not_xlsx';if(code==='source_unreachable')return reply.code(408).send({error:code});return reply.code(400).send({error:code.startsWith('excel_')?code:'excel_workbook_not_xlsx'});}
+    const settings=await withTenant(options.pool,current.tenantId,async client=>(await client.query<{connect_timeout_ms:number|null}>(
+      "SELECT connect_timeout_ms FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2 AND connector_type='excel' AND status IN ('draft','active')",
+      [current.tenantId,request.params.connectionId])).rows[0]);
+    if(!settings)return reply.code(404).send({error:'excel_connection_not_found'});
+    let sheets;try{sheets=await createExcelConnector({connectTimeoutMs:connectionConnectTimeout(settings.connect_timeout_ms),id:request.params.connectionId,name:'Workbook',workbook:request.body}).describe();}catch(error){const code=error instanceof Error?error.message:'excel_workbook_not_xlsx';if(code==='source_unreachable')return reply.code(408).send({error:code});return reply.code(400).send({error:code.startsWith('excel_')?code:'excel_workbook_not_xlsx'});}
     try{const result=await storeWorkbook(options.pool,options.artifactStore,{tenantId:current.tenantId,connectionId:request.params.connectionId,bytes:request.body});return reply.code(201).send({...result,sheets});}
     catch(error){if(error instanceof Error&&error.message==='excel_connection_not_found')return reply.code(404).send({error:error.message});throw error;}
   });
