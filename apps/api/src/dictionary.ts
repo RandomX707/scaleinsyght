@@ -184,7 +184,12 @@ export async function draftDescriptions(client: PoolClient, tenantId: string, so
   }
   const byName = new Map(definitions.map((definition) => [definition.qualified_name, definition]));
   const drafts = new Map<string, string>();
+  // Decision 66: a description the model gateway drafted in the background replaces the template for its object.
+  const modelDrafts = new Map((await client.query<{ qualified_name: string; drafted_text: string }>(
+    `SELECT qualified_name,drafted_text FROM graph.description_reviews WHERE tenant_id=$1 AND source_id=$2 AND field_name='' AND status='draft' AND drafted_by='model' AND qualified_name=ANY($3::text[])`,
+    [tenantId, source.connection_id, names])).rows.map((row) => [row.qualified_name, row.drafted_text]));
   for (const object of wanted) {
+    const model = modelDrafts.get(object.name); if (model) { drafts.set(object.name, model); continue; }
     const definition = byName.get(object.name); const lower = object.name.toLowerCase();
     const analysis = definition ? { writes: definition.analysis.writes ?? [], reads: definition.analysis.reads ?? [], calls: definition.analysis.calls ?? [] } : undefined;
     drafts.set(object.name, draftDescription({ kind: object.kind, name: object.name, encrypted: definition?.encrypted ?? false, columns: columnCounts.get(object.name) ?? 0,
@@ -385,7 +390,8 @@ export function registerDictionaryRoutes(app: FastifyInstance, deps: DictionaryD
       return (await client.query<{ status: string; final_text: string; decided_at: Date }>(
         `INSERT INTO graph.description_reviews(tenant_id,source_id,qualified_name,field_name,drafted_text,drafted_by,status,final_text,decided_by,decided_at)
          VALUES($1,$2,$3,'',$4,'code',$5,$6,$7,clock_timestamp())
-         ON CONFLICT(tenant_id,source_id,qualified_name,field_name) DO UPDATE SET drafted_text=EXCLUDED.drafted_text,drafted_at=clock_timestamp(),status=EXCLUDED.status,final_text=EXCLUDED.final_text,decided_by=EXCLUDED.decided_by,decided_at=EXCLUDED.decided_at
+         ON CONFLICT(tenant_id,source_id,qualified_name,field_name) DO UPDATE SET drafted_by=CASE WHEN graph.description_reviews.drafted_by='model' AND graph.description_reviews.drafted_text=EXCLUDED.drafted_text THEN 'model' ELSE EXCLUDED.drafted_by END,
+           drafted_text=EXCLUDED.drafted_text,drafted_at=clock_timestamp(),status=EXCLUDED.status,final_text=EXCLUDED.final_text,decided_by=EXCLUDED.decided_by,decided_at=EXCLUDED.decided_at
          RETURNING status,final_text,decided_at`, [current.tenantId, source.connection_id, name, drafted, status, status === 'edited' ? text : drafted, current.userId])).rows[0] ?? null;
     });
     if (!updated) return reply.code(404).send({ error: 'description_draft_not_found' });
@@ -412,7 +418,8 @@ export function registerDictionaryRoutes(app: FastifyInstance, deps: DictionaryD
         await client.query(
           `INSERT INTO graph.description_reviews(tenant_id,source_id,qualified_name,field_name,drafted_text,drafted_by,status,final_text,decided_by,decided_at)
            SELECT $1,$2,n,'',t,'code','approved',t,$5,clock_timestamp() FROM unnest($3::text[],$4::text[]) AS u(n,t)
-           ON CONFLICT(tenant_id,source_id,qualified_name,field_name) DO UPDATE SET drafted_text=EXCLUDED.drafted_text,drafted_at=clock_timestamp(),status='approved',final_text=EXCLUDED.final_text,decided_by=EXCLUDED.decided_by,decided_at=EXCLUDED.decided_at
+           ON CONFLICT(tenant_id,source_id,qualified_name,field_name) DO UPDATE SET drafted_by=CASE WHEN graph.description_reviews.drafted_by='model' AND graph.description_reviews.drafted_text=EXCLUDED.drafted_text THEN 'model' ELSE EXCLUDED.drafted_by END,
+             drafted_text=EXCLUDED.drafted_text,drafted_at=clock_timestamp(),status='approved',final_text=EXCLUDED.final_text,decided_by=EXCLUDED.decided_by,decided_at=EXCLUDED.decided_at
            WHERE graph.description_reviews.status='draft'`,
           [current.tenantId, source.connection_id, batch, batch.map((objectName) => drafts.get(objectName)!), current.userId]);
       }
