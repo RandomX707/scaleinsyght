@@ -1,0 +1,66 @@
+{
+ "hash": "bbfa96684603fd6c397d3c960e8b9341",
+ "recordedAt": "2026-11-27T21:42:57.708Z",
+ "model": "gpt-6-luna",
+ "purpose": "describe",
+ "request": {
+  "max_completion_tokens": 680,
+  "messages": [
+   {
+    "content": "You write short, plain descriptions of database objects for people who are not engineers, from disclosed metadata only: names, column names, keys and SQL with literal values hidden. You never see row values or statistics. Say what each object is or does in one or two sentences, in sentence case, without jargon or a list of tables. Respond with a single JSON object.",
+    "role": "system"
+   },
+   {
+    "content": "{\"question\":\"Describe each listed object in one or two plain sentences: what it holds or does and what it is for, as a business reader would understand it. Do not list its columns or tables. Use only the metadata given. Objects: public.department_order_summary, public.patient_encounter_summary, public.count_patient_encounters(p_patient_id integer), public.patient_order_total(p_patient_id integer)\",\"metadata\":{\"structural\":{\"objects\":[{\"name\":\"public.department_order_summary\",\"kind\":\"view\",\"columns\":[\"department_id\",\"order_amount\",\"order_count\"],\"keys\":[],\"parameters\":[],\"returns\":[],\"reads\":[\"public.orders\"],\"writes\":[],\"calls\":[]},{\"name\":\"public.patient_encounter_summary\",\"kind\":\"view\",\"columns\":[\"encounter_count\",\"patient_id\"],\"keys\":[],\"parameters\":[],\"returns\":[],\"reads\":[\"public.encounters\"],\"writes\":[],\"calls\":[]},{\"name\":\"public.count_patient_encounters(p_patient_id integer)\",\"kind\":\"function\",\"columns\":[],\"keys\":[],\"parameters\":[\"p_patient_id\"],\"returns\":[],\"reads\":[\"public.encounters\"],\"writes\":[],\"calls\":[]},{\"name\":\"public.patient_order_total(p_patient_id integer)\",\"kind\":\"function\",\"columns\":[],\"keys\":[],\"parameters\":[\"p_patient_id\"],\"returns\":[],\"reads\":[\"public.encounters\",\"public.orders\"],\"writes\":[],\"calls\":[]}]},\"descriptive\":{\"definition public.department_order_summary\":\" SELECT d.department_id,\\n    (count(o.order_id))::integer AS order_count,\\n    (COALESCE(sum(o.amount), (<number>)::numeric))::numeric(<number>,<number>) AS order_amount\\n   FROM (public.departments d\\n     LEFT JOIN public.orders o USING (department_id))\\n  GROUP BY d.department_id;\",\"definition public.patient_encounter_summary\":\" SELECT p.patient_id,\\n    (count(e.encounter_id))::integer AS encounter_count\\n   FROM (public.patients p\\n     LEFT JOIN public.encounters e USING (patient_id))\\n  GROUP BY p.patient_id;\",\"definition public.count_patient_encounters(p_patient_id integer)\":\"CREATE OR REPLACE FUNCTION public.count_patient_encounters(p_patient_id integer)\\n RETURNS integer\\n LANGUAGE sql\\n STABLE\\nAS $function$\\n  SELECT count(*)::integer FROM encounters WHERE patient_id = p_patient_id\\n$function$\\n\",\"definition public.patient_order_total(p_patient_id integer)\":\"CREATE OR REPLACE FUNCTION public.patient_order_total(p_patient_id integer)\\n RETURNS numeric\\n LANGUAGE sql\\n STABLE\\nAS $function$\\n  SELECT coalesce(sum(o.amount), <number>) FROM orders o JOIN encounters e USING (encounter_id) WHERE e.patient_id = p_patient_id\\n$function$\\n\"}},\"identifier_fingerprints\":[]}",
+    "role": "user"
+   }
+  ],
+  "model": "gpt-6-luna",
+  "response_format": {
+   "json_schema": {
+    "name": "dictionary_descriptions",
+    "schema": {
+     "additionalProperties": false,
+     "properties": {
+      "descriptions": {
+       "items": {
+        "additionalProperties": false,
+        "properties": {
+         "name": {
+          "enum": [
+           "public.department_order_summary",
+           "public.patient_encounter_summary",
+           "public.count_patient_encounters(p_patient_id integer)",
+           "public.patient_order_total(p_patient_id integer)"
+          ],
+          "type": "string"
+         },
+         "text": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "name",
+         "text"
+        ],
+        "type": "object"
+       },
+       "type": "array"
+      }
+     },
+     "required": [
+      "descriptions"
+     ],
+     "type": "object"
+    },
+    "strict": true
+   },
+   "type": "json_schema"
+  }
+ },
+ "response": {
+  "content": "{\"descriptions\":[{\"name\":\"public.department_order_summary\",\"text\":\"Summarizes orders by department, showing the number of orders and their total amount. It is for reviewing order activity across departments.\"},{\"name\":\"public.patient_encounter_summary\",\"text\":\"Summarizes the number of encounters for each patient, including patients with no encounters. It is for reviewing encounter counts by patient.\"},{\"name\":\"public.count_patient_encounters(p_patient_id integer)\",\"text\":\"Counts the encounters for the specified patient. It is for checking an individual patient’s encounter total.\"},{\"name\":\"public.patient_order_total(p_patient_id integer)\",\"text\":\"Adds up the amounts of orders associated with the specified patient’s encounters. It is for checking that patient’s order total.\"}]}",
+  "promptTokens": 729,
+  "completionTokens": 247
+ }
+}

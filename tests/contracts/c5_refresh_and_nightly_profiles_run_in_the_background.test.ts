@@ -3,8 +3,9 @@ import { config } from 'dotenv';
 import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { buildServer, hashPassword } from '@scaleinsyght/api/server';
+import { activateConnection } from '@scaleinsyght/registry';
 import { withTenant } from '@scaleinsyght/db';
-import { queueDueNightly, runNextDiscovery } from '@scaleinsyght/profiler';
+import { queueDueNightly, queueProfileJob, runNextDiscovery } from '@scaleinsyght/profiler';
 import type { ReadOnlyConnector } from '@scaleinsyght/connectors';
 import { createGoldenConnector, listGoldenSources } from '../support/golden-connectors.js';
 
@@ -27,6 +28,41 @@ const slow = (pauseMs: number): ReadOnlyConnector => new Proxy(createGoldenConne
 
 describe('contract 5 background refresh', () => {
   afterAll(async () => { await appPool.end(); await workerPool.end(); await migratePool.end(); });
+
+  it('c5_a_nightly_job_retries_a_timed_out_object_even_if_its_signature_is_unchanged', async () => {
+    const tenantId = `retry-${randomUUID()}`;
+    const principalId = await withTenant(migratePool, tenantId, async (db) => {
+      await db.query('INSERT INTO core.tenants(tenant_id,name) VALUES($1,$1)', [tenantId]);
+      return (await db.query<{ user_id: string }>('INSERT INTO core.users(tenant_id,email,password_hash) VALUES($1,$2,$3) RETURNING user_id', [tenantId, `${tenantId}@synthetic.example`, hashPassword('synthetic-password')])).rows[0]!.user_id;
+    });
+    const { connectionId } = await activateConnection(appPool, { tenantId, principalId, connectorType: 'postgres' });
+    const base = createGoldenConnector(source.id);
+    const object = (await base.discover({ mode: 'profile' })).objects[0]!;
+    let attempted = 0;
+    const connector = new Proxy(base, { get(target, key) {
+      if (key === 'discover') return async (input: Parameters<ReadOnlyConnector['discover']>[0]) => {
+        const catalog = await target.discover({ ...input, mode: 'profile' });
+        if (input.mode !== 'nightly') return catalog;
+        return { ...catalog, objects: [], unchanged: catalog.objects.length, unchangedObjects: catalog.objects };
+      };
+      if (key === 'profile') return async (...args: Parameters<ReadOnlyConnector['profile']>) => {
+        if (args[0] === object.assetKey && ++attempted === 1) throw new Error('source_query_timeout');
+        return target.profile(...args);
+      };
+      const value: unknown = Reflect.get(target, key, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    const run = async (type: 'profile' | 'nightly') => {
+      const job = await withTenant(appPool, tenantId, db => queueProfileJob(db, tenantId, connectionId, type));
+      expect(await runNextDiscovery(workerPool, async () => connector, tenantId)).toBe(true);
+      return await withTenant(migratePool, tenantId, async db => (await db.query(
+        'SELECT state,time_skips FROM profiler.jobs WHERE tenant_id=$1 AND job_id=$2', [tenantId, job.jobId],
+      )).rows[0]);
+    };
+    expect(await run('profile')).toEqual({ state: 'COMPLETED', time_skips: [{ kind: 'table', object: object.qualifiedName, reason: 'source_query_timeout' }] });
+    expect(await run('nightly')).toEqual({ state: 'COMPLETED', time_skips: [] });
+    expect(attempted).toBe(2);
+  });
 
   it('c5_refresh_and_run_profile_now_return_at_once_share_one_open_job_and_the_nightly_is_queued', async () => {
     const tenantId = `refresh-${randomUUID()}`; const email = `${tenantId}@synthetic.example`; const password = 'synthetic-password';

@@ -1,0 +1,787 @@
+{
+ "hash": "80c28cdeec28c93ce86ff37c8bda3f0f",
+ "recordedAt": "2026-11-27T19:25:28.352Z",
+ "model": "gpt-6.2-sol",
+ "purpose": "plan",
+ "request": {
+  "max_completion_tokens": 1800,
+  "messages": [
+   {
+    "content": "You write typed, read-only query plans from disclosed metadata. You never see row values, and you do not need to: a category, label or date named in the question is used as a filter value on the matching column, and is bound as a query parameter. Return an empty plan only when no table or column in the metadata can express the request. Never return SQL. Respond with a single JSON object.",
+    "role": "system"
+   },
+   {
+    "content": "{\"question\":\"Plan the exact question using the catalog and the typed response schema. First fill the declaration: what the question counts or measures (subject), the dimension it is broken down by (grouping, or null for a single value), each condition, whether it asks for values from two or more sources (comparison), and whether the catalog has a table for the subject (answerable). If it is not answerable, return an empty intents array; a loosely related object is insufficient. Then plan each source step and fill its declared fields to match: subject_table, measure, measure_column, grouping_column (null unless the answer is broken down) and filter_columns. Use the source and subject from earlier turns only when resolving a follow-up. A qualifier in the question that is not a column name is usually a category value: filter the text column most likely to hold it, in the subject table or in a table reachable through a catalog join. Never refuse only because category values are not shown to you. Count records for quantities, order totals, volume or \\\"how many\\\". Sum a numeric column only for a requested amount. Use the exact display header to resolve workbook columns. For a date range use gte and upperExclusive with the next calendar boundary. Ranked groups use value sort and a limit. For join operations select a catalog join and its left table. Use null for unused fields. When the question asks where a table or column comes from, its lineage, or what depends on it or would break if it changed, set lineage to that source, table or column, and direction (upstream for where it comes from, downstream for what depends on it), declare it answerable, and leave intents empty; otherwise lineage is null.\\nQuestion: How many patients are in the postgresql testbed?\\nPrior turns: \",\"metadata\":{\"structural\":{\"sources\":[{\"index\":0,\"name\":\"PostgreSQL testbed\",\"type\":\"postgres\",\"assets\":[{\"columns\":[{\"name\":\"department_id\",\"label\":null,\"data_type\":\"integer\",\"sensitivity_tags\":[]},{\"name\":\"order_amount\",\"label\":null,\"data_type\":\"numeric\",\"sensitivity_tags\":[]},{\"name\":\"order_count\",\"label\":null,\"data_type\":\"integer\",\"sensitivity_tags\":[]}],\"qualified_name\":\"public.department_order_summary\"},{\"columns\":[{\"name\":\"department_code\",\"label\":null,\"data_type\":\"text\",\"sensitivity_tags\":[]},{\"name\":\"department_id\",\"label\":null,\"data_type\":\"integer\",\"sensitivity_tags\":[]},{\"name\":\"department_name\",\"label\":null,\"data_type\":\"text\",\"sensitivity_tags\":[]}],\"qualified_name\":\"public.departments\"},{\"columns\":[{\"name\":\"admitted_at\",\"label\":null,\"data_type\":\"timestamp with time zone\",\"sensitivity_tags\":[]},{\"name\":\"department_id\",\"label\":null,\"data_type\":\"integer\",\"sensitivity_tags\":[]},{\"name\":\"discharged_at\",\"label\":null,\"data_type\":\"timestamp with time zone\",\"sensitivity_tags\":[]},{\"name\":\"encounter_id\",\"label\":null,\"data_type\":\"integer\",\"sensitivity_tags\":[\"identifier\"]},{\"name\":\"patient_id\",\"label\":null,\"data_type\":\"integer\",\"sensitivity_tags\":[\"identifier\"]},{\"name\":\"provider_id\",\"label\":null,\"data_type\":\"integer\",\"sensitivity_tags\":[]}],\"qualified_name\":\"public.encounters\"},{\"columns\":[{\"name\":\"amount\",\"label\":null,\"data_type\":\"numeric\",\"sensitivity_tags\":[]},{\"name\":\"department_id\",\"label\":null,\"data_type\":\"integer\",\"sensitivity_tags\":[]},{\"name\":\"encounter_id\",\"label\":null,\"data_type\":\"integer\",\"sensitivity_tags\":[\"identifier\"]},{\"name\":\"order_id\",\"label\":null,\"data_type\":\"integer\",\"sensitivity_tags\":[]},{\"name\":\"order_status\",\"label\":null,\"data_type\":\"text\",\"sensitivity_tags\":[]},{\"name\":\"order_type\",\"label\":null,\"data_type\":\"text\",\"sensitivity_tags\":[]},{\"name\":\"ordered_at\",\"label\":null,\"data_type\":\"timestamp with time zone\",\"sensitivity_tags\":[]}],\"qualified_name\":\"public.orders\"},{\"columns\":[{\"name\":\"encounter_count\",\"label\":null,\"data_type\":\"integer\",\"sensitivity_tags\":[]},{\"name\":\"patient_id\",\"label\":null,\"data_type\":\"integer\",\"sensitivity_tags\":[]}],\"qualified_name\":\"public.patient_encounter_summary\"},{\"columns\":[{\"name\":\"created_at\",\"label\":null,\"data_type\":\"timestamp with time zone\",\"sensitivity_tags\":[]},{\"name\":\"date_of_birth\",\"label\":null,\"data_type\":\"date\",\"sensitivity_tags\":[\"regulated\"]},{\"name\":\"mrn\",\"label\":null,\"data_type\":\"text\",\"sensitivity_tags\":[\"identifier\"]},{\"name\":\"name\",\"label\":null,\"data_type\":\"text\",\"sensitivity_tags\":[\"personal\"]},{\"name\":\"patient_id\",\"label\":null,\"data_type\":\"integer\",\"sensitivity_tags\":[]},{\"name\":\"phone\",\"label\":null,\"data_type\":\"text\",\"sensitivity_tags\":[\"personal\"]}],\"qualified_name\":\"public.patients\"},{\"columns\":[{\"name\":\"department_id\",\"label\":null,\"data_type\":\"integer\",\"sensitivity_tags\":[]},{\"name\":\"provider_id\",\"label\":null,\"data_type\":\"integer\",\"sensitivity_tags\":[]},{\"name\":\"provider_name\",\"label\":null,\"data_type\":\"text\",\"sensitivity_tags\":[]},{\"name\":\"specialty\",\"label\":null,\"data_type\":\"text\",\"sensitivity_tags\":[]}],\"qualified_name\":\"public.providers\"}]}],\"relationships\":[{\"source_index\":0,\"from_name\":\"public.encounters.department_id\",\"to_name\":\"public.departments.department_id\",\"evidence_method\":\"inferred\",\"confidence_score\":\"1.000\"},{\"source_index\":0,\"from_name\":\"public.encounters.patient_id\",\"to_name\":\"public.patients.patient_id\",\"evidence_method\":\"inferred\",\"confidence_score\":\"1.000\"},{\"source_index\":0,\"from_name\":\"public.encounters.provider_id\",\"to_name\":\"public.providers.provider_id\",\"evidence_method\":\"inferred\",\"confidence_score\":\"1.000\"},{\"source_index\":0,\"from_name\":\"public.orders.department_id\",\"to_name\":\"public.departments.department_id\",\"evidence_method\":\"declared\",\"confidence_score\":\"1.000\"},{\"source_index\":0,\"from_name\":\"public.orders.encounter_id\",\"to_name\":\"public.encounters.encounter_id\",\"evidence_method\":\"declared\",\"confidence_score\":\"1.000\"},{\"source_index\":0,\"from_name\":\"public.providers.department_id\",\"to_name\":\"public.departments.department_id\",\"evidence_method\":\"inferred\",\"confidence_score\":\"1.000\"}]},\"descriptive\":{}},\"identifier_fingerprints\":[]}",
+    "role": "user"
+   }
+  ],
+  "model": "gpt-6.2-sol",
+  "response_format": {
+   "json_schema": {
+    "name": "typed_analytic_plan",
+    "schema": {
+     "additionalProperties": false,
+     "properties": {
+      "declaration": {
+       "additionalProperties": false,
+       "properties": {
+        "answerable": {
+         "description": "False when the catalog has no table for the subject; then intents is empty.",
+         "type": "boolean"
+        },
+        "comparison": {
+         "description": "True when the question asks for values from two or more sources.",
+         "type": "boolean"
+        },
+        "conditions": {
+         "description": "Each condition the question applies, in a few words.",
+         "items": {
+          "type": "string"
+         },
+         "type": "array"
+        },
+        "every_group": {
+         "description": "True when the question asks for a value for each member of the grouping (each department, every provider), so members with none should appear with 0.",
+         "type": "boolean"
+        },
+        "exposed_columns": {
+         "description": "Every catalog column whose values the answer would show: the column the answer is broken down by (the grouping) and any column the question asks to list per record. Fill it even when the question cannot be answered. Not columns used only in a condition, a measure or a join. Empty for a single total.",
+         "items": {
+          "enum": [
+           "public.department_order_summary.department_id",
+           "public.department_order_summary.order_amount",
+           "public.department_order_summary.order_count",
+           "public.departments.department_code",
+           "public.departments.department_id",
+           "public.departments.department_name",
+           "public.encounters.admitted_at",
+           "public.encounters.department_id",
+           "public.encounters.discharged_at",
+           "public.encounters.encounter_id",
+           "public.encounters.patient_id",
+           "public.encounters.provider_id",
+           "public.orders.amount",
+           "public.orders.department_id",
+           "public.orders.encounter_id",
+           "public.orders.order_id",
+           "public.orders.order_status",
+           "public.orders.order_type",
+           "public.orders.ordered_at",
+           "public.patient_encounter_summary.encounter_count",
+           "public.patient_encounter_summary.patient_id",
+           "public.patients.created_at",
+           "public.patients.date_of_birth",
+           "public.patients.mrn",
+           "public.patients.name",
+           "public.patients.patient_id",
+           "public.patients.phone",
+           "public.providers.department_id",
+           "public.providers.provider_id",
+           "public.providers.provider_name",
+           "public.providers.specialty"
+          ],
+          "type": "string"
+         },
+         "type": "array"
+        },
+        "grouping": {
+         "anyOf": [
+          {
+           "description": "The dimension the answer is broken down by, or null for a single value per source.",
+           "type": "string"
+          },
+          {
+           "type": "null"
+          }
+         ]
+        },
+        "read_columns": {
+         "description": "Every catalog column the answer reads: the exposed columns plus each column measured, counted per entity, used in a condition or used as a join key. Fill it even when the question cannot be answered, with the columns the question refers to. Empty only when no catalog column relates to the question.",
+         "items": {
+          "enum": [
+           "public.department_order_summary.department_id",
+           "public.department_order_summary.order_amount",
+           "public.department_order_summary.order_count",
+           "public.departments.department_code",
+           "public.departments.department_id",
+           "public.departments.department_name",
+           "public.encounters.admitted_at",
+           "public.encounters.department_id",
+           "public.encounters.discharged_at",
+           "public.encounters.encounter_id",
+           "public.encounters.patient_id",
+           "public.encounters.provider_id",
+           "public.orders.amount",
+           "public.orders.department_id",
+           "public.orders.encounter_id",
+           "public.orders.order_id",
+           "public.orders.order_status",
+           "public.orders.order_type",
+           "public.orders.ordered_at",
+           "public.patient_encounter_summary.encounter_count",
+           "public.patient_encounter_summary.patient_id",
+           "public.patients.created_at",
+           "public.patients.date_of_birth",
+           "public.patients.mrn",
+           "public.patients.name",
+           "public.patients.patient_id",
+           "public.patients.phone",
+           "public.providers.department_id",
+           "public.providers.provider_id",
+           "public.providers.provider_name",
+           "public.providers.specialty"
+          ],
+          "type": "string"
+         },
+         "type": "array"
+        },
+        "subject": {
+         "description": "What the question counts or measures, in a few words.",
+         "type": "string"
+        }
+       },
+       "required": [
+        "subject",
+        "grouping",
+        "conditions",
+        "comparison",
+        "every_group",
+        "answerable",
+        "exposed_columns",
+        "read_columns"
+       ],
+       "type": "object"
+      },
+      "intents": {
+       "items": {
+        "anyOf": [
+         {
+          "additionalProperties": false,
+          "properties": {
+           "aggregateColumn": {
+            "anyOf": [
+             {
+              "enum": [
+               "public.department_order_summary.department_id",
+               "public.department_order_summary.order_amount",
+               "public.department_order_summary.order_count",
+               "public.departments.department_code",
+               "public.departments.department_id",
+               "public.departments.department_name",
+               "public.encounters.admitted_at",
+               "public.encounters.department_id",
+               "public.encounters.discharged_at",
+               "public.encounters.encounter_id",
+               "public.encounters.patient_id",
+               "public.encounters.provider_id",
+               "public.orders.amount",
+               "public.orders.department_id",
+               "public.orders.encounter_id",
+               "public.orders.order_id",
+               "public.orders.order_status",
+               "public.orders.order_type",
+               "public.orders.ordered_at",
+               "public.patient_encounter_summary.encounter_count",
+               "public.patient_encounter_summary.patient_id",
+               "public.patients.created_at",
+               "public.patients.date_of_birth",
+               "public.patients.mrn",
+               "public.patients.name",
+               "public.patients.patient_id",
+               "public.patients.phone",
+               "public.providers.department_id",
+               "public.providers.provider_id",
+               "public.providers.provider_name",
+               "public.providers.specialty"
+              ],
+              "type": "string"
+             },
+             {
+              "type": "null"
+             }
+            ]
+           },
+           "declared": {
+            "additionalProperties": false,
+            "description": "What this step must compute, declared before the executable fields.",
+            "properties": {
+             "filter_columns": {
+              "items": {
+               "enum": [
+                "public.department_order_summary.department_id",
+                "public.department_order_summary.order_amount",
+                "public.department_order_summary.order_count",
+                "public.departments.department_code",
+                "public.departments.department_id",
+                "public.departments.department_name",
+                "public.encounters.admitted_at",
+                "public.encounters.department_id",
+                "public.encounters.discharged_at",
+                "public.encounters.encounter_id",
+                "public.encounters.patient_id",
+                "public.encounters.provider_id",
+                "public.orders.amount",
+                "public.orders.department_id",
+                "public.orders.encounter_id",
+                "public.orders.order_id",
+                "public.orders.order_status",
+                "public.orders.order_type",
+                "public.orders.ordered_at",
+                "public.patient_encounter_summary.encounter_count",
+                "public.patient_encounter_summary.patient_id",
+                "public.patients.created_at",
+                "public.patients.date_of_birth",
+                "public.patients.mrn",
+                "public.patients.name",
+                "public.patients.patient_id",
+                "public.patients.phone",
+                "public.providers.department_id",
+                "public.providers.provider_id",
+                "public.providers.provider_name",
+                "public.providers.specialty"
+               ],
+               "type": "string"
+              },
+              "type": "array"
+             },
+             "grouping_column": {
+              "anyOf": [
+               {
+                "enum": [
+                 "public.department_order_summary.department_id",
+                 "public.department_order_summary.order_amount",
+                 "public.department_order_summary.order_count",
+                 "public.departments.department_code",
+                 "public.departments.department_id",
+                 "public.departments.department_name",
+                 "public.encounters.admitted_at",
+                 "public.encounters.department_id",
+                 "public.encounters.discharged_at",
+                 "public.encounters.provider_id",
+                 "public.orders.amount",
+                 "public.orders.department_id",
+                 "public.orders.order_id",
+                 "public.orders.order_status",
+                 "public.orders.order_type",
+                 "public.orders.ordered_at",
+                 "public.patient_encounter_summary.encounter_count",
+                 "public.patient_encounter_summary.patient_id",
+                 "public.patients.created_at",
+                 "public.patients.patient_id",
+                 "public.providers.department_id",
+                 "public.providers.provider_id",
+                 "public.providers.provider_name",
+                 "public.providers.specialty"
+                ],
+                "type": "string"
+               },
+               {
+                "type": "null"
+               }
+              ]
+             },
+             "measure": {
+              "description": "count records, sum a numeric column, or average the number of records per entity.",
+              "enum": [
+               "count",
+               "sum",
+               "average_count_per_entity"
+              ],
+              "type": "string"
+             },
+             "measure_column": {
+              "anyOf": [
+               {
+                "enum": [
+                 "public.department_order_summary.department_id",
+                 "public.department_order_summary.order_amount",
+                 "public.department_order_summary.order_count",
+                 "public.departments.department_code",
+                 "public.departments.department_id",
+                 "public.departments.department_name",
+                 "public.encounters.admitted_at",
+                 "public.encounters.department_id",
+                 "public.encounters.discharged_at",
+                 "public.encounters.encounter_id",
+                 "public.encounters.patient_id",
+                 "public.encounters.provider_id",
+                 "public.orders.amount",
+                 "public.orders.department_id",
+                 "public.orders.encounter_id",
+                 "public.orders.order_id",
+                 "public.orders.order_status",
+                 "public.orders.order_type",
+                 "public.orders.ordered_at",
+                 "public.patient_encounter_summary.encounter_count",
+                 "public.patient_encounter_summary.patient_id",
+                 "public.patients.created_at",
+                 "public.patients.date_of_birth",
+                 "public.patients.mrn",
+                 "public.patients.name",
+                 "public.patients.patient_id",
+                 "public.patients.phone",
+                 "public.providers.department_id",
+                 "public.providers.provider_id",
+                 "public.providers.provider_name",
+                 "public.providers.specialty"
+                ],
+                "type": "string"
+               },
+               {
+                "type": "null"
+               }
+              ]
+             },
+             "subject_table": {
+              "description": "The table whose records are counted, summed or averaged.",
+              "enum": [
+               "public.department_order_summary",
+               "public.departments",
+               "public.encounters",
+               "public.orders",
+               "public.patient_encounter_summary",
+               "public.patients",
+               "public.providers"
+              ],
+              "type": "string"
+             }
+            },
+            "required": [
+             "subject_table",
+             "measure",
+             "measure_column",
+             "grouping_column",
+             "filter_columns"
+            ],
+            "type": "object"
+           },
+           "entityColumn": {
+            "anyOf": [
+             {
+              "enum": [
+               "public.department_order_summary.department_id",
+               "public.department_order_summary.order_amount",
+               "public.department_order_summary.order_count",
+               "public.departments.department_code",
+               "public.departments.department_id",
+               "public.departments.department_name",
+               "public.encounters.admitted_at",
+               "public.encounters.department_id",
+               "public.encounters.discharged_at",
+               "public.encounters.encounter_id",
+               "public.encounters.patient_id",
+               "public.encounters.provider_id",
+               "public.orders.amount",
+               "public.orders.department_id",
+               "public.orders.encounter_id",
+               "public.orders.order_id",
+               "public.orders.order_status",
+               "public.orders.order_type",
+               "public.orders.ordered_at",
+               "public.patient_encounter_summary.encounter_count",
+               "public.patient_encounter_summary.patient_id",
+               "public.patients.created_at",
+               "public.patients.date_of_birth",
+               "public.patients.mrn",
+               "public.patients.name",
+               "public.patients.patient_id",
+               "public.patients.phone",
+               "public.providers.department_id",
+               "public.providers.provider_id",
+               "public.providers.provider_name",
+               "public.providers.specialty"
+              ],
+              "type": "string"
+             },
+             {
+              "type": "null"
+             }
+            ]
+           },
+           "filters": {
+            "items": {
+             "additionalProperties": false,
+             "properties": {
+              "column": {
+               "enum": [
+                "public.department_order_summary.department_id",
+                "public.department_order_summary.order_amount",
+                "public.department_order_summary.order_count",
+                "public.departments.department_code",
+                "public.departments.department_id",
+                "public.departments.department_name",
+                "public.encounters.admitted_at",
+                "public.encounters.department_id",
+                "public.encounters.discharged_at",
+                "public.encounters.encounter_id",
+                "public.encounters.patient_id",
+                "public.encounters.provider_id",
+                "public.orders.amount",
+                "public.orders.department_id",
+                "public.orders.encounter_id",
+                "public.orders.order_id",
+                "public.orders.order_status",
+                "public.orders.order_type",
+                "public.orders.ordered_at",
+                "public.patient_encounter_summary.encounter_count",
+                "public.patient_encounter_summary.patient_id",
+                "public.patients.created_at",
+                "public.patients.date_of_birth",
+                "public.patients.mrn",
+                "public.patients.name",
+                "public.patients.patient_id",
+                "public.patients.phone",
+                "public.providers.department_id",
+                "public.providers.provider_id",
+                "public.providers.provider_name",
+                "public.providers.specialty"
+               ],
+               "type": "string"
+              },
+              "operator": {
+               "enum": [
+                "eq",
+                "neq",
+                "gt",
+                "gte",
+                "lt",
+                "lte",
+                "is_not_null"
+               ],
+               "type": "string"
+              },
+              "upperExclusive": {
+               "anyOf": [
+                {
+                 "description": "Exclusive ISO date endpoint with gte; otherwise null",
+                 "type": "string"
+                },
+                {
+                 "type": "null"
+                }
+               ]
+              },
+              "value": {
+               "anyOf": [
+                {
+                 "anyOf": [
+                  {
+                   "type": "boolean"
+                  },
+                  {
+                   "type": "number"
+                  },
+                  {
+                   "type": "string"
+                  }
+                 ]
+                },
+                {
+                 "type": "null"
+                }
+               ]
+              }
+             },
+             "required": [
+              "column",
+              "operator",
+              "value",
+              "upperExclusive"
+             ],
+             "type": "object"
+            },
+            "type": "array"
+           },
+           "groupBy": {
+            "anyOf": [
+             {
+              "enum": [
+               "public.department_order_summary.department_id",
+               "public.department_order_summary.order_amount",
+               "public.department_order_summary.order_count",
+               "public.departments.department_code",
+               "public.departments.department_id",
+               "public.departments.department_name",
+               "public.encounters.admitted_at",
+               "public.encounters.department_id",
+               "public.encounters.discharged_at",
+               "public.encounters.provider_id",
+               "public.orders.amount",
+               "public.orders.department_id",
+               "public.orders.order_id",
+               "public.orders.order_status",
+               "public.orders.order_type",
+               "public.orders.ordered_at",
+               "public.patient_encounter_summary.encounter_count",
+               "public.patient_encounter_summary.patient_id",
+               "public.patients.created_at",
+               "public.patients.patient_id",
+               "public.providers.department_id",
+               "public.providers.provider_id",
+               "public.providers.provider_name",
+               "public.providers.specialty"
+              ],
+              "type": "string"
+             },
+             {
+              "type": "null"
+             }
+            ]
+           },
+           "groupKey": {
+            "anyOf": [
+             {
+              "enum": [
+               "public.department_order_summary.department_id",
+               "public.department_order_summary.order_amount",
+               "public.department_order_summary.order_count",
+               "public.departments.department_code",
+               "public.departments.department_id",
+               "public.departments.department_name",
+               "public.encounters.admitted_at",
+               "public.encounters.department_id",
+               "public.encounters.discharged_at",
+               "public.encounters.provider_id",
+               "public.orders.amount",
+               "public.orders.department_id",
+               "public.orders.order_id",
+               "public.orders.order_status",
+               "public.orders.order_type",
+               "public.orders.ordered_at",
+               "public.patient_encounter_summary.encounter_count",
+               "public.patient_encounter_summary.patient_id",
+               "public.patients.created_at",
+               "public.patients.patient_id",
+               "public.providers.department_id",
+               "public.providers.provider_id",
+               "public.providers.provider_name",
+               "public.providers.specialty"
+              ],
+              "type": "string"
+             },
+             {
+              "type": "null"
+             }
+            ]
+           },
+           "join": {
+            "anyOf": [
+             {
+              "enum": [
+               "public.encounters.department_id = public.departments.department_id",
+               "public.encounters.patient_id = public.patients.patient_id",
+               "public.encounters.provider_id = public.providers.provider_id",
+               "public.orders.department_id = public.departments.department_id",
+               "public.orders.encounter_id = public.encounters.encounter_id",
+               "public.providers.department_id = public.departments.department_id"
+              ],
+              "type": "string"
+             },
+             {
+              "type": "null"
+             }
+            ]
+           },
+           "kind": {
+            "enum": [
+             "count",
+             "filtered_count",
+             "group_by",
+             "join_aggregate",
+             "grouped_join",
+             "average_count_by",
+             "compare_aggregates"
+            ],
+            "type": "string"
+           },
+           "limit": {
+            "anyOf": [
+             {
+              "type": "integer"
+             },
+             {
+              "type": "null"
+             }
+            ]
+           },
+           "operation": {
+            "enum": [
+             "count",
+             "sum"
+            ],
+            "type": "string"
+           },
+           "order": {
+            "anyOf": [
+             {
+              "enum": [
+               "asc",
+               "desc"
+              ],
+              "type": "string"
+             },
+             {
+              "type": "null"
+             }
+            ]
+           },
+           "source_index": {
+            "enum": [
+             0
+            ],
+            "type": "integer"
+           },
+           "table": {
+            "enum": [
+             "public.department_order_summary",
+             "public.departments",
+             "public.encounters",
+             "public.orders",
+             "public.patient_encounter_summary",
+             "public.patients",
+             "public.providers"
+            ],
+            "type": "string"
+           }
+          },
+          "required": [
+           "source_index",
+           "declared",
+           "kind",
+           "table",
+           "join",
+           "groupBy",
+           "groupKey",
+           "entityColumn",
+           "aggregateColumn",
+           "operation",
+           "order",
+           "limit",
+           "filters"
+          ],
+          "type": "object"
+         }
+        ]
+       },
+       "type": "array"
+      },
+      "lineage": {
+       "anyOf": [
+        {
+         "anyOf": [
+          {
+           "additionalProperties": false,
+           "properties": {
+            "asset": {
+             "description": "The table, or table.column, the question asks about.",
+             "enum": [
+              "public.department_order_summary",
+              "public.department_order_summary.department_id",
+              "public.department_order_summary.order_amount",
+              "public.department_order_summary.order_count",
+              "public.departments",
+              "public.departments.department_code",
+              "public.departments.department_id",
+              "public.departments.department_name",
+              "public.encounters",
+              "public.encounters.admitted_at",
+              "public.encounters.department_id",
+              "public.encounters.discharged_at",
+              "public.encounters.encounter_id",
+              "public.encounters.patient_id",
+              "public.encounters.provider_id",
+              "public.orders",
+              "public.orders.amount",
+              "public.orders.department_id",
+              "public.orders.encounter_id",
+              "public.orders.order_id",
+              "public.orders.order_status",
+              "public.orders.order_type",
+              "public.orders.ordered_at",
+              "public.patient_encounter_summary",
+              "public.patient_encounter_summary.encounter_count",
+              "public.patient_encounter_summary.patient_id",
+              "public.patients",
+              "public.patients.created_at",
+              "public.patients.date_of_birth",
+              "public.patients.mrn",
+              "public.patients.name",
+              "public.patients.patient_id",
+              "public.patients.phone",
+              "public.providers",
+              "public.providers.department_id",
+              "public.providers.provider_id",
+              "public.providers.provider_name",
+              "public.providers.specialty"
+             ],
+             "type": "string"
+            },
+            "direction": {
+             "description": "upstream: where its data comes from. downstream: what reads it or would break if it changed.",
+             "enum": [
+              "upstream",
+              "downstream"
+             ],
+             "type": "string"
+            },
+            "source_index": {
+             "enum": [
+              0
+             ],
+             "type": "integer"
+            }
+           },
+           "required": [
+            "source_index",
+            "asset",
+            "direction"
+           ],
+           "type": "object"
+          }
+         ]
+        },
+        {
+         "type": "null"
+        }
+       ]
+      },
+      "privacy_refusal": {
+       "anyOf": [
+        {
+         "description": "Sensitive column the question asks to expose or group by. Set answerable false and leave intents empty. Otherwise null.",
+         "enum": [
+          "public.encounters.encounter_id",
+          "public.encounters.patient_id",
+          "public.orders.encounter_id",
+          "public.patients.date_of_birth",
+          "public.patients.mrn",
+          "public.patients.name",
+          "public.patients.phone"
+         ],
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ]
+      }
+     },
+     "required": [
+      "privacy_refusal",
+      "lineage",
+      "declaration",
+      "intents"
+     ],
+     "type": "object"
+    },
+    "strict": true
+   },
+   "type": "json_schema"
+  }
+ },
+ "response": {
+  "content": "{\n  \"privacy_refusal\": null,\n  \"lineage\": null,\n  \"declaration\": {\n    \"subject\": \"patients\",\n    \"grouping\": null,\n    \"conditions\": [],\n    \"comparison\": false,\n    \"every_group\": false,\n    \"answerable\": true,\n    \"exposed_columns\": [],\n    \"read_columns\": [\"public.patients.patient_id\"]\n  },\n  \"intents\": [\n    {\n      \"source_index\": 0,\n      \"declared\": {\n        \"subject_table\": \"public.patients\",\n        \"measure\": \"count\",\n        \"measure_column\": null,\n        \"grouping_column\": null,\n        \"filter_columns\": []\n      },\n      \"kind\": \"count\",\n      \"table\": \"public.patients\",\n      \"join\": null,\n      \"groupBy\": null,\n      \"groupKey\": null,\n      \"entityColumn\": null,\n      \"aggregateColumn\": null,\n      \"operation\": \"count\",\n      \"order\": null,\n      \"limit\": null,\n      \"filters\": []\n    }\n  ]\n}",
+  "promptTokens": 4624,
+  "completionTokens": 306
+ }
+}

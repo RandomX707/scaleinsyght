@@ -1,0 +1,68 @@
+{
+ "hash": "93465255ab23ff309c213ed8ef119b47",
+ "recordedAt": "2026-11-27T21:43:40.616Z",
+ "model": "gpt-6-luna",
+ "purpose": "describe",
+ "request": {
+  "max_completion_tokens": 920,
+  "messages": [
+   {
+    "content": "You write short, plain descriptions of database objects for people who are not engineers, from disclosed metadata only: names, column names, keys and SQL with literal values hidden. You never see row values or statistics. Say what each object is or does in one or two sentences, in sentence case, without jargon or a list of tables. Respond with a single JSON object.",
+    "role": "system"
+   },
+   {
+    "content": "{\"question\":\"Describe each listed object in one or two plain sentences: what it holds or does and what it is for, as a business reader would understand it. Do not list its columns or tables. Use only the metadata given. Objects: dbo.X_V_DEPT_CENSUS, dbo.fn_X_PATIENT_STAYS, dbo.rpt_X_ENCOUNTERS_BY_DEPT, dbo.usp_X_ARCHIVE_CENSUS, dbo.usp_X_CHECK_CENSUS, dbo.usp_X_LOAD_READMIT_FLAGS\",\"metadata\":{\"structural\":{\"objects\":[{\"name\":\"dbo.X_V_DEPT_CENSUS\",\"kind\":\"view\",\"columns\":[\"census_count\",\"department_name\",\"snap_date\"],\"keys\":[],\"parameters\":[],\"returns\":[],\"reads\":[\"dbo.X_CENSUS_SNAP\",\"dbo.departments\"],\"writes\":[],\"calls\":[]},{\"name\":\"dbo.fn_X_PATIENT_STAYS\",\"kind\":\"function\",\"columns\":[],\"keys\":[],\"parameters\":[\"@PatientId\",\"@From\",\"@To\"],\"returns\":[\"encounter_id\",\"department_id\",\"admitted_at\",\"discharged_at\"],\"reads\":[\"dbo.encounters\"],\"writes\":[],\"calls\":[]},{\"name\":\"dbo.rpt_X_ENCOUNTERS_BY_DEPT\",\"kind\":\"procedure\",\"columns\":[],\"keys\":[],\"parameters\":[\"@From\",\"@To\"],\"returns\":[],\"reads\":[\"dbo.departments\",\"dbo.encounters\"],\"writes\":[],\"calls\":[]},{\"name\":\"dbo.usp_X_ARCHIVE_CENSUS\",\"kind\":\"procedure\",\"columns\":[],\"keys\":[],\"parameters\":[\"@Before\"],\"returns\":[],\"reads\":[\"dbo.X_CENSUS_SNAP\"],\"writes\":[\"dbo.X_CENSUS_SNAP\",\"dbo.X_CENSUS_SNAP_ARCH\"],\"calls\":[]},{\"name\":\"dbo.usp_X_CHECK_CENSUS\",\"kind\":\"procedure\",\"columns\":[],\"keys\":[],\"parameters\":[],\"returns\":[],\"reads\":[\"dbo.X_CENSUS_SNAP\"],\"writes\":[],\"calls\":[]},{\"name\":\"dbo.usp_X_LOAD_READMIT_FLAGS\",\"kind\":\"procedure\",\"columns\":[],\"keys\":[],\"parameters\":[\"@LookbackDays\"],\"returns\":[],\"reads\":[\"dbo.encounters\"],\"writes\":[\"dbo.X_READMIT_FLAGS\"],\"calls\":[\"dbo.usp_X_LOG_JOB\"]}]},\"descriptive\":{\"definition dbo.X_V_DEPT_CENSUS\":\"\\nCREATE VIEW dbo.X_V_DEPT_CENSUS AS\\n  SELECT d.department_name, s.snap_date, s.census_count FROM dbo.X_CENSUS_SNAP s JOIN dbo.departments d ON d.department_id = s.department_id;\\n\",\"definition dbo.fn_X_PATIENT_STAYS\":\"\\n-- <comment>\\nCREATE FUNCTION dbo.fn_X_PATIENT_STAYS (@[redacted_identifier], @From date, @To date)\\nRETURNS TABLE AS RETURN\\n  SELECT e.encounter_id, e.department_id, e.admitted_at, e.discharged_at FROM dbo.encounters e\\n  WHERE e.patient_id = @[redacted_identifier] e.admitted_at >= @From AND e.admitted_at < @To;\\n\",\"definition dbo.rpt_X_ENCOUNTERS_BY_DEPT\":\"\\nCREATE PROCEDURE dbo.rpt_X_ENCOUNTERS_BY_DEPT @From date, @To date AS\\nBEGIN\\n  SELECT d.department_name, COUNT(*) AS encounters FROM dbo.encounters e JOIN dbo.departments d ON d.department_id = e.department_id\\n  WHERE e.admitted_at >= @From AND e.admitted_at < @To GROUP BY d.department_name;\\nEND;\\n\",\"definition dbo.usp_X_ARCHIVE_CENSUS\":\"\\nCREATE PROCEDURE dbo.usp_X_ARCHIVE_CENSUS @Before date AS\\nBEGIN\\n  INSERT INTO dbo.X_CENSUS_SNAP_ARCH (snap_date, department_id, census_count) SELECT snap_date, department_id, census_count FROM dbo.X_CENSUS_SNAP WHERE snap_date < @Before;\\n  DELETE FROM dbo.X_CENSUS_SNAP WHERE snap_date < @Before;\\nEND;\\n\",\"definition dbo.usp_X_CHECK_CENSUS\":\"\\nCREATE PROCEDURE dbo.usp_X_CHECK_CENSUS AS\\nBEGIN\\n  SELECT COUNT(*) AS negative_rows FROM dbo.X_CENSUS_SNAP WHERE census_count < <number>;\\nEND;\\n\",\"definition dbo.usp_X_LOAD_READMIT_FLAGS\":\"\\nCREATE PROCEDURE dbo.usp_X_LOAD_READMIT_FLAGS @LookbackDays int = <number> AS\\nBEGIN\\n  TRUNCATE TABLE dbo.X_READMIT_FLAGS;\\n  INSERT INTO dbo.X_READMIT_FLAGS (encounter_id, readmitted, flagged_at)\\n  SELECT e.encounter_id,\\n         CASE WHEN EXISTS (SELECT <number> FROM dbo.encounters n WHERE n.patient_id = e.patient_id AND n.admitted_at > e.discharged_at\\n                           AND n.admitted_at <= DATEADD(day, @LookbackDays, e.discharged_at)) THEN '<string>' ELSE '<string>' END,\\n         SYSUTCDATETIME()\\n  FROM dbo.encounters e WHERE e.discharged_at IS NOT NULL AND e.patient_id <> <number>;\\n  DECLARE @n int = @@ROWCOUNT;\\n  EXEC dbo.usp_X_LOG_JOB @JobName = '<string>', @Rows = @n;\\nEND;\\n\"}},\"identifier_fingerprints\":[]}",
+    "role": "user"
+   }
+  ],
+  "model": "gpt-6-luna",
+  "response_format": {
+   "json_schema": {
+    "name": "dictionary_descriptions",
+    "schema": {
+     "additionalProperties": false,
+     "properties": {
+      "descriptions": {
+       "items": {
+        "additionalProperties": false,
+        "properties": {
+         "name": {
+          "enum": [
+           "dbo.X_V_DEPT_CENSUS",
+           "dbo.fn_X_PATIENT_STAYS",
+           "dbo.rpt_X_ENCOUNTERS_BY_DEPT",
+           "dbo.usp_X_ARCHIVE_CENSUS",
+           "dbo.usp_X_CHECK_CENSUS",
+           "dbo.usp_X_LOAD_READMIT_FLAGS"
+          ],
+          "type": "string"
+         },
+         "text": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "name",
+         "text"
+        ],
+        "type": "object"
+       },
+       "type": "array"
+      }
+     },
+     "required": [
+      "descriptions"
+     ],
+     "type": "object"
+    },
+    "strict": true
+   },
+   "type": "json_schema"
+  }
+ },
+ "response": {
+  "content": "{\"descriptions\":[{\"name\":\"dbo.X_V_DEPT_CENSUS\",\"text\":\"Shows department census counts by snapshot date. It is for reviewing census levels across departments over time.\"},{\"name\":\"dbo.fn_X_PATIENT_STAYS\",\"text\":\"Returns a patient’s encounters and their admission and discharge times within a requested date range. It is for reviewing that patient’s stays.\"},{\"name\":\"dbo.rpt_X_ENCOUNTERS_BY_DEPT\",\"text\":\"Counts encounters by department for a requested date range. It is for comparing encounter volume across departments.\"},{\"name\":\"dbo.usp_X_ARCHIVE_CENSUS\",\"text\":\"Moves census snapshots older than a specified date into an archive and removes them from the current snapshot records. It is for keeping older census records separate.\"},{\"name\":\"dbo.usp_X_CHECK_CENSUS\",\"text\":\"Counts census records with negative values. It is for checking census data for potential problems.\"},{\"name\":\"dbo.usp_X_LOAD_READMIT_FLAGS\",\"text\":\"Refreshes readmission flags based on whether a patient has another admission within the specified number of days after discharge, and records the job run. It is for identifying possible readmissions.\"}]}",
+  "promptTokens": 1290,
+  "completionTokens": 373
+ }
+}
