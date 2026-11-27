@@ -93,7 +93,10 @@ test('s9_dictionary_matches_testbed_truth_for_every_connector_type_and_exports_o
   await expect(page.getByText('Showing dbo.encounters and its direct neighbours')).toBeVisible();
   await expect(page.locator('.er-node h3')).toContainText(['dbo.encounters']);
   await page.screenshot({ path: screen('er') });
-  await page.goBack(); await expect(page.locator('.dict-card').first()).toBeVisible();
+  // A jump across pages offers a way back that names where it came from (CLAUDE.md 10.2).
+  await page.getByRole('button', { name: 'Back to Dictionary · encounters' }).click();
+  await expect(page.locator('.dict-header').getByRole('heading', { name: 'encounters' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Back to/ })).toHaveCount(0);
   // Approve all for a search: one confirmation, then every drafted description it shows.
   await page.getByLabel('Search tables, columns or SQL code').fill('X_CENSUS');
   const approveAll = side(page).locator('.dict-approve-all');
@@ -194,6 +197,9 @@ test('s9_dictionary_matches_testbed_truth_for_every_connector_type_and_exports_o
   await side(page).getByRole('button', { name: sheet.name, exact: true }).click();
   const sheetColumns = page.locator('.dict-card', { hasText: 'Columns, with original headers' });
   for (const header of sheet.headers.filter((header, index) => header !== sheet.columns[index])) await expect(sheetColumns).toContainText(header);
+  await page.locator('.dict-header').getByRole('button', { name: 'Ask about this' }).click();
+  await page.getByRole('button', { name: `Back to Dictionary · ${sheet.name}` }).click();
+  await expect(page.locator('.dict-header').getByRole('heading', { name: sheet.name })).toBeVisible();
   await page.screenshot({ path: screen('excel') });
 
   // dbt: models and sources with their descriptions (documented) and tests.
