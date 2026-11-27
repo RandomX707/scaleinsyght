@@ -79,6 +79,9 @@ export function plannerSchema(catalog: PlannerCatalog, joins: PlannerJoin[], lin
   });
   const sensitivePaths = [...new Set(catalog.flatMap(source => source.assets.flatMap(asset =>
     asset.columns.filter(column => column.sensitivity_tags?.length).map(column => asset.qualified_name + '.' + column.name))))];
+  // Every catalog column, tagged ones included: the question's exposed columns are resolved against all of them, so
+  // code can refuse on the tag whatever else the response says (decoder, below).
+  const allPaths = [...new Set(catalog.flatMap(source => source.assets.flatMap(asset => asset.columns.map(column => asset.qualified_name + '.' + column.name))))];
   return object({
     privacy_refusal: sensitivePaths.length ? nullable(literal(sensitivePaths, 'Sensitive column the question asks to expose or group by. Set answerable false and leave intents empty. Otherwise null.')) : {type:'null'},
     lineage: lineageBranches.length ? nullable({anyOf:lineageBranches}) : {type:'null'},
@@ -89,12 +92,19 @@ export function plannerSchema(catalog: PlannerCatalog, joins: PlannerJoin[], lin
       comparison: {type:'boolean',description:'True when the question asks for values from two or more sources.'},
       every_group: {type:'boolean',description:'True when the question asks for a value for each member of the grouping (each department, every provider), so members with none should appear with 0.'},
       answerable: {type:'boolean',description:'False when the catalog has no table for the subject; then intents is empty.'},
+      exposed_columns: {type:'array',items:allPaths.length ? literal(allPaths) : {type:'null'},description:'Every catalog column whose values the answer would show: the column the answer is broken down by (the grouping) and any column the question asks to list per record. Fill it even when the question cannot be answered. Not columns used only in a condition, a measure or a join. Empty for a single total.'},
+      read_columns: {type:'array',items:allPaths.length ? literal(allPaths) : {type:'null'},description:'Every catalog column the answer reads: the exposed columns plus each column measured, counted per entity, used in a condition or used as a join key. Fill it even when the question cannot be answered, with the columns the question refers to. Empty only when no catalog column relates to the question.'},
     }),
     intents: branches.length ? {type:'array',items:{anyOf:branches}} : {type:'array',items:{type:'null'},maxItems:0},
   });
 }
 
-export type PlanDeclaration = {subject: string; grouping: string | null; conditions: string[]; comparison: boolean; answerable: boolean; every_group?: boolean};
+export type PlanDeclaration = {subject: string; grouping: string | null; conditions: string[]; comparison: boolean; answerable: boolean; every_group?: boolean; exposed_columns?: string[]; read_columns?: string[]};
+/** Validation errors about the declared columns. The planner is re-asked once with the error; a second one ends the
+ * question as one that cannot be answered yet (decision 65). */
+export const COLUMN_DECLARATION_ERRORS = ['missing_exposed_columns', 'missing_read_columns', 'exposed_column_outside_catalog', 'read_column_outside_catalog',
+  'exposed_columns_not_in_read_columns', 'declared_grouping_without_exposed_column', 'unanswerable_without_resolved_columns', 'plan_reads_undeclared_columns', 'plan_shows_unexposed_columns'];
+export const isColumnDeclarationError = (reason: string) => COLUMN_DECLARATION_ERRORS.some(code => reason === code || reason.startsWith(code + ':'));
 export type LineageRequest = {index: number; asset: string; direction: 'upstream' | 'downstream'};
 /** intent is what runs; planned is the model's plan before the display-label rule, which is what verification checks. */
 type DecodedStep = {index: number; intent: QueryIntent; planned?: QueryIntent; display?: DisplayLabel | null};
@@ -114,6 +124,23 @@ export function decodePlannerOutput(text: string, catalog: PlannerCatalog, joins
   if (!declaration || typeof declaration.answerable !== 'boolean' || typeof declaration.comparison !== 'boolean') throw new Error('missing_declaration');
   if (!Array.isArray(parsed.intents)) throw new Error('invalid_source_list');
   if (parsed.intents.length > catalog.length) throw new Error('invalid_source_list: return at most one step per source; when no single step kind computes the requested measure, declare the question unanswerable');
+  // Privacy is decided here, by the tags on the columns the question resolved to, before anything else in the response
+  // is considered: an "unanswerable" declaration, an empty plan or a missing privacy_refusal cannot override it.
+  const exposed = declaration.exposed_columns; const read = declaration.read_columns;
+  if (!Array.isArray(exposed) || exposed.some(ref => typeof ref !== 'string')) throw new Error('missing_exposed_columns');
+  if (!Array.isArray(read) || read.some(ref => typeof ref !== 'string')) throw new Error('missing_read_columns');
+  const columns = catalog.flatMap(source => source.assets.flatMap(asset => asset.columns.map(column => ({path: asset.qualified_name + '.' + column.name, tags: column.sensitivity_tags ?? []}))));
+  for (const ref of read) if (!columns.some(column => column.path === ref)) throw new Error(`read_column_outside_catalog: ${ref}`);
+  for (const ref of exposed) {
+    const matched = columns.filter(column => column.path === ref);
+    if (!matched.length) throw new Error(`exposed_column_outside_catalog: ${ref}`);
+    const tags = [...new Set(matched.flatMap(column => column.tags))];
+    if (tags.length) throw new Error(`grouping_by_a_sensitive_column_is_not_allowed: ${ref} is tagged ${tags.join(', ')}`);
+  }
+  const missingFromRead = exposed.filter(ref => !read.includes(ref));
+  if (missingFromRead.length) throw new Error(`exposed_columns_not_in_read_columns: ${missingFromRead.join(', ')}`);
+  // A declared breakdown must name its column, so a question is never dropped as unsupported without being resolved.
+  if (declaration.grouping != null && !exposed.length) throw new Error('declared_grouping_without_exposed_column: name the catalog column the answer is broken down by in exposed_columns');
   if (parsed.privacy_refusal != null) {
     if (declaration.answerable || parsed.intents.length || parsed.lineage != null) throw new Error('privacy_refusal_with_plan');
     const [table, name] = field(parsed.privacy_refusal);
@@ -133,6 +160,8 @@ export function decodePlannerOutput(text: string, catalog: PlannerCatalog, joins
   }
   if (!declaration.answerable) {
     if (parsed.intents.length) throw new Error('declared_unanswerable_but_planned');
+    // An unanswerable declaration must still say which columns the question refers to, so their tags were checked.
+    if (!read.length) throw new Error('unanswerable_without_resolved_columns: name the catalog columns the question refers to in read_columns; leave it empty only when no catalog column relates to the question');
     return {declaration, steps: []};
   }
   if (!parsed.intents.length) throw new Error('declared_answerable_without_a_plan');
@@ -172,6 +201,16 @@ export function decodePlannerOutput(text: string, catalog: PlannerCatalog, joins
       const tags = source.assets.find(asset => asset.qualified_name === groupTable)?.columns.find(col => col.name === groupColumn)?.sensitivity_tags ?? [];
       if (tags.length) throw new Error(`grouping_by_a_sensitive_column_is_not_allowed: ${String(shown)} is tagged ${tags.join(', ')}`);
     }
+    // Never run a plan that reads or shows a column the declaration did not name, so the tag check above it covered
+    // every column the answer touches (decision 65).
+    const shownColumns = [item.groupBy, item.groupKey].filter((ref): ref is string => typeof ref === 'string');
+    const joinColumns = typeof item.join === 'string' ? item.join.split('=').map(part => part.trim()).filter(Boolean) : [];
+    const readColumns = [...shownColumns, item.entityColumn, item.aggregateColumn, ...(Array.isArray(item.filters) ? (item.filters as Array<{column?: unknown}>).map(filter => filter.column) : []), ...joinColumns]
+      .filter((ref): ref is string => typeof ref === 'string');
+    const undeclared = [...new Set(readColumns.filter(ref => !read.includes(ref)))];
+    if (undeclared.length) throw new Error(`plan_reads_undeclared_columns: ${undeclared.join(', ')} must be in read_columns`);
+    const unexposed = [...new Set(shownColumns.filter(ref => !exposed.includes(ref)))];
+    if (unexposed.length) throw new Error(`plan_shows_unexposed_columns: ${unexposed.join(', ')} must be in exposed_columns`);
     // The executable plan must match what the step declares.
     if ((isJoinIntent ? leftTable : table) !== declared.subject_table) throw new Error(`plan_subject_differs_from_declared_subject: declared ${String(declared.subject_table)}, plan uses ${isJoinIntent ? leftTable : table}`);
     if (declared.grouping_column == null) {

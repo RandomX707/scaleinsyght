@@ -88,6 +88,17 @@ async function connect() {
     await checked(path + '/activate', 'POST', {});
     await checked(path + '/discover', 'POST', {jobType: 'profile'});
   }
+  // Profiles run in the background since K10, so wait for every source's latest profile before importing dbt: dbt
+  // links its sources to the warehouse tables the profile records, and imported first, those links are gaps (seen in
+  // the 27 Nov 14:11 run, where Q41, Q42 and Q44 answered from a graph without them).
+  for (const source of ['p', 's', 'x'] as const) {
+    for (let attempt = 0; ; attempt++) {
+      const state = (await checked('/connections/' + ids[source] + '/profile', 'GET') as {profile?: {state?: string} | null}).profile?.state;
+      if (state === 'COMPLETED') break;
+      if (state === 'FAILED' || attempt >= 300) throw new Error('Profile did not complete for ' + source + ': ' + String(state));
+      await delay(1_000);
+    }
+  }
   // The testbed dbt project builds into the PostgreSQL testbed; its artifacts come from pnpm testbed:dbt.
   const dbt = await checked('/connections', 'POST', {connectorType: 'dbt', displayName: 'Hospital dbt project', warehouseConnectionId: ids.p});
   await checked('/connections/' + dbt.connectionId + '/dbt-artifacts', 'POST', {manifest: JSON.parse(await readFile('testbed/dbt/target/manifest.json', 'utf8')), catalog: JSON.parse(await readFile('testbed/dbt/target/catalog.json', 'utf8'))});
