@@ -1,0 +1,67 @@
+{
+ "hash": "fe4475e3d73221d03b16fa90dc20bcef",
+ "recordedAt": "2026-11-27T21:42:54.965Z",
+ "model": "gpt-6-luna",
+ "purpose": "describe",
+ "request": {
+  "max_completion_tokens": 800,
+  "messages": [
+   {
+    "content": "You write short, plain descriptions of database objects for people who are not engineers, from disclosed metadata only: names, column names, keys and SQL with literal values hidden. You never see row values or statistics. Say what each object is or does in one or two sentences, in sentence case, without jargon or a list of tables. Respond with a single JSON object.",
+    "role": "system"
+   },
+   {
+    "content": "{\"question\":\"Describe each listed object in one or two plain sentences: what it holds or does and what it is for, as a business reader would understand it. Do not list its columns or tables. Use only the metadata given. Objects: public.departments, public.encounters, public.orders, public.patients, public.providers\",\"metadata\":{\"structural\":{\"objects\":[{\"name\":\"public.departments\",\"kind\":\"table\",\"columns\":[\"department_code\",\"department_id\",\"department_name\"],\"keys\":[],\"parameters\":[],\"returns\":[],\"reads\":[],\"writes\":[],\"calls\":[]},{\"name\":\"public.encounters\",\"kind\":\"table\",\"columns\":[\"admitted_at\",\"department_id\",\"discharged_at\",\"encounter_id\",\"patient_id\",\"provider_id\"],\"keys\":[],\"parameters\":[],\"returns\":[],\"reads\":[],\"writes\":[],\"calls\":[]},{\"name\":\"public.orders\",\"kind\":\"table\",\"columns\":[\"amount\",\"department_id\",\"encounter_id\",\"order_id\",\"order_status\",\"order_type\",\"ordered_at\"],\"keys\":[\"department_id references public.departments.department_id\",\"encounter_id references public.encounters.encounter_id\"],\"parameters\":[],\"returns\":[],\"reads\":[],\"writes\":[],\"calls\":[]},{\"name\":\"public.patients\",\"kind\":\"table\",\"columns\":[\"created_at\",\"date_of_birth\",\"mrn\",\"name\",\"patient_id\",\"phone\"],\"keys\":[],\"parameters\":[],\"returns\":[],\"reads\":[],\"writes\":[],\"calls\":[]},{\"name\":\"public.providers\",\"kind\":\"table\",\"columns\":[\"department_id\",\"provider_id\",\"provider_name\",\"specialty\"],\"keys\":[],\"parameters\":[],\"returns\":[],\"reads\":[],\"writes\":[],\"calls\":[]}]},\"descriptive\":{}},\"identifier_fingerprints\":[]}",
+    "role": "user"
+   }
+  ],
+  "model": "gpt-6-luna",
+  "response_format": {
+   "json_schema": {
+    "name": "dictionary_descriptions",
+    "schema": {
+     "additionalProperties": false,
+     "properties": {
+      "descriptions": {
+       "items": {
+        "additionalProperties": false,
+        "properties": {
+         "name": {
+          "enum": [
+           "public.departments",
+           "public.encounters",
+           "public.orders",
+           "public.patients",
+           "public.providers"
+          ],
+          "type": "string"
+         },
+         "text": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "name",
+         "text"
+        ],
+        "type": "object"
+       },
+       "type": "array"
+      }
+     },
+     "required": [
+      "descriptions"
+     ],
+     "type": "object"
+    },
+    "strict": true
+   },
+   "type": "json_schema"
+  }
+ },
+ "response": {
+  "content": "{\"descriptions\":[{\"name\":\"public.departments\",\"text\":\"Holds department names and codes with identifiers. It is used to identify departments.\"},{\"name\":\"public.encounters\",\"text\":\"Holds records of patient encounters, including their timing and associated department and provider. It is used to track encounters for patients.\"},{\"name\":\"public.orders\",\"text\":\"Holds orders linked to an encounter and department, with their type, status, amount, and time. It is used to track orders and their details.\"},{\"name\":\"public.patients\",\"text\":\"Holds patient names, dates of birth, contact phone numbers, and record identifiers. It is used to identify patients and keep basic details about them.\"},{\"name\":\"public.providers\",\"text\":\"Holds provider names and specialties, along with their associated department. It is used to identify providers and their areas of practice.\"}]}",
+  "promptTokens": 498,
+  "completionTokens": 270
+ }
+}

@@ -1,0 +1,65 @@
+{
+ "hash": "65f3102b6aee182bb78d0e0251f60083",
+ "recordedAt": "2026-11-27T21:44:31.533Z",
+ "model": "gpt-6-luna",
+ "purpose": "describe",
+ "request": {
+  "max_completion_tokens": 560,
+  "messages": [
+   {
+    "content": "You write short, plain descriptions of database objects for people who are not engineers, from disclosed metadata only: names, column names, keys and SQL with literal values hidden. You never see row values or statistics. Say what each object is or does in one or two sentences, in sentence case, without jargon or a list of tables. Respond with a single JSON object.",
+    "role": "system"
+   },
+   {
+    "content": "{\"question\":\"Describe each listed object in one or two plain sentences: what it holds or does and what it is for, as a business reader would understand it. Do not list its columns or tables. Use only the metadata given. Objects: public.customers, public.legacy_codes, public.shop_orders\",\"metadata\":{\"structural\":{\"objects\":[{\"name\":\"public.customers\",\"kind\":\"table\",\"columns\":[\"contact_email\",\"customer_id\"],\"keys\":[],\"parameters\":[],\"returns\":[],\"reads\":[],\"writes\":[],\"calls\":[]},{\"name\":\"public.legacy_codes\",\"kind\":\"table\",\"columns\":[\"code\"],\"keys\":[],\"parameters\":[],\"returns\":[],\"reads\":[],\"writes\":[],\"calls\":[]},{\"name\":\"public.shop_orders\",\"kind\":\"table\",\"columns\":[\"amount\",\"order_id\"],\"keys\":[],\"parameters\":[],\"returns\":[],\"reads\":[],\"writes\":[],\"calls\":[]}]},\"descriptive\":{}},\"identifier_fingerprints\":[]}",
+    "role": "user"
+   }
+  ],
+  "model": "gpt-6-luna",
+  "response_format": {
+   "json_schema": {
+    "name": "dictionary_descriptions",
+    "schema": {
+     "additionalProperties": false,
+     "properties": {
+      "descriptions": {
+       "items": {
+        "additionalProperties": false,
+        "properties": {
+         "name": {
+          "enum": [
+           "public.customers",
+           "public.legacy_codes",
+           "public.shop_orders"
+          ],
+          "type": "string"
+         },
+         "text": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "name",
+         "text"
+        ],
+        "type": "object"
+       },
+       "type": "array"
+      }
+     },
+     "required": [
+      "descriptions"
+     ],
+     "type": "object"
+    },
+    "strict": true
+   },
+   "type": "json_schema"
+  }
+ },
+ "response": {
+  "content": "{\"descriptions\":[{\"name\":\"public.customers\",\"text\":\"Holds customer records with an identifier and contact email. It is used to keep track of customers and how to contact them.\"},{\"name\":\"public.legacy_codes\",\"text\":\"Holds codes associated with legacy records or processes. It may be used to retain or reference older codes.\"},{\"name\":\"public.shop_orders\",\"text\":\"Holds shop order records with an identifier and an amount. It is used to track orders and their amounts.\"}]}",
+  "promptTokens": 339,
+  "completionTokens": 178
+ }
+}
