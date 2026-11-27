@@ -436,7 +436,7 @@ h3 { font-size: 14px; line-height: 1.3; }
 .er-node li { height:22px; box-sizing:border-box; padding:0 !important; align-items:center; }
 .er-node .er-more { display:block; height:18px; padding:2px 12px 0; }
 .er-node-actions { margin-top:auto; display:flex; flex-direction:column; align-items:flex-start; padding:4px 4px 8px; }
-.er-node.is-selected { box-shadow:0 0 0 2px var(--primary); }
+.er-node.is-selected { border-color:var(--primary)!important; box-shadow:0 0 0 1px var(--primary); }
 .er-profile { margin-top:16px; padding:16px; border:1px solid var(--line); border-radius:12px; background:var(--surface); }
 .er-profile-head { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap; }
 .er-profile-head h2 { margin:0; font-size:16px; }
