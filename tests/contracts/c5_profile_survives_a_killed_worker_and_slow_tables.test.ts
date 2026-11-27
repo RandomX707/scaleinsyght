@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { config } from 'dotenv';
 import { spawn } from 'node:child_process';
+import { startStalledPostgres } from '../support/stalled-postgres.js';
 import { once } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
@@ -39,6 +40,48 @@ const jobRow = (tenantId: string, jobId: string) => withTenant(migratePool, tena
 
 describe('contract 5 background profile resilience', () => {
   afterAll(async () => { await appPool.end(); await workerPool.end(); await migratePool.end(); });
+
+  it('c5_client_timeout_skips_the_object_releases_its_lease_and_runs_the_next_job', async () => {
+    const first = await tenantWithConnection('client-timeout');
+    const next = await tenantWithConnection('after-client-timeout');
+    const source = await startStalledPostgres();
+    const watchdog = setTimeout(source.disconnect, 2_000);
+    const network = createPostgresConnector({ connectionString: source.url, statementTimeoutMs: 75 });
+    const goldenId = listGoldenSources().find(item => item.type === 'postgres')!.id;
+    const healthy = createGoldenConnector(goldenId);
+    let attempted = false;
+    const connector = new Proxy(healthy, { get(target, key) {
+      if (key === 'profile') return async (...args: Parameters<ReadOnlyConnector['profile']>) => {
+        if (!attempted) {
+          attempted = true;
+          await network.test();
+        }
+        return target.profile(...args);
+      };
+      if (key === 'close') return () => network.close();
+      const value: unknown = Reflect.get(target, key, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    try {
+      const started = performance.now();
+      expect(await runNextDiscovery(workerPool, async () => connector, first.tenantId)).toBe(true);
+      expect(performance.now() - started).toBeLessThan(1_500);
+      expect(source.querySeen()).toBe(true);
+      expect(await jobRow(first.tenantId, first.jobId)).toMatchObject({ state: 'COMPLETED', failed_count: 1 });
+      const [job, object] = await withTenant(migratePool, first.tenantId, async db => [
+        (await db.query('SELECT lease_expires_at FROM profiler.jobs WHERE tenant_id=$1 AND job_id=$2', [first.tenantId, first.jobId])).rows[0],
+        (await db.query("SELECT state FROM profiler.job_objects WHERE tenant_id=$1 AND job_id=$2 AND state='FAILED'", [first.tenantId, first.jobId])).rows[0],
+      ]);
+      expect(job).toEqual({ lease_expires_at: null });
+      expect(object).toEqual({ state: 'FAILED' });
+      expect(await runNextDiscovery(workerPool, async () => createGoldenConnector(goldenId), next.tenantId)).toBe(true);
+      expect(await jobRow(next.tenantId, next.jobId)).toMatchObject({ state: 'COMPLETED', failed_count: 0 });
+    } finally {
+      clearTimeout(watchdog);
+      source.disconnect();
+      await source.close();
+    }
+  });
 
   it('c5_a_worker_killed_mid_profile_is_replaced_and_the_profile_still_completes', async () => {
     const { tenantId, jobId } = await tenantWithConnection('killed-worker');

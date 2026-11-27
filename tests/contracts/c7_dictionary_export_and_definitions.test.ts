@@ -74,16 +74,18 @@ describe('contract 7 Dictionary definitions and export', () => {
       expect(response.statusCode).toBe(200);
       expect(response.headers['content-type']).toContain('text/html');
       const html = response.body;
-      const data = JSON.parse(/<script type="application\/json" id="dictionary-data">([\s\S]*?)<\/script>/.exec(html)![1]!) as { sources: Array<{ objects: Array<{ name: string; columns: Array<{ name: string; statsWithheld: boolean; nullRate: number | null; distinctCount: number | null }>; definition?: { text: string | null } }> }> };
+      // Item 5: the export carries the page's own data: the object list, and each object's detail as the API returns it.
+      const data = JSON.parse(/<script type="application\/json" id="dictionary-data">([\s\S]*?)<\/script>/.exec(html)![1]!) as { sources: Array<{ objects: Array<{ name: string }>; details: Record<string, { columns: Array<{ name: string; statsWithheld: boolean; nullRate: number | null; distinctCount: number | null }> }>; outOfScope: Array<{ name: string; type: string }> }> };
       const objects = data.sources[0]!.objects;
-      const mrn = objects.find((object) => object.name === 'dbo.patients')!.columns.find((column) => column.name === 'mrn')!;
+      const mrn = data.sources[0]!.details['dbo.patients']!.columns.find((column) => column.name === 'mrn')!;
       expect(mrn).toMatchObject({ statsWithheld: true, nullRate: null, distinctCount: null });
       expect(html).not.toContain('777'); expect(html).not.toContain('0.25');
       expect(html).not.toContain(LITERAL_ID); expect(html).not.toContain(LITERAL_TEXT);
-      expect(objects.map((object) => object.name)).not.toContain('dbo.BH_NOTES');
-      expect(objects.map((object) => object.name)).not.toContain('dbo.usp_BH_ONLY');
-      expect(html).toContain('dbo.BH_NOTES · table'); expect(html).toContain('dbo.usp_BH_ONLY · procedure');
-      expect(html).not.toMatch(/https?:\/\//);
+      // Out-of-scope objects: by name and type only, never listed or detailed.
+      for (const name of ['dbo.BH_NOTES', 'dbo.usp_BH_ONLY']) { expect(objects.map((object) => object.name)).not.toContain(name); expect(Object.keys(data.sources[0]!.details)).not.toContain(name); }
+      expect(data.sources[0]!.outOfScope).toEqual(expect.arrayContaining([{ name: 'dbo.BH_NOTES', type: 'table' }, { name: 'dbo.usp_BH_ONLY', type: 'procedure' }]));
+      // No web address outside the embedded fonts' licence comments.
+      expect(html.replace(/\/\*[\s\S]*?\*\//g, '')).not.toMatch(/https?:\/\//);
       const audit = await withTenant(migrate, tenantId, (db) => db.query<{ principal_id: string; safe_details: Record<string, unknown> }>(`SELECT principal_id,safe_details FROM core.activity_events WHERE tenant_id=$1 AND event_type='dictionary_exported'`, [tenantId]));
       expect(audit.rows).toEqual([{ principal_id: principal, safe_details: { sources: 1, objects: objects.length + 2, format: 'html' } }]);
       const detail = await server.inject({ method: 'GET', url: `/api/connections/${connectionId}/dictionary/object?name=dbo.patients`, headers: { cookie } });

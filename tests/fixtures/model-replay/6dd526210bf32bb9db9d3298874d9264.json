@@ -1,0 +1,49 @@
+{
+ "hash": "6dd526210bf32bb9db9d3298874d9264",
+ "recordedAt": "2026-11-27T19:26:53.982Z",
+ "model": "gpt-6.2-sol",
+ "purpose": "verify",
+ "request": {
+  "max_completion_tokens": 800,
+  "messages": [
+   {
+    "content": "You check whether a typed, read-only query plan answers a question exactly: the same subject, measure, grouping, conditions, ranking and sources. You never see row values. Respond with a single JSON object.",
+    "role": "system"
+   },
+   {
+    "content": "{\"question\":\"Question: How many patients are in sql server hospital?\\nPrior turns: \\nPlan: SQL Server hospital: the number of dbo.patients records\\nDoes this plan answer this question? A plan over a loosely related object, a single total where a breakdown is asked for, or a missing condition does not. Counting the rows of a table counts its distinct records.\",\"metadata\":{\"structural\":{\"sources\":[{\"index\":0,\"name\":\"SQL Server hospital\",\"type\":\"sql_server\",\"assets\":[{\"columns\":[{\"name\":\"department_id\",\"label\":null,\"data_type\":\"int\",\"sensitivity_tags\":[]},{\"name\":\"order_amount\",\"label\":null,\"data_type\":\"decimal\",\"sensitivity_tags\":[]},{\"name\":\"order_count\",\"label\":null,\"data_type\":\"bigint\",\"sensitivity_tags\":[]}],\"qualified_name\":\"dbo.department_order_summary\"},{\"columns\":[{\"name\":\"department_code\",\"label\":null,\"data_type\":\"nvarchar\",\"sensitivity_tags\":[]},{\"name\":\"department_id\",\"label\":null,\"data_type\":\"int\",\"sensitivity_tags\":[]},{\"name\":\"department_name\",\"label\":null,\"data_type\":\"nvarchar\",\"sensitivity_tags\":[]}],\"qualified_name\":\"dbo.departments\"},{\"columns\":[{\"name\":\"admitted_at\",\"label\":null,\"data_type\":\"datetime2\",\"sensitivity_tags\":[]},{\"name\":\"department_id\",\"label\":null,\"data_type\":\"int\",\"sensitivity_tags\":[]},{\"name\":\"discharged_at\",\"label\":null,\"data_type\":\"datetime2\",\"sensitivity_tags\":[]},{\"name\":\"encounter_id\",\"label\":null,\"data_type\":\"int\",\"sensitivity_tags\":[\"identifier\"]},{\"name\":\"patient_id\",\"label\":null,\"data_type\":\"int\",\"sensitivity_tags\":[\"identifier\"]},{\"name\":\"provider_id\",\"label\":null,\"data_type\":\"int\",\"sensitivity_tags\":[]}],\"qualified_name\":\"dbo.encounters\"},{\"columns\":[{\"name\":\"amount\",\"label\":null,\"data_type\":\"decimal\",\"sensitivity_tags\":[]},{\"name\":\"department_id\",\"label\":null,\"data_type\":\"int\",\"sensitivity_tags\":[]},{\"name\":\"encounter_id\",\"label\":null,\"data_type\":\"int\",\"sensitivity_tags\":[\"identifier\"]},{\"name\":\"order_id\",\"label\":null,\"data_type\":\"int\",\"sensitivity_tags\":[]},{\"name\":\"order_status\",\"label\":null,\"data_type\":\"nvarchar\",\"sensitivity_tags\":[]},{\"name\":\"order_type\",\"label\":null,\"data_type\":\"nvarchar\",\"sensitivity_tags\":[]},{\"name\":\"ordered_at\",\"label\":null,\"data_type\":\"datetime2\",\"sensitivity_tags\":[]}],\"qualified_name\":\"dbo.orders\"},{\"columns\":[{\"name\":\"encounter_count\",\"label\":null,\"data_type\":\"bigint\",\"sensitivity_tags\":[]},{\"name\":\"patient_id\",\"label\":null,\"data_type\":\"int\",\"sensitivity_tags\":[]}],\"qualified_name\":\"dbo.patient_encounter_summary\"},{\"columns\":[{\"name\":\"created_at\",\"label\":null,\"data_type\":\"datetime2\",\"sensitivity_tags\":[]},{\"name\":\"date_of_birth\",\"label\":null,\"data_type\":\"date\",\"sensitivity_tags\":[\"regulated\"]},{\"name\":\"mrn\",\"label\":null,\"data_type\":\"nvarchar\",\"sensitivity_tags\":[\"identifier\"]},{\"name\":\"name\",\"label\":null,\"data_type\":\"nvarchar\",\"sensitivity_tags\":[\"personal\"]},{\"name\":\"patient_id\",\"label\":null,\"data_type\":\"int\",\"sensitivity_tags\":[]},{\"name\":\"phone\",\"label\":null,\"data_type\":\"nvarchar\",\"sensitivity_tags\":[\"personal\"]}],\"qualified_name\":\"dbo.patients\"},{\"columns\":[{\"name\":\"department_id\",\"label\":null,\"data_type\":\"int\",\"sensitivity_tags\":[]},{\"name\":\"provider_id\",\"label\":null,\"data_type\":\"int\",\"sensitivity_tags\":[]},{\"name\":\"provider_name\",\"label\":null,\"data_type\":\"nvarchar\",\"sensitivity_tags\":[]},{\"name\":\"specialty\",\"label\":null,\"data_type\":\"nvarchar\",\"sensitivity_tags\":[]}],\"qualified_name\":\"dbo.providers\"}]}],\"relationships\":[{\"source_index\":0,\"from_name\":\"dbo.encounters.department_id\",\"to_name\":\"dbo.departments.department_id\",\"evidence_method\":\"inferred\",\"confidence_score\":\"1.000\"},{\"source_index\":0,\"from_name\":\"dbo.encounters.patient_id\",\"to_name\":\"dbo.patients.patient_id\",\"evidence_method\":\"inferred\",\"confidence_score\":\"1.000\"},{\"source_index\":0,\"from_name\":\"dbo.encounters.provider_id\",\"to_name\":\"dbo.providers.provider_id\",\"evidence_method\":\"inferred\",\"confidence_score\":\"1.000\"},{\"source_index\":0,\"from_name\":\"dbo.orders.department_id\",\"to_name\":\"dbo.departments.department_id\",\"evidence_method\":\"declared\",\"confidence_score\":\"1.000\"},{\"source_index\":0,\"from_name\":\"dbo.orders.encounter_id\",\"to_name\":\"dbo.encounters.encounter_id\",\"evidence_method\":\"declared\",\"confidence_score\":\"1.000\"},{\"source_index\":0,\"from_name\":\"dbo.providers.department_id\",\"to_name\":\"dbo.departments.department_id\",\"evidence_method\":\"inferred\",\"confidence_score\":\"1.000\"}]},\"descriptive\":{\"1.dbo.departments.department_name\":\"An emergency visit is an encounter assigned to the department named emergency. Join encounters to departments using department_id. The source spells that label Emergency.\"}},\"identifier_fingerprints\":[]}",
+    "role": "user"
+   }
+  ],
+  "model": "gpt-6.2-sol",
+  "response_format": {
+   "json_schema": {
+    "name": "plan_verification",
+    "schema": {
+     "additionalProperties": false,
+     "properties": {
+      "answers_question": {
+       "type": "boolean"
+      },
+      "reason": {
+       "description": "One short sentence.",
+       "type": "string"
+      }
+     },
+     "required": [
+      "answers_question",
+      "reason"
+     ],
+     "type": "object"
+    },
+    "strict": true
+   },
+   "type": "json_schema"
+  }
+ },
+ "response": {
+  "content": "{\"answers_question\":true,\"reason\":\"Counting all records in dbo.patients returns the total number of patients in the SQL Server hospital database.\"}",
+  "promptTokens": 1163,
+  "completionTokens": 38
+ }
+}
