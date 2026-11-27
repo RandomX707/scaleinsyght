@@ -90,11 +90,11 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     if(!['postgres','sql_server'].includes(row.connector_type)||!row.ciphertext||!row.nonce||!row.auth_tag)throw new Error('source_connection_requires_credentials');
     if(row.connector_type==='sql_server'){
       const secret=decryptConnectionSecret<{host:string;port:number;database:string;username:string;password:string;trustServerCertificate:boolean}>({version:1,ciphertext:row.ciphertext.toString('base64'),nonce:row.nonce.toString('base64'),authTag:row.auth_tag.toString('base64')});
-      const connector=createSqlServerConnector({server:secret.host,port:secret.port,database:secret.database,username:secret.username,password:secret.password,encrypt:true,trustServerCertificate:secret.trustServerCertificate,id:connectionId,name:row.display_name||'SQL Server source',statementTimeoutMs:10_000,maxRows:1_000});postgresConnectors.set(connectionId,connector);return connector;
+      const connector=createSqlServerConnector({server:secret.host,port:secret.port,database:secret.database,username:secret.username,password:secret.password,encrypt:true,trustServerCertificate:secret.trustServerCertificate,id:connectionId,name:row.display_name||'SQL Server source',maxRows:1_000});postgresConnectors.set(connectionId,connector);return connector;
     }
     const secret=decryptConnectionSecret<{host:string;port:number;database:string;username:string;password:string;sslMode:'disable'|'require'|'verify-full'}>({version:1,ciphertext:row.ciphertext.toString('base64'),nonce:row.nonce.toString('base64'),authTag:row.auth_tag.toString('base64')});
     const url=new URL('postgresql://placeholder');url.hostname=secret.host;url.port=String(secret.port);url.username=secret.username;url.password=secret.password;url.pathname=`/${secret.database}`;url.searchParams.set('sslmode',secret.sslMode);
-    const connector=createPostgresConnector({connectionString:url.toString(),id:connectionId,name:row.display_name||'PostgreSQL source',statementTimeoutMs:10_000,maxRows:1_000});postgresConnectors.set(connectionId,connector);return connector;
+    const connector=createPostgresConnector({connectionString:url.toString(),id:connectionId,name:row.display_name||'PostgreSQL source',maxRows:1_000});postgresConnectors.set(connectionId,connector);return connector;
   };
   const availableConnectorSources=()=> (options.testSources??[]).filter(source=>['postgres','sql_server','snowflake','excel','lake','crm'].includes(source.type));
   app.get('/api/gateways',async(request,reply)=>{
@@ -1488,7 +1488,7 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     const current=await authenticatedSession(request);if(!current)return reply.code(401).send({error:'unauthorized'});
     if(!options.artifactStore)return reply.code(503).send({error:'artifact_store_unavailable'});
     if(!Buffer.isBuffer(request.body)||request.body.length===0)return reply.code(400).send({error:'workbook_body_required'});
-    let sheets;try{sheets=await createExcelConnector({id:request.params.connectionId,name:'Workbook',workbook:request.body}).describe();}catch(error){const code=error instanceof Error?error.message:'excel_workbook_not_xlsx';return reply.code(400).send({error:code.startsWith('excel_')?code:'excel_workbook_not_xlsx'});}
+    let sheets;try{sheets=await createExcelConnector({id:request.params.connectionId,name:'Workbook',workbook:request.body}).describe();}catch(error){const code=error instanceof Error?error.message:'excel_workbook_not_xlsx';if(code==='source_unreachable')return reply.code(408).send({error:code});return reply.code(400).send({error:code.startsWith('excel_')?code:'excel_workbook_not_xlsx'});}
     try{const result=await storeWorkbook(options.pool,options.artifactStore,{tenantId:current.tenantId,connectionId:request.params.connectionId,bytes:request.body});return reply.code(201).send({...result,sheets});}
     catch(error){if(error instanceof Error&&error.message==='excel_connection_not_found')return reply.code(404).send({error:error.message});throw error;}
   });
