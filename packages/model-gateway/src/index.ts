@@ -92,7 +92,7 @@ export class OpenAIModelGateway{
     const question=safeQuestion(input.question,rawIdentifiers);
     const fingerprints=[...rawIdentifiers].map(value=>fingerprint(this.config.fingerprintKey,input.tenantId,value));
     const maxOutputTokens=Math.min(2048,Math.max(64,input.maxOutputTokens??1000));
-    const payload={model,messages:[{role:'system',content:SYSTEM_INSTRUCTIONS[input.purpose??'answer']},{role:'user',content:JSON.stringify({question,metadata:safeMetadata,identifier_fingerprints:fingerprints})}],max_completion_tokens:maxOutputTokens,...(input.purpose==='plan'||input.purpose==='verify'?{response_format:input.responseSchema ? {type:'json_schema',json_schema:{name:input.purpose==='verify'?'plan_verification':'typed_analytic_plan',strict:true,schema:input.responseSchema}} : {type:'json_object'}}:{})};
+    const payload={model,messages:[{role:'system',content:SYSTEM_INSTRUCTIONS[input.purpose??'answer']},{role:'user',content:JSON.stringify({question,metadata:safeMetadata,identifier_fingerprints:fingerprints})}],max_completion_tokens:maxOutputTokens,...(input.purpose==='plan'||input.purpose==='verify'||input.purpose==='describe'?{response_format:input.responseSchema ? {type:'json_schema',json_schema:{name:input.purpose==='verify'?'plan_verification':input.purpose==='describe'?'dictionary_descriptions':'typed_analytic_plan',strict:true,schema:input.responseSchema}} : {type:'json_object'}}:{})};
     const body=JSON.stringify(payload);const estimatedInput=estimateTokens(body);const estimatedTokens=estimatedInput+maxOutputTokens;
     const reservedCost=priceTokens(price,estimatedInput,maxOutputTokens);const id=requestId();
     const reservation=await withTenant(this.pool,input.tenantId,async(client)=>{

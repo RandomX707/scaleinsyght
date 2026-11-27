@@ -22,7 +22,10 @@ describe('model-drafted descriptions (decision 66)', () => {
     const request = describeRequest('tenant', [subject('dbo.orders'), subject('dbo.usp_load', 'procedure', `INSERT INTO dbo.orders SELECT '<string>' ${'y'.repeat(10_000)}`)]);
     expect(request).toMatchObject({ alias: 'cheap', purpose: 'describe', metadata: { classification: 'METADATA_DESCRIPTIVE', statistical: {}, sensitivityTags: [] } });
     expect(JSON.stringify(request.metadata.structural)).not.toContain('INSERT');
-    expect(request.metadata.descriptive['sql dbo.usp_load']).toHaveLength(DESCRIPTION_LIMITS.sqlChars);
+    expect(request.metadata.descriptive['definition dbo.usp_load']).toHaveLength(DESCRIPTION_LIMITS.sqlChars);
+    // The gateway refuses undefined values in metadata: the request must survive a JSON round trip unchanged.
+    expect(JSON.parse(JSON.stringify(request.metadata))).toStrictEqual(request.metadata);
+    expect(JSON.stringify(request.metadata)).not.toContain('"sql"');
     expect(JSON.stringify(request.responseSchema)).toContain('"enum":["dbo.orders","dbo.usp_load"]');
   });
 });

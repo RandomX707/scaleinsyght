@@ -62,9 +62,10 @@ export function describeRequest(tenantId: string, batch: DescriptionSubject[]): 
     question: `Describe each listed object in one or two plain sentences: what it holds or does and what it is for, as a business reader would understand it. Do not list its columns or tables. Use only the metadata given. Objects: ${names.join(', ')}`,
     metadata: {
       classification: 'METADATA_DESCRIPTIVE',
-      // SQL travels as descriptive text (scrubbed again by the gateway's metadata boundary), never in the structure.
-      structural: { objects: batch.map((subject) => ({ ...describeInput(subject), sql: undefined })) },
-      descriptive: Object.fromEntries(batch.filter((subject) => subject.sql).map((subject) => [`sql ${subject.name}`, describeInput(subject).sql!])),
+      // SQL travels only as descriptive text, under a "definition" key so the gateway's boundary scrubs it again; the
+      // structure leaves the key out (the gateway rejects undefined values).
+      structural: { objects: batch.map((subject) => Object.fromEntries(Object.entries(describeInput(subject)).filter(([key]) => key !== 'sql'))) },
+      descriptive: Object.fromEntries(batch.filter((subject) => subject.sql).map((subject) => [`definition ${subject.name}`, describeInput(subject).sql!])),
       statistical: {}, sensitivityTags: [],
     },
     responseSchema: { type: 'object', additionalProperties: false, required: ['descriptions'], properties: { descriptions: { type: 'array', items: {
