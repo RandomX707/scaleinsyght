@@ -1,9 +1,34 @@
+import { mkdirSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { expect,test } from '@playwright/test';
 import { signInToTestWorkspace, workspaceForTestEmail } from '../support/e2e-auth.js';
 
 async function signIn(page:import('@playwright/test').Page,email:string){
  await signInToTestWorkspace(page,email);
 }
+
+test('phase0_login_without_a_tenant_link_uses_the_workspace_field',async({page,browser})=>{
+ // Item 7: a plain /login works; the workspace is typed in (or remembered), so ?tenant= is not needed.
+ await page.goto('/login');await page.evaluate(()=>localStorage.removeItem('si-login-tenant'));await page.reload();
+ const workspace=page.getByLabel('Workspace');
+ await expect(workspace).toHaveValue('');
+ await page.getByLabel('Email').fill('phase0-login@synthetic.example');await page.getByLabel('Password').fill('golden-local-only');
+ await page.getByRole('button',{name:'Sign in',exact:true}).click();
+ await expect(page).toHaveURL(/\/login/); // the empty workspace field stops the form
+ await workspace.fill(workspaceForTestEmail('phase0-login@synthetic.example'));
+ await page.getByRole('button',{name:'Sign in',exact:true}).click();
+ await expect(page).toHaveURL('/');
+ // The next visit to /login remembers the workspace.
+ await page.context().clearCookies();await page.goto('/login');
+ await expect(page.getByLabel('Workspace')).toHaveValue(workspaceForTestEmail('phase0-login@synthetic.example'));
+ // The UI report pair (CLAUDE.md 12): the app's login beside the prototype's, both at 1440x900.
+ mkdirSync('docs/acceptance/phase0/prototype',{recursive:true});
+ await page.setViewportSize({width:1440,height:900});await page.screenshot({path:'docs/acceptance/phase0/login.png'});
+ const prototype=await browser.newPage({viewport:{width:1440,height:900}});
+ try{await prototype.goto(pathToFileURL(resolve('docs/prototype/index.html')).href);await expect(prototype.getByRole('button',{name:'Sign in',exact:true})).toBeVisible();await prototype.screenshot({path:'docs/acceptance/phase0/prototype/login.png'});}
+ finally{await prototype.close();}
+});
 
 test('phase0_golden_login_reaches_empty_home_and_tenant_usage',async({page})=>{
  // Decision 67 follow-up: the app serves its own fonts and calls no third-party font host.

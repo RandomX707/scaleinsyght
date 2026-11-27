@@ -146,19 +146,20 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
 function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const tenantId = new URLSearchParams(location.search).get('tenant') ?? '';
-  const [organization,setOrganization]=useState('');
+  // The workspace comes from the link (?tenant=), else the one last signed in to on this browser, else is typed in.
+  const [tenantId,setTenantId]=useState(()=>{const fromLink=new URLSearchParams(location.search).get('tenant');if(fromLink)return fromLink;try{return localStorage.getItem('si-login-tenant')??'';}catch{return '';}});
+  const [organization,setOrganization]=useState(tenantId);
   const [ssoOpen,setSsoOpen]=useState(false);
   const [error, setError] = useState('');
   async function submit(event: React.FormEvent) {
     event.preventDefault(); setError('');
     try {
-      await api('/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tenantId, email, password }) });
-      if(tenantId)try{localStorage.setItem('si-login-tenant',tenantId);}catch{ /* Login remains successful when browser storage is disabled. */ }
+      await api('/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tenantId: tenantId.trim(), email, password }) });
+      if(tenantId.trim())try{localStorage.setItem('si-login-tenant',tenantId.trim());}catch{ /* Login remains successful when browser storage is disabled. */ }
       location.assign('/');
     } catch { setError('Email or password is incorrect.'); }
   }
-  return <main className="login"><form onSubmit={submit}><div className="login-brand"><Logo /><span>insyght</span></div><p className="login-product">Scale Data Hub</p><h1>Sign in</h1><p>Connect your data, and your agents do the rest.</p><label>Work email<Input aria-label="Email" autoComplete="username" type="email" required value={email} onChange={event => setEmail(event.target.value)} /></label><label>Password<Input autoComplete="current-password" type="password" required value={password} onChange={event => setPassword(event.target.value)} /></label>{error && <p role="alert" className="error">{error}</p>}<Button variant="primary" type="submit">Sign in</Button><div className="login-divider">or</div><Button type="button" onClick={()=>setSsoOpen(true)}>Continue with single sign-on</Button><p className="muted">Your organization may use single sign-on.</p></form><PoweredBy />{ssoOpen&&<Modal title="Continue with single sign-on" open onClose={()=>setSsoOpen(false)}><p>Enter the organization workspace code provided by your administrator.</p><label>Organization workspace<Input aria-label="Organization workspace" value={organization} onChange={event=>setOrganization(event.target.value)} /></label><Button variant="primary" disabled={!organization.trim()} onClick={()=>location.assign(`/api/auth/oidc/${encodeURIComponent(organization)}/start`)}>Continue</Button></Modal>}</main>;
+  return <main className="login"><form onSubmit={submit}><div className="login-brand"><Logo /><span>insyght</span></div><p className="login-product">Scale Data Hub</p><h1>Sign in</h1><p>Connect your data, and your agents do the rest.</p><label>Workspace<Input aria-label="Workspace" autoComplete="organization" required spellCheck={false} value={tenantId} onChange={event => setTenantId(event.target.value)} /><small className="muted">The workspace name from your invitation.</small></label><label>Work email<Input aria-label="Email" autoComplete="username" type="email" required value={email} onChange={event => setEmail(event.target.value)} /></label><label>Password<Input autoComplete="current-password" type="password" required value={password} onChange={event => setPassword(event.target.value)} /></label>{error && <p role="alert" className="error">{error}</p>}<Button variant="primary" type="submit">Sign in</Button><div className="login-divider">or</div><Button type="button" onClick={()=>setSsoOpen(true)}>Continue with single sign-on</Button><p className="muted">Your organization may use single sign-on.</p></form><PoweredBy />{ssoOpen&&<Modal title="Continue with single sign-on" open onClose={()=>setSsoOpen(false)}><p>Enter the organization workspace code provided by your administrator.</p><label>Organization workspace<Input aria-label="Organization workspace" value={organization} onChange={event=>setOrganization(event.target.value)} /></label><Button variant="primary" disabled={!organization.trim()} onClick={()=>location.assign(`/api/auth/oidc/${encodeURIComponent(organization)}/start`)}>Continue</Button></Modal>}</main>;
 }
 
 
