@@ -5,6 +5,15 @@ import { GroupedAnswer, TrustBadges, describeRequest, planSummary, recogniseForm
 import { AgentsScreen } from './agents.js';
 import { Badge, Button, EmptyState, FileInput, Input, Logo, Modal, PoweredBy, Select, Table, Textarea, answerTitle, plural, runProgressLabel, runStatusLabel } from '@scaleinsyght/ui';
 import { createRoot } from 'react-dom/client';
+// Inter and JetBrains Mono are served with the app (SIL Open Font License 1.1, decision 67), not loaded from Google
+// Fonts, so the app works in private networks and calls no third party on page load. Only the weights used; each
+// file lists every subset with unicode-range, so browsers fetch only the subsets a page needs.
+import '@fontsource/inter/400.css';
+import '@fontsource/inter/500.css';
+import '@fontsource/inter/600.css';
+import '@fontsource/inter/700.css';
+import '@fontsource/jetbrains-mono/400.css';
+import '@fontsource/jetbrains-mono/500.css';
 import './style.css';
 import './phase1.css';
 import './phase3.css';
