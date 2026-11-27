@@ -48,3 +48,32 @@ Use synthetic PostgreSQL encounters and SQL Server charges with a renamed encoun
 - **Left join:** “How many encounters had no matching charge by department?” The truth query groups charges to one row per non-null encounter key, left joins from filtered encounters, then counts unmatched encounters by department.
 - **Disclosure:** “How many distinct encounters had charges by department and service type?” The truth query counts distinct encounter keys at the final grain, then applies fixture suppression expectations independently.
 - **Partial and retry:** Stall the charges source once while asking for overall encounters and linked charge amount. Verify the independently calculated encounter count, the missing charge amount, and the retried joined result against truth with both read times shown.
+
+The independent truth runner loads the synthetic extracts into `pg_encounters(encounter_id, department)` and `sqlserver_charges(visit_id, service_type, amount)`. Select the test period when building the extracts so each query uses the same population.
+
+```sql
+-- Linked charge lines and amount by department.
+WITH charges AS (
+  SELECT visit_id, COUNT(*) AS lines, SUM(amount) AS amount
+  FROM sqlserver_charges WHERE visit_id IS NOT NULL GROUP BY visit_id
+)
+SELECT e.department, SUM(c.lines) AS charge_lines, SUM(c.amount) AS charge_amount
+FROM pg_encounters e JOIN charges c ON e.encounter_id = c.visit_id
+GROUP BY e.department;
+
+-- Encounters with no charge by department.
+WITH charged AS (
+  SELECT DISTINCT visit_id FROM sqlserver_charges WHERE visit_id IS NOT NULL
+)
+SELECT e.department, COUNT(*) AS uncharged_encounters
+FROM pg_encounters e LEFT JOIN charged c ON e.encounter_id = c.visit_id
+WHERE c.visit_id IS NULL GROUP BY e.department;
+
+-- Protected units before independent fixture suppression checks.
+SELECT e.department, c.service_type, COUNT(DISTINCT e.encounter_id) AS encounters
+FROM pg_encounters e JOIN sqlserver_charges c ON e.encounter_id = c.visit_id
+GROUP BY e.department, c.service_type;
+
+-- Independent evidence when charges are unavailable.
+SELECT COUNT(*) AS encounters FROM pg_encounters;
+```
