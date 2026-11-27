@@ -41,10 +41,23 @@ describe('model replay (decision 69)', () => {
     expect(liveCalls).toBe(0);
   });
 
+  it('record-missing replays what exists and goes live only for the rest', async () => {
+    const e = env(); let liveCalls = 0;
+    const live = async (...args: Parameters<typeof fetch>) => { liveCalls++; return liveAnswer('{"ok":true}')(...args); };
+    await replayFetcher('record', live, e)('http://x', { method: 'POST', body: a });
+    const other = a.replace('Orders by department', 'Orders by provider');
+    const fill = replayFetcher('record-missing', live, e);
+    expect((await fill('http://x', { method: 'POST', body: b })).headers.get(REPLAY_HEADER)).toBe('1');
+    expect((await fill('http://x', { method: 'POST', body: other })).headers.get(REPLAY_HEADER)).toBeNull();
+    expect(liveCalls).toBe(2);
+    expect(readdirSync(e.MODEL_REPLAY_DIR!)).toHaveLength(2);
+  });
+
   it('modes: off by default, record refused in CI, unknown values rejected', () => {
     expect(replayModeFrom({})).toBe('off');
     expect(replayModeFrom({ MODEL_REPLAY: 'replay' })).toBe('replay');
     expect(() => replayModeFrom({ MODEL_REPLAY: 'record', CI: 'true' })).toThrow(/local only/);
+    expect(() => replayModeFrom({ MODEL_REPLAY: 'record-missing', GITHUB_ACTIONS: 'true' })).toThrow(/local only/);
     expect(() => replayModeFrom({ MODEL_REPLAY: 'live' })).toThrow();
   });
 });
