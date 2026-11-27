@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { withTenant, type Pool, type PoolClient } from '@scaleinsyght/db';
-import { parseStatementLineage, statementHash, writeFlowEdge, writeStatementLineage, SqlParserUnavailable, type LineageDialect, type StatementLineage } from './sql-lineage.js';
+import { parseStatementLineage, statementHash, writeStatementLineage, SqlParserUnavailable, type LineageDialect, type StatementLineage } from './sql-lineage.js';
 
 type Node = { resource_type?: unknown; name?: unknown; alias?: unknown; schema?: unknown; identifier?: unknown; compiled_code?: unknown; depends_on?: { nodes?: unknown }; description?: unknown; columns?: Record<string, { name?: unknown; description?: unknown }>; attached_node?: unknown; column_name?: unknown; test_metadata?: { name?: unknown } };
 type CatalogEntry = { metadata?: { schema?: unknown; name?: unknown }; columns?: Record<string, { type?: unknown; name?: unknown }> };
@@ -101,7 +101,7 @@ export async function importDbtArtifacts(pool: Pool, input: { tenantId: string; 
       const usable: StatementLineage = typeof lineage === 'string' ? { reads: [], missing_tables: [], columns: [], unresolved: [] } : lineage;
       const written = await writeStatementLineage(client, { tenantId: input.tenantId, target: model.relation, lineage: usable,
         assets: { dataset: (name) => datasets.get(name), field: (name) => fields.get(name) }, declaredReads: model.declaredReads,
-        evidenceMethod: 'declared', collector: 'dbt-artifacts-v1', evidenceType: 'dbt_manifest', statementHash: model.sql ? statementHash(model.sql) : '',
+        evidenceMethod: 'declared', collector: IMPORT_COLLECTOR, evidenceType: 'dbt_manifest', statementHash: model.sql ? statementHash(model.sql) : '',
         missingReason: sourceGapReason });
       totals.tableEdges += written.tableEdges; totals.columnEdges += written.columnEdges; totals.gaps += written.gaps;
       if (typeof lineage === 'string') {
@@ -128,13 +128,23 @@ export async function importDbtArtifacts(pool: Pool, input: { tenantId: string; 
         'importedAt',clock_timestamp(),'models',$3::integer,'tests',$4::integer,'objects',$5::jsonb,'sourceDependencies',$6::jsonb)
         WHERE tenant_id=$1 AND connection_id=$2 AND connector_type='dbt'`,
       [input.tenantId,input.dbtConnectionId,artifacts.models.length,artifacts.tests,JSON.stringify(artifacts.objects),JSON.stringify(sourceDependencies)]);
+    // A new import supersedes previously relinked dependencies for this project. Its normal assertions are
+    // now installed, and any still-missing dependency will have an open gap for the next warehouse profile.
+    await client.query(
+      `UPDATE graph.assertions a SET valid_to=clock_timestamp()
+       WHERE a.tenant_id=$1 AND a.collector_version=$3 AND a.valid_to IS NULL AND EXISTS (
+         SELECT 1 FROM graph.evidence e WHERE e.tenant_id=a.tenant_id AND e.evidence_id=ANY(a.evidence_ids)
+           AND e.safe_metadata->>'project_id'=$2
+       )`, [input.tenantId, input.dbtConnectionId, RELINK_COLLECTOR],
+    );
     await relinkDbtWarehouseSources(client, input.tenantId, input.warehouseConnectionId);
     return { models: artifacts.models.length, tests: artifacts.tests, sources: artifacts.sources, ...totals, modelsNotInWarehouse: notInWarehouse.sort() };
   });
 }
 
 const sourceGapReason = (source: string) => `dbt reads ${source}, which no connected source exposes`;
-const COLLECTOR = 'dbt-artifacts-v1';
+const IMPORT_COLLECTOR = 'dbt-artifacts-v1';
+const RELINK_COLLECTOR = 'dbt-source-relink-v1';
 
 async function lockDbtWarehouse(client: PoolClient, tenantId: string, warehouseId: string) {
   await client.query('SELECT 1 FROM registry.connections WHERE tenant_id=$1 AND connection_id=$2 FOR NO KEY UPDATE', [tenantId, warehouseId]);
@@ -142,11 +152,16 @@ async function lockDbtWarehouse(client: PoolClient, tenantId: string, warehouseI
 
 /** Resolve the import's declared dataset dependencies against the warehouse's current assets. Historic gaps
  * keep their IDs and point to the closing assertion. Compiled statements and field lineage are independent. */
-export async function relinkDbtWarehouseSources(client: PoolClient, tenantId: string, warehouseId: string): Promise<void> {
+export async function relinkDbtWarehouseSources(
+  client: PoolClient, tenantId: string, warehouseId: string, holdProfile?: () => Promise<void>,
+): Promise<void> {
+  // Connection retirement locks the connection before cancelling its job. Use the same order.
   await lockDbtWarehouse(client, tenantId, warehouseId);
+  await holdProfile?.();
   const matches = await client.query<{
     gap_id: string; project_id: string; source_id: string; model_id: string;
     warehouse_model_id: string | null; source_name: string; model_name: string;
+    closed_by_assertion_id: string | null; declared: boolean;
   }>(
     `WITH linked AS (
        SELECT connection_id,dbt_import FROM registry.connections
@@ -154,6 +169,10 @@ export async function relinkDbtWarehouseSources(client: PoolClient, tenantId: st
      ), candidates AS (
        SELECT g.gap_id,p.connection_id AS project_id,s.asset_id AS source_id,m.asset_id AS model_id,
               current_model.asset_id AS warehouse_model_id,s.qualified_name AS source_name,m.qualified_name AS model_name,
+              g.closed_by_assertion_id,
+              coalesce(p.dbt_import->'sourceDependencies' @> jsonb_build_array(
+                jsonb_build_object('source',s.qualified_name,'model',m.qualified_name)
+              ),false) AS declared,
               count(*) OVER (PARTITION BY g.gap_id) AS matches
        FROM graph.gaps g
        JOIN graph.assets m ON m.tenant_id=g.tenant_id AND g.between_asset_ids=ARRAY[m.asset_id] AND m.active AND m.asset_type='dataset'
@@ -162,7 +181,15 @@ export async function relinkDbtWarehouseSources(client: PoolClient, tenantId: st
         AND g.reason='dbt reads '||s.qualified_name||', which no connected source exposes'
        LEFT JOIN graph.assets current_model ON current_model.tenant_id=g.tenant_id AND current_model.source_id=$2::uuid
         AND current_model.active AND current_model.asset_type='dataset' AND current_model.qualified_name=m.qualified_name
-       WHERE g.tenant_id=$1 AND g.closed_by_assertion_id IS NULL AND (
+       LEFT JOIN graph.assertions closing ON closing.tenant_id=g.tenant_id AND closing.assertion_id=g.closed_by_assertion_id
+       LEFT JOIN graph.relationships closed_flow ON closed_flow.tenant_id=closing.tenant_id AND closed_flow.relationship_id=closing.relationship_id
+       WHERE g.tenant_id=$1 AND (
+         g.closed_by_assertion_id IS NULL OR (
+           current_model.asset_id IS DISTINCT FROM m.asset_id AND current_model.asset_id IS NOT NULL
+           AND closing.collector_version=$3 AND closing.valid_to IS NULL
+           AND closed_flow.to_asset_id=m.asset_id AND closed_flow.from_asset_id=s.asset_id
+         )
+       ) AND (
          p.dbt_import->'sourceDependencies' @> jsonb_build_array(jsonb_build_object('source',s.qualified_name,'model',m.qualified_name))
          OR (NOT p.dbt_import ? 'sourceDependencies'
            AND p.dbt_import->'objects' @> jsonb_build_array(
@@ -171,31 +198,55 @@ export async function relinkDbtWarehouseSources(client: PoolClient, tenantId: st
        )
      )
      SELECT * FROM candidates WHERE matches=1 ORDER BY gap_id`,
-    [tenantId, warehouseId],
+    [tenantId, warehouseId, RELINK_COLLECTOR],
   );
   for (const row of matches.rows) {
-    if (row.source_id === row.model_id) continue;
-    const evidence = await client.query<{ evidence_id: string }>(
-      `INSERT INTO graph.evidence(tenant_id,evidence_type,safe_metadata)
-       VALUES($1,'dbt_manifest',$2::jsonb) RETURNING evidence_id`,
-      [tenantId, JSON.stringify({ collector: COLLECTOR, project_id: row.project_id, source: row.source_name, target: row.model_name, prior_gap_id: row.gap_id })],
+    const target = row.warehouse_model_id ?? row.model_id;
+    if (row.source_id === target) continue;
+    const method = row.declared ? 'declared' : 'inferred';
+    const existing = await client.query<{ assertion_id: string }>(
+      `SELECT a.assertion_id FROM graph.assertions a JOIN graph.relationships r USING (tenant_id,relationship_id)
+       WHERE a.tenant_id=$1 AND r.from_asset_id=$2 AND r.to_asset_id=$3 AND r.relationship_type='DERIVES_FROM'
+         AND a.evidence_method=$4 AND a.collector_version=ANY($5::text[]) AND a.valid_to IS NULL
+         AND a.review_status NOT IN ('rejected','stale') ORDER BY captured_at DESC LIMIT 1`,
+      [tenantId, row.source_id, target, method, [IMPORT_COLLECTOR, RELINK_COLLECTOR]],
     );
-    const edge = {
-      tenantId, fromId: row.source_id, granularity: 'dataset' as const, method: 'declared' as const,
-      explanation: 'Dependency declared by the dbt project', transformation: null,
-      collector: COLLECTOR, evidenceId: evidence.rows[0]!.evidence_id,
-    };
-    const relationship = await writeFlowEdge(client, { ...edge, toId: row.model_id });
-    if (row.warehouse_model_id && row.warehouse_model_id !== row.model_id && row.warehouse_model_id !== row.source_id) {
-      await writeFlowEdge(client, { ...edge, toId: row.warehouse_model_id });
+    let assertionId = existing.rows[0]?.assertion_id;
+    if (!assertionId) {
+      const evidence = await client.query<{ evidence_id: string }>(
+        `INSERT INTO graph.evidence(tenant_id,evidence_type,safe_metadata)
+         VALUES($1,'dbt_manifest',$2::jsonb) RETURNING evidence_id`,
+        [tenantId, JSON.stringify({ collector: RELINK_COLLECTOR, project_id: row.project_id, source: row.source_name,
+          target: row.model_name, prior_gap_id: row.gap_id, basis: method })],
+      );
+      // The legacy gap proves an earlier collector reported the dependency, but it cannot distinguish a
+      // declaration from a parsed read. Keep its recovery as an unverified inference.
+      const written = await client.query<{ assertion_id: string }>(
+        `WITH flow AS (
+           INSERT INTO graph.relationships(tenant_id,family,relationship_type,from_asset_id,to_asset_id,granularity)
+           VALUES($1,'data_flow','DERIVES_FROM',$2,$3,'dataset')
+           ON CONFLICT(tenant_id,family,relationship_type,from_asset_id,to_asset_id,granularity)
+           DO UPDATE SET relationship_type=EXCLUDED.relationship_type RETURNING relationship_id
+         )
+         INSERT INTO graph.assertions(tenant_id,relationship_id,evidence_method,evidence_ids,confidence_score,explanation,collector_version)
+         SELECT $1,relationship_id,$4,ARRAY[$5::uuid],$6,$7,$8 FROM flow RETURNING assertion_id`,
+        [tenantId, row.source_id, target, method, evidence.rows[0]!.evidence_id, row.declared ? 1 : null,
+          row.declared ? 'Dependency declared by the dbt project' : 'Dependency recorded by an earlier dbt import', RELINK_COLLECTOR],
+      );
+      assertionId = written.rows[0]!.assertion_id;
     }
-    await client.query(
-      `UPDATE graph.gaps SET closed_by_assertion_id=(
-         SELECT assertion_id FROM graph.assertions WHERE tenant_id=$1 AND relationship_id=$3
-           AND evidence_method='declared' AND collector_version=$4 AND valid_to IS NULL
-         ORDER BY captured_at DESC LIMIT 1
-       ) WHERE tenant_id=$1 AND gap_id=$2 AND closed_by_assertion_id IS NULL`,
-      [tenantId, row.gap_id, relationship, COLLECTOR],
-    );
+    if (row.closed_by_assertion_id) {
+      // This logical model now has a warehouse asset. Move the current hop while keeping the original
+      // closing assertion on the historic gap.
+      await client.query(
+        'UPDATE graph.assertions SET valid_to=clock_timestamp() WHERE tenant_id=$1 AND assertion_id=$2 AND valid_to IS NULL',
+        [tenantId, row.closed_by_assertion_id],
+      );
+    } else {
+      await client.query(
+        'UPDATE graph.gaps SET closed_by_assertion_id=$3 WHERE tenant_id=$1 AND gap_id=$2 AND closed_by_assertion_id IS NULL',
+        [tenantId, row.gap_id, assertionId],
+      );
+    }
   }
 }

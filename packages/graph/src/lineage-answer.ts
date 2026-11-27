@@ -39,12 +39,14 @@ export async function answerLineageRequest(pool: Pool, input: { tenantId: string
   const methods: LineageSummary['methods'] = { declared: 0, parsed: 0, observed: 0, inferred: 0, gap: 0 };
   const cite = (ids: string[]) => ids.filter((id) => evidenceRows.has(id)).map((id) => {
     if (!evidence.some((ref) => ref.evidence_id === id)) {
-      const row = evidenceRows.get(id)!; const metadata = row.safe_metadata as { statement_hash?: unknown; collector?: unknown };
+      const row = evidenceRows.get(id)!; const metadata = row.safe_metadata as { statement_hash?: unknown; collector?: unknown; basis?: unknown };
       evidence.push(EvidenceRefSchema.parse({ evidence_id: id, kind: row.evidence_type === 'dbt_manifest' || row.evidence_type === 'manifest' ? 'manifest' : row.evidence_type.startsWith('parsed') ? 'code' : 'profile',
         source_id: input.sourceId, asset_ids: [assetId], locator: `${input.sourceName} · lineage of ${input.asset}`,
         content_hash: typeof metadata.statement_hash === 'string' && /^[a-f0-9]{64}$/.test(metadata.statement_hash) ? metadata.statement_hash : createHash('sha256').update(id).digest('hex'),
         captured_at: row.captured_at, collector_version: typeof metadata.collector === 'string' ? metadata.collector.slice(0, 100) : row.evidence_type,
-        redacted_summary: row.evidence_type === 'dbt_manifest' ? 'Dependency declared in the uploaded dbt manifest; column flow parsed from its compiled SQL.' : 'Data flow parsed from the source\'s view SQL.' }));
+        redacted_summary: metadata.collector === 'dbt-source-relink-v1'
+          ? metadata.basis === 'declared' ? 'Dependency declared in the uploaded dbt manifest.' : 'Dependency inferred from an earlier dbt source gap.'
+          : row.evidence_type === 'dbt_manifest' ? 'Dependency declared in the uploaded dbt manifest; column flow parsed from its compiled SQL.' : 'Data flow parsed from the source\'s view SQL.' }));
     }
     return id;
   });

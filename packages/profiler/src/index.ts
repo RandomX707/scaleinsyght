@@ -408,8 +408,8 @@ export async function runProfile(
       [input.tenantId, jobId, ids?.skipped ?? 0, JSON.stringify(timeSkips)]);
   });
   await withTenant(pool, input.tenantId, async client => {
-    if (job) await holdDiscovery(client, job);
-    await relinkDbtWarehouseSources(client, input.tenantId, input.connectionId);
+    await relinkDbtWarehouseSources(client, input.tenantId, input.connectionId,
+      job ? () => holdDiscovery(client, job) : undefined);
   });
   if (job && !(await finishDiscovery(pool, job, { state: 'COMPLETED' }))) throw new StaleDiscoveryJobError();
   return {
