@@ -1,0 +1,25 @@
+{
+ "hash": "c18f94e4ff2b6cd8ab93b8bf5e4db0ec",
+ "recordedAt": "2026-11-27T19:27:46.839Z",
+ "model": "gpt-6.2-sol",
+ "purpose": "answer",
+ "request": {
+  "max_completion_tokens": 400,
+  "messages": [
+   {
+    "content": "Answer only from the disclosed metadata. Do not infer hidden row values. If metadata is insufficient, say so.",
+    "role": "system"
+   },
+   {
+    "content": "{\"question\":\"Write one concise answer to the exact user question using the disclosed aggregate statistics. Include a result value. Use each executed query and its disclosed filters to interpret its statistic. Group labels appear in the results table and chart below your sentence, so name no group labels. For grouped results, summarise them: give the highest and lowest values and the spread between them, using the disclosed highest, lowest and spread statistics. If difference_between_sources is disclosed you may state it. If tie statistics are disclosed, state each tie, for example '<string>', using the question'<string>'s source field. Do not invent facts. Question: Average number of encounters per patient by provider\",\"metadata\":{\"structural\":{\"sources\":[{\"source\":\"SQL Server hospital\",\"connector_type\":\"sql_server\",\"executed_query\":\"SELECT TOP (100) group_value,AVG(CAST(entity_count AS float)) AS value,COUNT_BIG(*) AS cell_size FROM (SELECT [provider_id] AS group_sort,CAST([provider_id] AS nvarchar(4000)) AS group_value,[patient_id] AS entity_key,COUNT_BIG(*) AS entity_count FROM [dbo].[encounters] GROUP BY [provider_id],[patient_id]) AS entity_counts GROUP BY group_sort,group_value ORDER BY group_sort\",\"filters\":[]}]},\"statistical\":{\"source_1_aggregate_count\":24,\"source_1_aggregate_1\":1.29,\"source_1_aggregate_2\":1.9,\"source_1_aggregate_3\":1.74,\"source_1_aggregate_4\":1.77,\"source_1_aggregate_5\":1.59,\"source_1_aggregate_6\":2.04,\"source_1_aggregate_7\":1.59,\"source_1_aggregate_8\":1.52,\"source_1_aggregate_9\":1.81,\"source_1_aggregate_10\":1.54,\"source_1_aggregate_11\":2.09,\"source_1_aggregate_12\":1.45,\"source_1_aggregate_13\":1.33,\"source_1_aggregate_14\":1.94,\"source_1_aggregate_15\":2.08,\"source_1_aggregate_16\":1.65,\"source_1_aggregate_17\":1.4,\"source_1_aggregate_18\":1,\"source_1_aggregate_19\":1.17,\"source_1_aggregate_20\":2.43,\"source_1_aggregate_21\":1,\"source_1_aggregate_22\":2.53,\"source_1_aggregate_23\":1.92,\"source_1_aggregate_24\":1.38,\"source_1_group_count\":24,\"source_1_highest\":2.53,\"source_1_lowest\":1,\"source_1_spread\":1.53,\"source_1_tie_1_value\":1,\"source_1_tie_1_group_count\":2}},\"identifier_fingerprints\":[]}",
+    "role": "user"
+   }
+  ],
+  "model": "gpt-6.2-sol"
+ },
+ "response": {
+  "content": "Across 24 providers in SQL Server hospital, average encounters per patient ranged from 1.00 to 2.53, a spread of 1.53, with two providers tied at the lowest average.",
+  "promptTokens": 656,
+  "completionTokens": 45
+ }
+}

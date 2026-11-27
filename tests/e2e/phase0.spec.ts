@@ -67,11 +67,13 @@ test('phase0_collapsed_sidebar_shows_every_item_expands_by_keyboard_and_opens_th
  const expand=page.getByRole('button',{name:'Expand sidebar'});
  await expect(expand).toBeVisible();
  const nav=page.getByRole('navigation',{name:'Main navigation'});
- for(const label of ['Home','Connectors','Dictionary','Lineage','Agents','BI reports','Hub integrations','Approval matrix','Controls']){
+ for(const label of ['Home','Connectors','Dictionary','Lineage','Agents','BI reports','Approval matrix','Controls']){
   const link=nav.getByRole('link',{name:label,exact:true});
   await expect(link).toBeVisible();
   await link.hover();await expect(page.getByRole('tooltip')).toHaveText(label);
  }
+ // Hub integrations stays off the sidebar until phase 4 is reviewed; its page is still at /hub.
+ await expect(nav.getByRole('link',{name:'Hub integrations'})).toHaveCount(0);
  await expect(page.getByRole('button',{name:'New chat'})).toBeVisible();
  // Tooltips follow keyboard focus too.
  await nav.getByRole('link',{name:'Approval matrix'}).focus();await expect(page.getByRole('tooltip')).toHaveText('Approval matrix');

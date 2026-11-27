@@ -1,0 +1,25 @@
+{
+ "hash": "e382972bd8ab26d5fd0cf02927d3b638",
+ "recordedAt": "2026-11-27T19:28:05.043Z",
+ "model": "gpt-6.2-sol",
+ "purpose": "answer",
+ "request": {
+  "max_completion_tokens": 400,
+  "messages": [
+   {
+    "content": "Answer only from the disclosed metadata. Do not infer hidden row values. If metadata is insufficient, say so.",
+    "role": "system"
+   },
+   {
+    "content": "{\"question\":\"Write one concise answer to the exact user question using the disclosed aggregate statistics. Include a result value. Use each executed query and its disclosed filters to interpret its statistic. Group labels appear in the results table and chart below your sentence, so name no group labels. For grouped results, summarise them: give the highest and lowest values and the spread between them, using the disclosed highest, lowest and spread statistics. If difference_between_sources is disclosed you may state it. If tie statistics are disclosed, state each tie, for example '<string>', using the question'<string>'s source field. Do not invent facts. Question: How many encounters were emergency visits in 2025?\",\"metadata\":{\"structural\":{\"sources\":[{\"source\":\"SQL Server hospital\",\"connector_type\":\"sql_server\",\"executed_query\":\"SELECT TOP (1) COUNT_BIG(*) AS value,COUNT_BIG(*) AS cell_size FROM [dbo].[encounters] l JOIN [dbo].[departments] r ON l.[department_id]=r.[department_id] WHERE r.[department_name] = @filter0 AND l.[admitted_at] >= @filter1 AND l.[admitted_at] < @filter2\",\"filters\":[{\"table\":\"dbo.departments\",\"column\":\"department_name\",\"operator\":\"eq\",\"matches_category_in_question\":true},{\"table\":\"dbo.encounters\",\"column\":\"admitted_at\",\"operator\":\"gte\",\"calendar_boundary\":\"2025-01-01\"},{\"table\":\"dbo.encounters\",\"column\":\"admitted_at\",\"operator\":\"lt\",\"calendar_boundary\":\"2026-01-01\"}]}]},\"statistical\":{\"source_1_aggregate_count\":1,\"source_1_aggregate_1\":234}},\"identifier_fingerprints\":[]}",
+    "role": "user"
+   }
+  ],
+  "model": "gpt-6.2-sol"
+ },
+ "response": {
+  "content": "There were 234 emergency visits in 2025.",
+  "promptTokens": 382,
+  "completionTokens": 14
+ }
+}
