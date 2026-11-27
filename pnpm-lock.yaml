@@ -293,6 +293,12 @@ importers:
 
   apps/api:
     dependencies:
+      '@fontsource/inter':
+        specifier: 5.1.1
+        version: 5.1.1
+      '@fontsource/jetbrains-mono':
+        specifier: 5.1.2
+        version: 5.1.2
       '@scaleinsyght/analytic':
         specifier: workspace:*
         version: link:../../packages/analytic
@@ -332,6 +338,9 @@ importers:
       '@scaleinsyght/tableau':
         specifier: workspace:*
         version: link:../../packages/tableau
+      '@scaleinsyght/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
       exceljs:
         specifier: ^4.4.0
         version: 4.4.0
@@ -1032,6 +1041,12 @@ packages:
 
   '@fastify/proxy-addr@5.1.3':
     resolution: {integrity: sha512-ptgIgB+abBNTs5lsKNvFaKMCauPaTOE6ZIjxJr3FxCLehmYQQKYGg4srwwNICR9QQlFrYw59jWAo+i9GalVCaw==}
+
+  '@fontsource/inter@5.1.1':
+    resolution: {integrity: sha512-weN3E+rq0Xb3Z93VHJ+Rc7WOQX9ETJPTAJ+gDcaMHtjft67L58sfS65rAjC5tZUXQ2FdZ/V1/sSzCwZ6v05kJw==}
+
+  '@fontsource/jetbrains-mono@5.1.2':
+    resolution: {integrity: sha512-muYZK6W3NTrKpKTjoF2dkrtMjXLlPZhniLiLjMmfegRibl2L6jUJh9gB6UcbcZs3zHdIYTmzMkXNbNoI2kXX3Q==}
 
   '@humanfs/core@0.19.2':
     resolution: {integrity: sha512-UhXNm+CFMWcbChXywFwkmhqjs3PRCmcSa/hfBgLIb7oQ5HNb1wS0icWsGtSAUNgefHeI+eBrA8I1fxmbHsGdvA==}
@@ -3650,6 +3665,10 @@ snapshots:
     dependencies:
       '@fastify/forwarded': 3.1.2
       ipaddr.js: 2.5.0
+
+  '@fontsource/inter@5.1.1': {}
+
+  '@fontsource/jetbrains-mono@5.1.2': {}
 
   '@humanfs/core@0.19.2':
     dependencies:

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Badge, Button, FileInput, Input, Modal, PillTabs, SegmentedControl, Select, Tabs, Textarea } from '@scaleinsyght/ui';
-import './dictionary.css';
+// One stylesheet for the page and the offline HTML export (item 5).
+import '@scaleinsyght/ui/dictionary.css';
 
 /**
  * The Dictionary (docs/phases/dictionary-rebuild.md). Lazy: the object list is paged and searched on the server and an
