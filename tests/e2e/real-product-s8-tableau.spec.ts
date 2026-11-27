@@ -1,6 +1,8 @@
+import { pathToFileURL } from 'node:url';
+import { resolve } from 'node:path';
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { config } from 'dotenv';
 import { Pool } from 'pg';
 import { createTenant } from '../../scripts/tenant-create.js';
@@ -88,6 +90,17 @@ test('s8_tableau_workbook_upload_card_reports_and_lineage_match_truth', async ({
     else await expect(row).not.toContainText('Gap in lineage');
   }
   await page.screenshot({ path: 'docs/acceptance/s8/bi-reports.png' });
+  {
+    const prototype = await page.context().browser()!.newPage({ viewport: { width: 1440, height: 900 } });
+    try {
+      await prototype.goto(pathToFileURL(resolve('docs/prototype/index.html')).href);
+      await prototype.getByRole('button', { name: 'Sign in', exact: true }).click();
+      await prototype.evaluate('go("reports")');
+      await expect(prototype.getByRole('heading', { name: 'Reports' })).toBeVisible();
+      mkdirSync('docs/acceptance/s8/prototype', { recursive: true });
+      await prototype.screenshot({ path: 'docs/acceptance/s8/prototype/bi-reports.png' });
+    } finally { await prototype.close(); }
+  }
 
   // Lineage draws the Tableau data sources after the dbt marts they read.
   await page.goto('/lineage');
