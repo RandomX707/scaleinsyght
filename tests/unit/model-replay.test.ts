@@ -53,6 +53,15 @@ describe('model replay (decision 69)', () => {
     expect(readdirSync(e.MODEL_REPLAY_DIR!)).toHaveLength(2);
   });
 
+  it('a request sent twice while recording reaches the live model once and gets one answer', async () => {
+    const e = env(); let liveCalls = 0;
+    const record = replayFetcher('record', async () => { liveCalls++; return liveAnswer(`answer ${liveCalls}`)(); }, e);
+    const first = await (await record('http://x', { method: 'POST', body: a })).json() as { choices: Array<{ message: { content: string } }> };
+    const second = await (await record('http://x', { method: 'POST', body: b })).json() as { choices: Array<{ message: { content: string } }> };
+    expect(liveCalls).toBe(1);
+    expect(second.choices[0]!.message.content).toBe(first.choices[0]!.message.content);
+  });
+
   it('modes: off by default, record refused in CI, unknown values rejected', () => {
     expect(replayModeFrom({})).toBe('off');
     expect(replayModeFrom({ MODEL_REPLAY: 'replay' })).toBe('replay');

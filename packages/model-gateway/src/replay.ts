@@ -6,9 +6,11 @@ import { join, resolve } from 'node:path';
  * Model replay (decision 69). In tests the gateway answers from recorded responses keyed by a hash of the request,
  * so automated runs never call, or pay for, the live model.
  *   MODEL_REPLAY=replay  answer from recordings; a request with no recording fails with its hash and never goes live.
- *   MODEL_REPLAY=record  call the live model and save the response (the only way tests reach it).
+ *   MODEL_REPLAY=record  same as record-missing; a fresh recording deletes tests/fixtures/model-replay/ first.
  *   MODEL_REPLAY=record-missing  replay what is recorded; call the live model only for requests with no recording
  *                        (re-records just the requests a prompt or schema change affected).
+ * Recording never calls the live model twice for one request: two tests that send the identical request get the same
+ * response, as they will on replay, so later turns built on it (prior turns in a follow-up) match their recordings.
  *   unset / off          the product: plain live calls.
  * Values that change between runs (UUIDs, 64-hex fingerprints, timestamps; bare dates are kept so the contract 7
  * scan still sees any date of birth) are replaced by numbered
@@ -87,7 +89,7 @@ export function replayFetcher(mode: ReplayMode, live: Fetch, env: NodeJS.Process
     const body = typeof init?.body === 'string' ? init.body : '';
     const { hash, request, map } = requestKey(body);
     const file = join(dir, `${hash}.json`);
-    if (mode === 'replay' || (mode === 'record-missing' && existsSync(file))) {
+    if (mode === 'replay' || existsSync(file)) {
       if (!existsSync(file)) {
         const purpose = purposeOf(request);
         try {
