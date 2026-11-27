@@ -12,13 +12,13 @@ Join keys appear in read_columns only. They are excluded from exposed_columns an
 
 Connectors stream the minimum authorized source projection over authenticated encrypted transport into the application's process. Tokenize IDs at the read boundary in our process using a run-scoped, tenant-derived HMAC key and common typed canonicalization. Drop each raw ID immediately after tokenization. Client SQL performs projection, filtering and eligible pre-aggregation and receives no HMAC key. Raw IDs and tokens stay out of persistence, diagnostics, model calls, exports and response payloads. Null keys never match. Preserve significant leading zeros and reject unsupported normalization.
 
-Pre-aggregate each source by join key and the minimum dimensions needed for the question. Push the pre-aggregate to the source where supported and safe. Otherwise aggregate the bounded stream in memory immediately after tokenization. Carry mergeable measures such as count and sum, and compute averages from their numerator and denominator. Validate multiplicity and measure grain before joining so repeated charge lines cannot multiply encounter measures. Left joins preserve the left-side population. Distinguish a successful unmatched key from a missing or failed input.
+Pre-aggregate each source by join key and the minimum dimensions needed for the question. Push the pre-aggregate to the source where supported and safe. Otherwise aggregate the bounded stream in memory immediately after tokenization. Carry mergeable measures such as count and sum, and compute averages from their numerator and denominator. Validate measure grain before joining so repeated charge lines cannot multiply encounter measures. Refuse many-to-many joins in Release 1 and tell the user that both inputs have multiple groups for the same key. Left joins preserve the left-side population. Distinguish a successful unmatched key from a missing or failed input.
 
 **Decision required.** Benchmark rows, bytes, distinct keys, fan-out, memory and wall time on both connectors, including an above-limit case. Record measured p95 and peak use and choose hard limits for source rows and bytes, per-key groups, intermediate rows, result cells, memory and time before implementation. An input above its cap stops the join and requests a narrower scope. A truncated result cannot support a complete answer.
 
 ## Release 1 worker and disclosure
 
-Use a per-attempt isolated DuckDB process, in memory only, with no spill, extensions, external filesystem access, network, core dumps or swap. Use bounded authenticated local IPC, restricted worker privileges, and supervisor-enforced memory and wall-clock limits. Terminate on timeout, cancellation or lease loss. Destroy buffers and the process at the end of each attempt. Gateway execution is outside Release 1 scope. Reject any input whose policy requires the customer gateway.
+Use a per-attempt isolated DuckDB process, in memory only, with no spill to disk, extensions, external filesystem access, network or core dumps in Release 1. Memory locking and swap guarantees move to the phase 6 deployment. Use bounded authenticated local IPC, restricted worker privileges, and supervisor-enforced memory and wall-clock limits. Terminate on timeout, cancellation or lease loss. Destroy buffers and the process at the end of each attempt. Gateway execution is outside Release 1 scope. Reject any input whose policy requires the customer gateway.
 
 Apply the highest input classification to joined data. Run tenant disclosure after joining and aggregating, including primary and complementary suppression over the entire release, margins, totals and evidence counts. Count protected units at the declared grain so duplicates cannot inflate cell eligibility. Tagged data without a disclosure policy is blocked. Only cleared aggregates and scrubbed structural evidence may leave compute.
 
@@ -26,7 +26,7 @@ Apply the highest input classification to joined data. Run tenant disclosure aft
 
 A timed-out or failed input, schema mismatch, overflow or worker crash blocks dependent metrics. Use PARTIAL when independent disclosure-cleared evidence remains and name the missing input. Fail when no usable evidence remains. A successful empty join follows disclosure policy. Cancellation and policy rejection follow their existing transitions.
 
-Retrying the ephemeral join unit and re-reading its inputs is approved. Label source read times on every attempt and in the final answer. Explain that retry reads may observe newer source data. Keep previous events, fence late commits and reuse independently cleared results. **Decision required.** Define the policy for explicit historical joins when one source cannot provide a matching snapshot.
+Retrying the ephemeral join unit and re-reading its inputs is approved. Label source read times on every attempt and in the final answer. Explain that retry reads may observe newer source data. Keep previous events, fence late commits and reuse independently cleared results. Release 1 refuses questions that ask to join two sources as of a past point in time and explains that historical cross-source snapshots are unavailable. Date filters over current data remain supported.
 
 ## Acceptance tests
 
@@ -35,9 +35,10 @@ Retrying the ephemeral join unit and re-reading its inputs is approved. Label so
 | `c3_cross_source_same_as_read_only_keys` | Keys appear only in read_columns, asserted endpoints are checked, and probable matches are disclosed. |
 | `c3_cross_source_inner_left_match_truth` | Both join types agree with independent truth on duplicates, unmatched keys and nulls. |
 | `c7_cross_source_tokens_never_leave_read_boundary` | Canary raw IDs and tokens do not reach logs, storage, exports or models. No HMAC material reaches source SQL. |
-| `c7_cross_source_preaggregation_preserves_grain` | Duplicate charges preserve encounter counts and charge sums. Input and intermediate caps stop overflow. |
+| `c7_cross_source_preaggregation_preserves_grain` | Duplicate charges preserve encounter counts and charge sums. Input and intermediate caps stop overflow. Many-to-many jobs are refused with a reason. |
 | `c7_cross_source_suppresses_after_join` | Small cells, complementary cells and totals cannot disclose the protected count. |
 | `c7_cross_source_release_one_worker_isolation` | Isolation, resource limits and teardown hold on success, cancellation and worker failure. Gateway-required plans are blocked. |
+| `c5_cross_source_rejects_historical_snapshot` | A past-point-in-time question across two sources is refused with the historical snapshot reason. |
 | `c5_cross_source_retry_labels_reads_and_preserves_history` | A stalled input leaves a PARTIAL result when independent evidence exists. The retry labels its new read times and commits once. |
 
 ## First testbed pair and truth queries
