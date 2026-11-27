@@ -1,58 +1,50 @@
 # Cross-source row-level joins
 
-Status: proposed, pending approval. This phase specification covers two-source analytical joins such as counting charges by the department of the associated encounter. The join and aggregation execute in DuckDB. The answer shows the source reads, the join, the evidence for the key, and any limits or omissions.
+Status: draft for review. Release 1 supports two-source analytical joins in the application worker. The first testbed pair is PostgreSQL encounters and SQL Server charges, matched by their asserted encounter key. The answer identifies the source reads, join type, evidence for the key, and omissions.
 
-## Plan and validation (contract 3)
+## Typed plan (contract 3)
 
-Version the typed plan's `combine` entry. Add a stable combine ID, typed input references to bounded read steps, `join_type`, typed key pairs, an aggregate projection and output schema, and row, byte and time budgets. Start with an inner equijoin. Each key pair pins the two source and field IDs, the versioned `SAME_AS` assertion ID, and a supported canonicalization version. The validator resolves assertion status and confidence from the pinned graph and checks that the assertion names exactly those fields. Historical versions remain replayable under the applicable authorization and disclosure policies. Disputed, rejected, stale, ambiguous and out-of-scope keys fail validation. Mark every probable key in answer prose and evidence, including confidence when available. Steward acceptance does not imply independent verification.
+Version the typed combine entry with bounded input references, join type, key pairs, per-input pre-aggregates, output grain, and row, byte and time budgets. Support inner and left equijoins. Pin both source and field IDs and a current, authorized SAME_AS assertion for each key pair. The validator checks the pinned assertion's endpoints, scope, review status and authorization. Reject stale, disputed, rejected or ambiguous assertions. Label probable keys in the answer with their confidence when available.
 
-Include these fields in canonical hashing and check dependency order, output types, tenant and principal access, source scope, movement policy, and connector capabilities before execution. Keep existing plans valid under their existing schema. Each source read pins its group version and collating agent. A same-group join belongs to that group's collator. A cross-group join belongs to the orchestrator. Trusted compilers generate parameterized SQL from the validated plan using a fixed operator set. A plan contains neither arbitrary SQL nor connection credentials.
+Join keys appear in read_columns only. They are excluded from exposed_columns and every output projection. Validate each input's grain, pre-aggregation, group version and disclosure policy. Canonical hashing includes join semantics and budgets. A trusted compiler generates bounded parameterized source reads and DuckDB SQL from the validated plan.
 
-## Identifier handling and execution (contract 7 and non-negotiable 6)
+## Identifier handling and pre-aggregation (contract 7)
 
-Derive a run-scoped HMAC key from the tenant secret with a versioned domain separator. Each eligible source read computes HMAC over the same canonical identifier bytes in the approved source-side execution boundary. Stream tokens and only the necessary permitted columns directly into the isolated worker over authenticated, encrypted channels. The two inputs share a token domain for a given asserted key. Separate runs and unrelated keys use different domains. Bind secrets as parameters through an audited path that avoids query and parameter logging. Strip identifiers and tokens from the projection before anything leaves the worker. Exclude both from plan payloads, durable step outputs, events, caches, diagnostics, exports and model calls. Tokens receive the same handling restrictions inside the computation as raw identifiers. Nulls never match. Preserve significant leading zeroes, use explicit compatible types, and reject unsupported normalization. Many-to-many fan-out must respect the intermediate cap and the metric's declared grain.
+Connectors stream the minimum authorized source projection over authenticated encrypted transport into the application's process. Tokenize IDs at the read boundary in our process using a run-scoped, tenant-derived HMAC key and common typed canonicalization. Drop each raw ID immediately after tokenization. Client SQL performs projection, filtering and eligible pre-aggregation and receives no HMAC key. Raw IDs and tokens stay out of persistence, diagnostics, model calls, exports and response payloads. Null keys never match. Preserve significant leading zeros and reject unsupported normalization.
 
-DuckDB runs in a per-attempt isolated process with an in-memory database, no spill, no external access, no extensions or network, and bounded IPC. Disable core dumps and ensure the worker's memory cannot be swapped to disk. A supervisor enforces memory and wall-clock caps and terminates the worker on timeout, cancellation or lease loss. The process exits after each attempt and all buffers are discarded. Gateway-only inputs require both inputs to be legally co-locatable in one authorized customer-side gateway. Only cleared output leaves that gateway. Reject connector pairs that cannot tokenize within the approved boundary or satisfy movement policy. Never send a row set to another source.
+Pre-aggregate each source by join key and the minimum dimensions needed for the question. Push the pre-aggregate to the source where supported and safe. Otherwise aggregate the bounded stream in memory immediately after tokenization. Carry mergeable measures such as count and sum, and compute averages from their numerator and denominator. Validate multiplicity and measure grain before joining so repeated charge lines cannot multiply encounter measures. Left joins preserve the left-side population. Distinguish a successful unmatched key from a missing or failed input.
 
-**Decision required.** Approve where tokenization may run, how short-lived keys are provisioned without exposure to driver or database logging, and the initial connector pairs. Raw identifiers are classified `RESTRICTED` under contract 7. A connector that cannot satisfy source-side tokenization remains ineligible. A connector-local tokenization exception would require a separate explicit contract decision.
+**Decision required.** Benchmark rows, bytes, distinct keys, fan-out, memory and wall time on both connectors, including an above-limit case. Record measured p95 and peak use and choose hard limits for source rows and bytes, per-key groups, intermediate rows, result cells, memory and time before implementation. An input above its cap stops the join and requests a narrower scope. A truncated result cannot support a complete answer.
 
-## Disclosure and resource bounds
+## Release 1 worker and disclosure
 
-Treat joined data at the highest input classification. Aggregate inside the worker, then run the tenant's disclosure checks on the entire release, including totals, margins and evidence counts. Determine cell eligibility from the configured protected unit rather than joined row counts when fan-out can inflate a cell. Apply primary and complementary suppression so visible cells and totals cannot reconstruct withheld counts. Tagged data without a disclosure policy fails closed. Charge the tagged-data query budget before execution. Only policy-cleared aggregate output and scrubbed structural evidence can reach storage, the UI or a model.
+Use a per-attempt isolated DuckDB process, in memory only, with no spill, extensions, external filesystem access, network, core dumps or swap. Use bounded authenticated local IPC, restricted worker privileges, and supervisor-enforced memory and wall-clock limits. Terminate on timeout, cancellation or lease loss. Destroy buffers and the process at the end of each attempt. Gateway execution is outside Release 1 scope. Reject any input whose policy requires the customer gateway.
 
-Push filters and projection down, bound reads at the source and detect overflow with a bounded additional row. Enforce separate hard limits for per-input rows and bytes, total streamed bytes, intermediate join rows, result cells, worker memory and elapsed time. Cancel reads when any limit is breached. Return an explicit safe reason for overflow and require narrower scope. A truncated join cannot support a complete answer.
+Apply the highest input classification to joined data. Run tenant disclosure after joining and aggregating, including primary and complementary suppression over the entire release, margins, totals and evidence counts. Count protected units at the declared grain so duplicates cannot inflate cell eligibility. Tagged data without a disclosure policy is blocked. Only cleared aggregates and scrubbed structural evidence may leave compute.
 
-**Decision required.** Approve initial numerical caps, the supported multiplicities and protected-unit counting rules, and whether a later plan version should support outer joins. Proposed initial caps for validation are 10,000 rows and 8 MiB per input, 16 MiB combined, 100,000 intermediate join rows, 1,000 result cells, 256 MiB worker memory and 30 seconds for a join attempt. These require benchmarking and policy review.
+## Failure and retry (contract 5)
 
-## Failures and durable runs (contract 5)
+A timed-out or failed input, schema mismatch, overflow or worker crash blocks dependent metrics. Use PARTIAL when independent disclosure-cleared evidence remains and name the missing input. Fail when no usable evidence remains. A successful empty join follows disclosure policy. Cancellation and policy rejection follow their existing transitions.
 
-A failed or timed-out input, mismatched schema, quota breach or worker crash blocks the dependent join. Independent successful steps can contribute only their own disclosure-cleared evidence in a `PARTIAL` run. The answer identifies the missing source or join and withholds all dependent metrics. A run with no successful read evidence fails. Authorization or disclosure rejection follows the existing policy-blocked transition. Explicit cancellation follows the cancellation transition. A valid empty join follows disclosure policy and does not stand in for a failed read.
-
-Keep durable events and fencing tokens, but store only safe status, references and cleared aggregates. Ephemeral read outputs and their join are one replay unit with an attempt ID. On lease loss or a child retry, reload all ephemeral inputs needed by the failed unit under current authorization. Reuse independent cleared results and preserve the parent's events. Reject late commits with the fencing token. Emit at most one committed outcome per join.
-
-**Decision required.** Approve replaying successful ephemeral reads as part of the failed join unit under contract 5's retry rule. Reads may observe changed source data. Label the retry's read time and decide whether an explicitly requested historical snapshot requires a source snapshot capability.
+Retrying the ephemeral join unit and re-reading its inputs is approved. Label source read times on every attempt and in the final answer. Explain that retry reads may observe newer source data. Keep previous events, fence late commits and reuse independently cleared results. **Decision required.** Define the policy for explicit historical joins when one source cannot provide a matching snapshot.
 
 ## Acceptance tests
 
 | Test | Pass condition |
 | --- | --- |
-| `c3_cross_source_join_pins_authorized_same_as` | Reject missing, mismatched, stale, disputed and out-of-scope assertions. An accepted plan pins the assertion version and its hash covers join semantics. |
-| `c3_probable_cross_source_key_is_disclosed` | The answer and evidence label a probable match. Changing a field name leaves a valid assertion-backed join working. |
-| `c3_cross_source_join_routes_by_group` | Same-group and cross-group plans pin their source collators and execute through the correct owner. |
-| `c7_cross_source_join_keeps_identifiers_inside_approved_boundary` | Canary IDs and tokens are absent from storage, IPC outside the authorized path, logs, exports and model traffic after success and failure. |
-| `c7_cross_source_join_enforces_gateway_policy` | Prohibited routing fails before reads. Gateway-only inputs never leave the gateway. |
-| `c7_cross_source_join_suppresses_after_join` | Two separately releasable aggregates produce a small cell after joining. Primary and complementary suppression block reconstruction from totals. Duplicate charges cannot inflate the protected-unit count. |
-| `c7_cross_source_join_aborts_on_volume_or_fanout` | Overflow cancels active reads and leaves no row artifacts or truncated aggregate. |
-| `c5_cross_source_join_timeout_reports_partial` | One hung source times out. Independent evidence survives, dependent metrics are absent, and the worker accepts the next job. |
-| `c5_cross_source_join_replays_ephemeral_inputs_after_lease_loss` | A killed worker leaves no intermediate data. The retry reloads its join unit, commits once and preserves the parent's events. |
+| `c3_cross_source_same_as_read_only_keys` | Keys appear only in read_columns, asserted endpoints are checked, and probable matches are disclosed. |
+| `c3_cross_source_inner_left_match_truth` | Both join types agree with independent truth on duplicates, unmatched keys and nulls. |
+| `c7_cross_source_tokens_never_leave_read_boundary` | Canary raw IDs and tokens do not reach logs, storage, exports or models. No HMAC material reaches source SQL. |
+| `c7_cross_source_preaggregation_preserves_grain` | Duplicate charges preserve encounter counts and charge sums. Input and intermediate caps stop overflow. |
+| `c7_cross_source_suppresses_after_join` | Small cells, complementary cells and totals cannot disclose the protected count. |
+| `c7_cross_source_release_one_worker_isolation` | Isolation, resource limits and teardown hold on success, cancellation and worker failure. Gateway-required plans are blocked. |
+| `c5_cross_source_retry_labels_reads_and_preserves_history` | A stalled input leaves a PARTIAL result when independent evidence exists. The retry labels its new read times and commits once. |
 
-## Testbed questions
+## First testbed pair and truth queries
 
-Use generated truth with renamed keys, unrelated keys of the same format, duplicate charge rows, unmatched and null IDs, and a group below the configured threshold. Keep deterministic truth queries outside the planner and use the same questions for same-group and cross-group routing where applicable.
+Use synthetic PostgreSQL encounters and SQL Server charges with a renamed encounter key, duplicate charge lines, unmatched and null IDs, and a small department. Generate expected results independently of the product planner and worker. The fixture truth runner loads both synthetic extracts into a separate local test database.
 
-- How many charge lines and how much total charge amount were linked to encounters by department last month?
-- How many distinct encounters had at least one charge last month, by department? Compare with charge-line counts to catch fan-out.
-- What is the linked charge total by department when the shared encounter key is only probable? Verify the answer names the uncertainty even when the totals match truth.
-- How many encounters had charges by department and service type? Verify that small cells and complementary cells are suppressed even when source aggregates are individually releasable.
-- How many encounters were recorded last month, and how much was charged against them? With the charge source stalled, verify the independent encounter count and explicit missing charge total.
-- How much was charged against encounters across the full date range? With fixture volume above the cap, verify the answer asks for a narrower range and publishes no truncated total.
+- **Inner join:** “How many charge lines and how much was charged for linked encounters by department?” The truth query groups charges by encounter key using COUNT and SUM, inner joins to filtered encounter keys, then sums both measures by department.
+- **Left join:** “How many encounters had no matching charge by department?” The truth query groups charges to one row per non-null encounter key, left joins from filtered encounters, then counts unmatched encounters by department.
+- **Disclosure:** “How many distinct encounters had charges by department and service type?” The truth query counts distinct encounter keys at the final grain, then applies fixture suppression expectations independently.
+- **Partial and retry:** Stall the charges source once while asking for overall encounters and linked charge amount. Verify the independently calculated encounter count, the missing charge amount, and the retried joined result against truth with both read times shown.
