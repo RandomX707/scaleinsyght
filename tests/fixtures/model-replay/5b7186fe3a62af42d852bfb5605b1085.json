@@ -1,0 +1,25 @@
+{
+ "hash": "5b7186fe3a62af42d852bfb5605b1085",
+ "recordedAt": "2026-11-27T19:27:26.838Z",
+ "model": "gpt-6.2-sol",
+ "purpose": "answer",
+ "request": {
+  "max_completion_tokens": 400,
+  "messages": [
+   {
+    "content": "Answer only from the disclosed metadata. Do not infer hidden row values. If metadata is insufficient, say so.",
+    "role": "system"
+   },
+   {
+    "content": "{\"question\":\"Write one concise answer to the exact user question using the disclosed aggregate statistics. Include a result value. Use each executed query and its disclosed filters to interpret its statistic. Group labels appear in the results table and chart below your sentence, so name no group labels. For grouped results, summarise them: give the highest and lowest values and the spread between them, using the disclosed highest, lowest and spread statistics. If difference_between_sources is disclosed you may state it. If tie statistics are disclosed, state each tie, for example '<string>', using the question'<string>'s source field. Do not invent facts. Question: Orders per department, top 5\",\"metadata\":{\"structural\":{\"sources\":[{\"source\":\"SQL Server hospital\",\"connector_type\":\"sql_server\",\"executed_query\":\"SELECT TOP (5) CAST(r.[department_name] AS nvarchar(4000)) AS group_value,CAST(r.[department_id] AS nvarchar(4000)) AS group_key,COUNT_BIG(*) AS value,COUNT_BIG(*) AS cell_size FROM [dbo].[orders] l JOIN [dbo].[departments] r ON l.[department_id]=r.[department_id] GROUP BY r.[department_name],r.[department_id] ORDER BY value DESC,r.[department_id] ASC\",\"filters\":[]}]},\"statistical\":{\"source_1_aggregate_count\":5,\"source_1_aggregate_1\":388,\"source_1_aggregate_2\":301,\"source_1_aggregate_3\":197,\"source_1_aggregate_4\":152,\"source_1_aggregate_5\":121,\"source_1_group_count\":5,\"source_1_highest\":388,\"source_1_lowest\":121,\"source_1_spread\":267}},\"identifier_fingerprints\":[]}",
+    "role": "user"
+   }
+  ],
+  "model": "gpt-6.2-sol"
+ },
+ "response": {
+  "content": "Among the five departments with the most orders, counts ranged from 121 to 388, a spread of 267 orders.",
+  "promptTokens": 398,
+  "completionTokens": 28
+ }
+}

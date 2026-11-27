@@ -17,3 +17,6 @@ testbed/dbt/logs/
 
 # Scale test run artifacts (numbers are reported in docs/phases/scale-test.md)
 testbed/scale/results/
+
+# Model replay misses (decision 69): normalized requests that had no recording
+.model-replay-misses/

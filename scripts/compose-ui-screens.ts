@@ -13,6 +13,8 @@ const pairs: Pair[] = [
   { out: 'dictionary-procedure-sql', app: 'docs/acceptance/s9/procedure-sql.png', prototype: 'docs/acceptance/s9/prototype/proc-sql.png' },
   { out: 'dictionary-encrypted', app: 'docs/acceptance/s9/encrypted.png', prototype: 'docs/acceptance/s9/prototype/encrypted.png' },
   { out: 'dictionary-search', app: 'docs/acceptance/s9/search.png', prototype: 'docs/acceptance/s9/prototype/search.png' },
+  // Item 5: the offline export (left) beside the app's Dictionary (right), not the prototype.
+  { out: 'dictionary-export-vs-app', app: 'docs/acceptance/s9/export-viewer.png', prototype: 'docs/acceptance/s9/procedure.png' },
   { out: 'dictionary-export-notice', app: 'docs/acceptance/s9/export-notice.png', prototype: 'docs/acceptance/s9/prototype/landing.png' },
   { out: 'agents', app: 'docs/acceptance/s13/agents.png', prototype: 'docs/acceptance/s13/prototype/agents.png' },
   { out: 'dictionary-function-returns', app: 'docs/acceptance/s9/function-returns.png', prototype: 'docs/acceptance/s9/prototype/proc.png' },

@@ -6,6 +6,15 @@ import { AgentsScreen } from './agents.js';
 import { here, readBack, type Back, type Navigate } from './back.js';
 import { Badge, Button, EmptyState, FileInput, Input, Logo, Modal, PoweredBy, Select, Table, Textarea, answerTitle, plural, runProgressLabel, runStatusLabel } from '@scaleinsyght/ui';
 import { createRoot } from 'react-dom/client';
+// Inter and JetBrains Mono are served with the app (SIL Open Font License 1.1, decision 67), not loaded from Google
+// Fonts, so the app works in private networks and calls no third party on page load. Only the weights used; each
+// file lists every subset with unicode-range, so browsers fetch only the subsets a page needs.
+import '@fontsource/inter/400.css';
+import '@fontsource/inter/500.css';
+import '@fontsource/inter/600.css';
+import '@fontsource/inter/700.css';
+import '@fontsource/jetbrains-mono/400.css';
+import '@fontsource/jetbrains-mono/500.css';
 import './style.css';
 import './phase1.css';
 import './phase3.css';
@@ -161,7 +170,8 @@ const NAV_SECTIONS: Array<{ id: 'workspace' | 'platform'; label: string; items: 
   { id: 'platform', label: 'Platform', items: [
     { href: '/agents', label: 'Agents', icon: '♙', current: (path) => path.startsWith('/agents') },
     { href: '/bi-reports', label: 'BI reports', icon: '▧', current: (path) => path.startsWith('/bi-reports') },
-    { href: '/hub', label: 'Hub integrations', icon: '◈', current: (path) => path.startsWith('/hub') },
+    // Hub integrations is not in the sidebar until phase 4 is reviewed: it came from the phase 4 spec, which is
+    // "approved by agent, pending review", and CLAUDE.md 10.2's sidebar does not list it. The /hub route stays.
     { href: '/approval-matrix', label: 'Approval matrix', icon: '✓', current: (path) => path.startsWith('/approval-matrix') },
     { href: '/controls', label: 'Controls', icon: '⚙', current: (path) => path.startsWith('/controls') },
   ] },
