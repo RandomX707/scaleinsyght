@@ -11,7 +11,7 @@ import { readProfileState, recordFindings } from './findings.js';
 import { isObjectError, sourceErrorCode } from './source-errors.js';
 import { detectCopies } from './copies.js';
 import { claimDiscovery, finishDiscovery, heartbeat, holdDiscovery, reportDiscovery, StaleDiscoveryJobError, type DiscoveryJob } from './discovery-jobs.js';
-import { parseStatementLineage, statementHash, writeStatementLineage, SqlParserUnavailable, type LineageDialect, type StatementLineage } from '@scaleinsyght/graph';
+import { relinkDbtWarehouseSources, parseStatementLineage, statementHash, writeStatementLineage, SqlParserUnavailable, type LineageDialect, type StatementLineage } from '@scaleinsyght/graph';
 
 export interface ScopeRule {
   qualifiedName: string;
@@ -406,6 +406,10 @@ export async function runProfile(
     if (job) await holdDiscovery(client, job);
     await client.query('UPDATE profiler.jobs SET id_fields_skipped=$3,time_skips=$4::jsonb WHERE tenant_id=$1 AND job_id=$2',
       [input.tenantId, jobId, ids?.skipped ?? 0, JSON.stringify(timeSkips)]);
+  });
+  await withTenant(pool, input.tenantId, async client => {
+    await relinkDbtWarehouseSources(client, input.tenantId, input.connectionId,
+      job ? () => holdDiscovery(client, job) : undefined);
   });
   if (job && !(await finishDiscovery(pool, job, { state: 'COMPLETED' }))) throw new StaleDiscoveryJobError();
   return {
