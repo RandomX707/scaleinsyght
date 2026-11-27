@@ -1,6 +1,6 @@
 # Handover, 27 Nov 2026
 
-Updated by Claude Code after #56 (consistent ID sampling). The review app on 4284 runs `main` at `58d12cd`. test_emr's latest profile completed in 28 minutes (`docs/reports/test-emr-profiling-report.md`). Standard and Custom (decision 62) is next to merge.
+Updated by Claude Code after #59 (bounded relationship checks). The review app on 4284 runs `main` at `87d5e86`. test_emr's latest profile completed in 32 minutes (`docs/reports/test-emr-profiling-report.md`); its Dictionary shows 52 functions as custom copies and the rest as Not classified yet.
 
 ## Merged to `main` today
 
@@ -41,10 +41,13 @@ Updated by Claude Code after #56 (consistent ID sampling). The review app on 428
 | #54 | 6e73d7f | K12: "each <dimension>" counts from the dimension table, empty groups as 0 (decision 60) |
 | #55 | 3327ca2 | An ID field that times out is skipped and counted, not the whole run (migration 045) |
 | #56 | 58d12cd | Decision 61: large identifier columns are fingerprinted through a consistent 1-in-16 sample (migration 046); a reclaimed profile job reruns safely |
+| #57 | ada1226 | test_emr profiling report for Yashaswi's manager (`docs/reports/test-emr-profiling-report.md`); handover |
+| #58 | 9931f25 | Decision 62: Standard and Custom are about who built an object; Not classified yet; classification rules in Controls; copy detection (migration 047) |
+| #59 | 87d5e86 | Decision 63 (assumed): relationship checks read at most 10,000 values with key lookups; a timed-out check skips only its candidate (K14) |
 
 ## Review app on 4284 and riverside-health
 
-- **4284 runs `main` at `58d12cd`** (redeployed 27 Nov, 04:53 IST) from `../scaleinsyght-review` (detached): API 3000, worker 3001, web 4284, sqlparse 8011, started with `nohup` by Claude Code (logs in its scratchpad, appended with a stamp per deploy). `scale_insyght` is migrated to 046; a `pg_dump` backup is taken before every migration (latest `scale_insyght-before-046.dump`, Claude Code's scratchpad). **Deploying safely:** SIGTERM lets the worker finish its current profile, which can take an hour; the new worker then cannot bind 3001 and exits while the health check still answers from the old one (this happened at 03:28 on 27 Nov). Wait for the old processes to exit, force-stop them after a timeout, and check that every listening PID is new.
+- **4284 runs `main` at `87d5e86`** (redeployed 27 Nov, 07:32 IST) from `../scaleinsyght-review` (detached): API 3000, worker 3001, web 4284, sqlparse 8011, started with `nohup` by Claude Code (logs in its scratchpad, appended with a stamp per deploy). `scale_insyght` is migrated to 047; a `pg_dump` backup is taken before every migration (latest `scale_insyght-before-047.dump`, Claude Code's scratchpad). **Deploying safely:** SIGTERM lets the worker finish its current profile, which can take an hour; the new worker then cannot bind 3001 and exits while the health check still answers from the old one (this happened at 03:28 on 27 Nov). Wait for the old processes to exit, force-stop them after a timeout, and check that every listening PID is new.
 - **riverside-health password:** Yashaswi's password (`yashaswi@riverside-health.test`) was reset with `pnpm tenant:reset-password` at about 06:40 IST and given to Yashaswi once in the chat at handover. It is not in the repo. If it is lost, reset it again with the same command.
 - **riverside-health sources:** PostgreSQL (`pgs`) and SQL Server (`sql`) were already connected by Yashaswi; the Operations workbook was added through Add connector, and PostgreSQL and SQL Server were re-profiled so display labels work. No dbt project, no Tableau and no nightly refresh have been run there yet (`profiler.nightly_schedules` is backfilled by migration 032 when 4284 is migrated). Drafts Yashaswi created were left alone.
 - `../scaleinsyght/.env` was changed: `MODEL_DAILY_COST_CAP_USD=5`, `MODEL_DAILY_USER_COST_CAP_USD=1`, token cap removed (backup in my scratchpad as `main-env-backup`).
@@ -71,8 +74,7 @@ Updated by Claude Code after #56 (consistent ID sampling). The review app on 428
 
 ## Claude Code queue (in the user's order)
 
-1. **Standard and Custom (decision 62)** on `standard-custom` (worktree `../scaleinsyght-cc-s8`, migration 047): never Standard by default; "Not classified yet"; rules in Controls (prefixes, schemas, owners); copy detection; vendor dictionary decides for the tables it lists. After merge, re-profile test_emr on 4284 to show it.
-   - The copied SQL Server procedure for the shared Dictionary testbed is on `dictionary-testbed-copy`, waiting for the user's OK to reapply `pnpm testbed:dictionary` (it recreates the shared database and breaks every branch's c7 and S9 until they rebase).
+1. **Decision 63 is assumed**: Yashaswi to confirm bounded relationship checks. K14's remaining item (a client-side time limit for source queries) is open. The copied SQL Server procedure for the shared Dictionary testbed is on `dictionary-testbed-copy`, waiting for Yashaswi's OK to reapply `pnpm testbed:dictionary` (it recreates the shared database and breaks every branch's c7 and S9 until they rebase).
 2. **Agents, My agent, Usage and BI reports** matched to the prototype, one PR each (Agents is built on `agents-screen`; needs a rebase, screenshots, gates and testbed runs).
 3. **Remaining Dictionary items**: keys and indexes, Back buttons, encrypted procedure dependencies, agent schedules ("Run by"), ER grid.
 4. **Cross-source row joins**: spec first, for the user's approval.

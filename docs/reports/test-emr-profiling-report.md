@@ -1,15 +1,14 @@
 # test_emr profiling report
 
-Prepared 27 Nov 2026 from Scale Insyght's own job records on the review deployment. Times are India Standard Time (IST).
+Prepared 27 Nov 2026 from Scale Insyght's own job records on the review deployment, and updated at 08:10 after the last run. Times are India Standard Time (IST).
 
 test_emr is a PostgreSQL test database with a copy of a real EMR schema. Scale Insyght only reads it. This report holds no credentials and no data values, only counts and timings.
 
 ## Summary
 
-- **Now:** the latest full profile finished in **28 minutes**, with every stage complete:
-  - every table has statistics;
-  - every identifier column was checked;
-  - nothing failed and nothing was skipped.
+- **Now:** full profiles complete in **28 to 32 minutes**, depending on how fast test_emr answers:
+  - 28 minutes at 04:55, with nothing skipped;
+  - 32 minutes at 07:32, when test_emr answered about three times more slowly. 11 identifier columns and parts of the statistics for 4 large tables ran past its time limit; they were skipped and counted, and the profile still completed.
 - **Before today's fixes:** the first full profile took **73 minutes**. The two runs after it did not finish.
 - **Overall:** 9 hours 46 minutes passed between adding the connection and the first complete profile. Most of that was failures, not profiling. Each failure is explained below with its fix.
 
@@ -25,19 +24,21 @@ test_emr is a PostgreSQL test database with a copy of a real EMR schema. Scale I
 | 27 Nov, 00:13 to 01:26 | **First complete profile: 73 minutes.** 14 large tables had no statistics. |
 | 27 Nov, 02:20 to 03:00 | Second run, after the large-table fix: stopped at 92%. The identifier step hit the database's time limit. |
 | 27 Nov, 03:04 to 03:36 | Third run: failed after a software update restarted it partway through. |
-| 27 Nov, 04:55 to 05:23 | **Run after all of today's fixes: complete in 28 minutes.** |
+| 27 Nov, 04:55 to 05:23 | **Run after the sampling and identifier fixes: complete in 28 minutes.** |
+| 27 Nov, 06:02 and 06:20 | Two runs after the standard and custom update failed just after sampling. One relationship check ran past test_emr's time limit. |
+| 27 Nov, 07:32 to 08:04 | **Run after the relationship fix: complete in 32 minutes**, with test_emr answering more slowly than at 04:55. |
 
 ## Time per stage
 
 Each run's stages come from its job record. The first three runs don't record where catalog discovery ends, so it is shown together with sampling for them.
 
-| Stage | First complete run (00:13) | Second run (02:20) | After today's fixes (04:55) |
-|---|---|---|---|
-| Catalog discovery (finding tables and columns) | 12 min 4 s, with sampling | 3 min 8 s, with sampling | 21 s |
-| Sampling and statistics | (included above) | (included above) | 1 min 52 s |
-| Saving the profile and inferring relationships | 1 min 57 s | 4 min 33 s | 2 min 48 s |
-| Function code and identifiers (IDs) | 58 min 53 s | 31 min 31 s, then stopped (258 of 890 steps) | 23 min 4 s (890 of 890 steps) |
-| **Total** | **72 min 54 s** | **39 min 12 s, incomplete** | **28 min 5 s** |
+| Stage | First complete run (00:13) | Second run (02:20) | After the ID fixes (04:55) | After the relationship fix (07:32) |
+|---|---|---|---|---|
+| Catalog discovery (finding tables and columns) | 12 min 4 s, with sampling | 3 min 8 s, with sampling | 21 s | 45 s |
+| Sampling and statistics | (included above) | (included above) | 1 min 52 s | 5 min 51 s (test_emr slower) |
+| Saving the profile and inferring relationships | 1 min 57 s | 4 min 33 s | 2 min 48 s | 1 min 25 s |
+| Function code and identifiers (IDs) | 58 min 53 s | 31 min 31 s, then stopped (258 of 890 steps) | 23 min 4 s (890 of 890 steps) | 24 min 3 s (894 of 894 steps; 11 columns skipped) |
+| **Total** | **72 min 54 s** | **39 min 12 s, incomplete** | **28 min 5 s** | **32 min 6 s** |
 
 What made the difference:
 - **Sampling and statistics:** large tables are now measured from a fixed-size sample. Row counts for the largest tables come from the database's own catalog estimates, labelled as estimates. Before, 14 tables ended up with no statistics; now none do.
@@ -45,6 +46,7 @@ What made the difference:
   - The step now works through the columns one at a time, saving each one as it goes, and shows its progress on the Profile page.
   - Large identifier columns are compared through a consistent sample: about 1 in 16 values, chosen by the same rule in every source. Columns with up to 20,000 distinct values are still taken whole.
   - The step now stores 2.6 million keyed fingerprints instead of about 17.3 million. It finished all 890 steps in 23 minutes. The 02:20 run managed only 258 steps in 31 minutes.
+- **Relationships:** each proposed relationship is now checked on at most 10,000 values, looked up by key, instead of joining two whole tables. This step took 1 min 25 s at 07:32, against 2 min 48 s at 04:55, even though test_emr was slower.
 
 ## What test_emr contains
 
@@ -78,13 +80,19 @@ Notes on the counts:
 | 3 | The first profile took 73 minutes, and 14 large tables had no statistics. | Large tables were read in full and hit the database's 10-second limit per query. The identifier step ran as one long transaction with no visible progress. | Sampling and catalog estimates for large tables. The identifier step saves column by column and shows progress. | Fixed 27 Nov |
 | 4 | The 02:20 run stopped at 92% ("relationships and lineage could not be mapped"). | One identifier column hit the database's time limit, and that ended the whole run. | A column that times out is skipped and counted; the run carries on. Large identifier columns are now sampled, and the step now runs about 4.7 times faster than in the 02:20 run. | Fixed 27 Nov |
 | 5 | The 03:04 run failed at 03:36. | A software update restarted the worker partway through the run. The old worker kept running the earlier code until it was stopped. The run then started again and tripped over the records its first attempt had already saved. | A restarted run now saves safely over its earlier attempt; tested by stopping a run and restarting it. Updates now wait for the worker to stop and confirm the new one is running. | Fixed 27 Nov |
+| 6 | The 06:02 and 06:20 runs failed just after sampling, and nothing was saved. | Each proposed relationship was checked by joining two whole tables. On tables of tens of millions of rows one check ran past test_emr's time limit, and that ended the whole run. The 04:55 run had stayed just under the limit. | Each check now reads at most 10,000 values and looks each up by key. A check that still times out skips that one proposal and is counted. | Fixed 27 Nov |
 
 ## Open items
 
-1. **Standard and custom objects.** test_emr's objects all show as Standard, which isn't known to be true. A fix is in review:
-   - objects show as "Not classified yet" until a vendor dictionary is imported or rules are set in Controls;
-   - functions that copy another function are flagged as custom copies.
+1. **Standard and custom objects need classifying.** The Dictionary no longer calls everything Standard. On test_emr it now shows:
+   - Standard: 0, because no vendor dictionary has been imported;
+   - Custom: 52 functions flagged as near-identical copies of other functions (91% to 100% similar);
+   - Not classified yet: the 272 tables and the other 67 functions.
+
+   Importing the vendor's dictionary, or adding name, schema or owner rules in Controls, will classify the rest.
 2. **Nightly refresh repeats the full profile.** The nightly run doesn't yet remember which tables are unchanged, so it re-profiles all 272 (about 28 minutes a night).
 3. **The identifier step still takes 23 minutes.** It reads every identifier column again on each run. Reusing what earlier runs already fingerprinted is the next improvement.
 4. **Stage times aren't stored.** The times for the 04:55 run were read from the job record while it ran. Recording each stage's start and end, and the time per table, is planned.
 5. **24 row counts are estimates.** They come from the database's statistics and are labelled as estimates in the product.
+6. **test_emr's speed varies.** At 07:32 it answered about three times more slowly than at 04:55. 11 identifier columns and parts of the statistics for 4 large tables were skipped and counted, not lost silently. They are picked up again on the next run.
+7. **No client-side time limit on source queries.** One query through the network tunnel to test_emr waited over 5 minutes with no answer. A stalled connection could hold the profiler until it is restarted.
