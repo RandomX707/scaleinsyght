@@ -450,3 +450,8 @@ h3 { font-size: 14px; line-height: 1.3; }
 .phase3-workspace .er-node .ui-button--ghost { background:transparent; border-color:transparent; }
 .phase3-workspace .er-node .ui-button:hover:not(:disabled),.phase3-workspace .er-profile .ui-button:hover:not(:disabled) { border-color:var(--primary); color:var(--primary-ink); }
 .er-node h3 .er-node-title[aria-pressed="true"] { color:var(--primary-ink); }
+/* The legacy `.login button` rule paints every login button indigo; secondary buttons keep the shared outlined look
+   (prototype: "Continue with single sign-on"). */
+.login .ui-button--secondary { background:var(--surface); color:var(--ink); border:1px solid var(--line); font-weight:500; }
+.login .ui-button--secondary:hover:not(:disabled) { border-color:var(--primary); color:var(--primary-ink); }
+.login label small { display:block; margin-top:4px; font-weight:400; }

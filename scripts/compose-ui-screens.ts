@@ -7,6 +7,7 @@ import { chromium } from '@playwright/test';
 // A prototype image wider than 1440 px (an existing pair) contributes its right half.
 type Pair = { out: string; app: string; prototype: string };
 const pairs: Pair[] = [
+  { out: 'login', app: 'docs/acceptance/phase0/login.png', prototype: 'docs/acceptance/phase0/prototype/login.png' },
   { out: 'dictionary-landing', app: 'docs/acceptance/s9/landing.png', prototype: 'docs/acceptance/s9/prototype/landing.png' },
   { out: 'dictionary-table', app: 'docs/acceptance/s9/table.png', prototype: 'docs/acceptance/s9/prototype/table.png' },
   { out: 'dictionary-procedure', app: 'docs/acceptance/s9/procedure.png', prototype: 'docs/acceptance/s9/prototype/proc.png' },
