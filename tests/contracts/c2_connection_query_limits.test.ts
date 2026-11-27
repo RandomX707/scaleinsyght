@@ -19,6 +19,7 @@ it('isolates the profiling and analytic deadlines and lets only tenant admins ch
   const db = pool('DATABASE_URL');
   const migrate = pool('DATABASE_URL_MIGRATE');
   const tenantId = `limits-${randomUUID()}`;
+  vi.stubEnv('SOURCE_CONNECT_TIMEOUT_MS',undefined);
   vi.stubEnv('SOURCE_QUERY_TIMEOUT_MS','11000');
   vi.stubEnv('SOURCE_PROFILE_QUERY_TIMEOUT_MS','15000');
   vi.stubEnv('SOURCE_ANALYTIC_QUERY_TIMEOUT_MS',undefined);
@@ -37,12 +38,16 @@ it('isolates the profiling and analytic deadlines and lets only tenant admins ch
     const url = `/api/connections/${connectionId}/query-limits`;
     const get = async () => (await app.inject({method:'GET',url})).json();
     const put = (payload:unknown, headers={}) => app.inject({method:'PUT',url,payload:JSON.stringify(payload),headers:{'content-type':'application/json',...headers}});
-    expect(await get()).toEqual({profileMs:null,analyticMs:null,effectiveProfileMs:15000,effectiveAnalyticMs:11000});
-    expect((await put({profileMs:22000,analyticMs:4200},{'x-member':'true'})).statusCode).toBe(403);
-    expect((await put({profileMs:0,analyticMs:4200})).statusCode).toBe(400);
-    expect((await put({profileMs:22000,analyticMs:4200})).json()).toEqual({profileMs:22000,analyticMs:4200,effectiveProfileMs:22000,effectiveAnalyticMs:4200});
-    expect((await put({profileMs:null,analyticMs:4200})).statusCode).toBe(200);
-    expect(await get()).toEqual({profileMs:null,analyticMs:4200,effectiveProfileMs:15000,effectiveAnalyticMs:4200});
+    expect(await get()).toEqual({connectMs:null,effectiveConnectMs:10000,profileMs:null,analyticMs:null,effectiveProfileMs:15000,effectiveAnalyticMs:11000});
+    expect((await put({connectMs:8000,profileMs:22000,analyticMs:4200},{'x-member':'true'})).statusCode).toBe(403);
+    expect((await put({connectMs:null,profileMs:0,analyticMs:4200})).statusCode).toBe(400);
+    expect((await put({connectMs:8000,profileMs:22000,analyticMs:4200})).json()).toEqual({connectMs:8000,effectiveConnectMs:8000,profileMs:22000,analyticMs:4200,effectiveProfileMs:22000,effectiveAnalyticMs:4200});
+    expect((await put({connectMs:null,profileMs:null,analyticMs:4200})).statusCode).toBe(200);
+    expect(await get()).toEqual({connectMs:null,effectiveConnectMs:10000,profileMs:null,analyticMs:4200,effectiveProfileMs:15000,effectiveAnalyticMs:4200});
+    vi.stubEnv('SOURCE_QUERY_TIMEOUT_MS',undefined);
+    vi.stubEnv('SOURCE_PROFILE_QUERY_TIMEOUT_MS',undefined);
+    await put({connectMs:null,profileMs:null,analyticMs:null});
+    expect(await get()).toMatchObject({effectiveConnectMs:10000,effectiveProfileMs:60000,effectiveAnalyticMs:30000});
   } finally {
     vi.unstubAllEnvs();
     await app.close();

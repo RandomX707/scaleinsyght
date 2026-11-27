@@ -13,15 +13,19 @@ export function sourceTimeouts(options: SourceTimeoutOptions = {}) {
     return configured;
   };
   return {
-    connect: read(options.connectTimeoutMs, 'SOURCE_CONNECT_TIMEOUT_MS', 5_000),
+    connect: read(options.connectTimeoutMs, 'SOURCE_CONNECT_TIMEOUT_MS', 10_000),
     query: read(options.statementTimeoutMs, 'SOURCE_QUERY_TIMEOUT_MS', 10_000),
   };
 }
 
 /** An explicit connection setting wins over the workload-specific and legacy deployment settings. */
+export function connectionConnectTimeout(override: number | null): number {
+  return sourceTimeouts(override === null ? {} : { connectTimeoutMs: override }).connect;
+}
+
 export function connectionQueryTimeout(workload: 'profile' | 'analytic', override: number | null): number {
   const configured = override ?? Number(process.env[workload === 'profile'
-    ? 'SOURCE_PROFILE_QUERY_TIMEOUT_MS' : 'SOURCE_ANALYTIC_QUERY_TIMEOUT_MS'] ?? process.env.SOURCE_QUERY_TIMEOUT_MS ?? 10_000);
+    ? 'SOURCE_PROFILE_QUERY_TIMEOUT_MS' : 'SOURCE_ANALYTIC_QUERY_TIMEOUT_MS'] ?? process.env.SOURCE_QUERY_TIMEOUT_MS ?? (workload === 'profile' ? 60_000 : 30_000));
   return sourceTimeouts({ statementTimeoutMs: configured }).query;
 }
 

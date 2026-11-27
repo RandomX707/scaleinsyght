@@ -7,7 +7,7 @@ import type { Pool } from 'pg';
 import { withTenant, getUsage } from '@scaleinsyght/db';
 import { recordAgentRun, tenantAgent } from '@scaleinsyght/registry';
 import { activateConnection, approveGovernedVersion, createConnectionDraft, createGovernedDraft, deletePersonalMemory, getApprovedGovernedVersion, getPersonalMemory, moveConnectionToGroup, putPersonalMemory, type ConnectorType, type PersonalMemoryData } from '@scaleinsyght/registry';
-import { connectionQueryTimeout, decryptConnectionSecret, encryptConnectionSecret, createExcelConnector, createPostgresConnector, createSqlServerConnector, type ReadOnlyConnector, type Routine, type SourceConnectorType } from '@scaleinsyght/connectors';
+import { connectionConnectTimeout, connectionQueryTimeout, decryptConnectionSecret, encryptConnectionSecret, createExcelConnector, createPostgresConnector, createSqlServerConnector, type ReadOnlyConnector, type Routine, type SourceConnectorType } from '@scaleinsyght/connectors';
 import { EncryptedArtifactStore } from '@scaleinsyght/artifacts';
 import { decideFinding, getNotifications, latestDiscovery, listFindings, queueDiscovery, queueProfileJob, markNotificationRead, readConnectionScope, readWorkbook, retireConnection, saveConnectionScope, storeWorkbook } from '@scaleinsyght/profiler';
 import { applyPersonalContext, createAnalyticPlan, parseLineageRequest, startAnalyticRun, submitFeedback, type StructuredAnswer } from '@scaleinsyght/analytic';
@@ -71,33 +71,34 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
   if(options.sessionSecret.length<32)throw new Error('SESSION_SECRET must contain at least 32 characters');
   const app=Fastify({logger:false,bodyLimit:25*1024*1024});
   const oidcFetch=options.oidcFetch??fetch;
-  const postgresConnectors=new Map<string,{connector:ReadOnlyConnector;timeout:number}>();
+  const postgresConnectors=new Map<string,{connector:ReadOnlyConnector;timeout:number;connectTimeout:number}>();
   const connectorForConnection=async(tenantId:string,connectionId:string):Promise<ReadOnlyConnector>=>{
-    const saved=await withTenant(options.pool,tenantId,async(client)=>client.query<{connector_type:string;source_ref:string|null;display_name:string;profile_query_timeout_ms:number|null;ciphertext:Buffer|null;nonce:Buffer|null;auth_tag:Buffer|null}>(
-      `SELECT c.connector_type,c.source_ref,c.display_name,c.profile_query_timeout_ms,s.ciphertext,s.nonce,s.auth_tag
+    const saved=await withTenant(options.pool,tenantId,async(client)=>client.query<{connector_type:string;source_ref:string|null;display_name:string;profile_query_timeout_ms:number|null;connect_timeout_ms:number|null;ciphertext:Buffer|null;nonce:Buffer|null;auth_tag:Buffer|null}>(
+      `SELECT c.connector_type,c.source_ref,c.display_name,c.profile_query_timeout_ms,c.connect_timeout_ms,s.ciphertext,s.nonce,s.auth_tag
        FROM registry.connections c LEFT JOIN LATERAL (SELECT ciphertext,nonce,auth_tag FROM registry.connection_secrets
        WHERE tenant_id=c.tenant_id AND connection_id=c.connection_id ORDER BY secret_version DESC LIMIT 1) s ON true
        WHERE c.tenant_id=$1 AND c.connection_id=$2`,[tenantId,connectionId]));
     const row=saved.rows[0];if(!row)throw new Error('connection_not_found');
     if(row.source_ref){const injected=options.testConnectorFor?.(row.source_ref);if(injected)return injected;}
+    const connectTimeoutMs=connectionConnectTimeout(row.connect_timeout_ms);
     const statementTimeoutMs=connectionQueryTimeout('profile',row.profile_query_timeout_ms);
     const cacheKey=JSON.stringify([tenantId,connectionId]);
     const cached=postgresConnectors.get(cacheKey);
-    if(cached?.timeout===statementTimeoutMs)return cached.connector;
+    if(cached?.timeout===statementTimeoutMs&&cached.connectTimeout===connectTimeoutMs)return cached.connector;
     if(row.connector_type==='excel'){
       if(!options.artifactStore)throw new Error('artifact_store_unavailable');
       const latest=await withTenant(options.pool,tenantId,client=>client.query<{artifact_id:string}>('SELECT artifact_id FROM artifacts.workbooks WHERE tenant_id=$1 AND connection_id=$2 ORDER BY created_at DESC LIMIT 1',[tenantId,connectionId]));
       const artifactId=latest.rows[0]?.artifact_id;if(!artifactId)throw new Error('excel_workbook_not_uploaded');
-      return createExcelConnector({statementTimeoutMs,id:connectionId,name:row.display_name||'Workbook',workbook:await readWorkbook(options.pool,options.artifactStore,{tenantId,connectionId,artifactId})});
+      return createExcelConnector({connectTimeoutMs,statementTimeoutMs,id:connectionId,name:row.display_name||'Workbook',workbook:await readWorkbook(options.pool,options.artifactStore,{tenantId,connectionId,artifactId})});
     }
     if(!['postgres','sql_server'].includes(row.connector_type)||!row.ciphertext||!row.nonce||!row.auth_tag)throw new Error('source_connection_requires_credentials');
     if(row.connector_type==='sql_server'){
       const secret=decryptConnectionSecret<{host:string;port:number;database:string;username:string;password:string;trustServerCertificate:boolean}>({version:1,ciphertext:row.ciphertext.toString('base64'),nonce:row.nonce.toString('base64'),authTag:row.auth_tag.toString('base64')});
-      const connector=createSqlServerConnector({statementTimeoutMs,server:secret.host,port:secret.port,database:secret.database,username:secret.username,password:secret.password,encrypt:true,trustServerCertificate:secret.trustServerCertificate,id:connectionId,name:row.display_name||'SQL Server source',maxRows:1_000});postgresConnectors.set(cacheKey,{connector,timeout:statementTimeoutMs});void cached?.connector.close?.().catch(()=>undefined);return connector;
+      const connector=createSqlServerConnector({connectTimeoutMs,statementTimeoutMs,server:secret.host,port:secret.port,database:secret.database,username:secret.username,password:secret.password,encrypt:true,trustServerCertificate:secret.trustServerCertificate,id:connectionId,name:row.display_name||'SQL Server source',maxRows:1_000});postgresConnectors.set(cacheKey,{connector,timeout:statementTimeoutMs,connectTimeout:connectTimeoutMs});void cached?.connector.close?.().catch(()=>undefined);return connector;
     }
     const secret=decryptConnectionSecret<{host:string;port:number;database:string;username:string;password:string;sslMode:'disable'|'require'|'verify-full'}>({version:1,ciphertext:row.ciphertext.toString('base64'),nonce:row.nonce.toString('base64'),authTag:row.auth_tag.toString('base64')});
     const url=new URL('postgresql://placeholder');url.hostname=secret.host;url.port=String(secret.port);url.username=secret.username;url.password=secret.password;url.pathname=`/${secret.database}`;url.searchParams.set('sslmode',secret.sslMode);
-    const connector=createPostgresConnector({statementTimeoutMs,connectionString:url.toString(),id:connectionId,name:row.display_name||'PostgreSQL source',maxRows:1_000});postgresConnectors.set(cacheKey,{connector,timeout:statementTimeoutMs});void cached?.connector.close?.().catch(()=>undefined);return connector;
+    const connector=createPostgresConnector({connectTimeoutMs,statementTimeoutMs,connectionString:url.toString(),id:connectionId,name:row.display_name||'PostgreSQL source',maxRows:1_000});postgresConnectors.set(cacheKey,{connector,timeout:statementTimeoutMs,connectTimeout:connectTimeoutMs});void cached?.connector.close?.().catch(()=>undefined);return connector;
   };
   const availableConnectorSources=()=> (options.testSources??[]).filter(source=>['postgres','sql_server','snowflake','excel','lake','crm'].includes(source.type));
   app.get('/api/gateways',async(request,reply)=>{
