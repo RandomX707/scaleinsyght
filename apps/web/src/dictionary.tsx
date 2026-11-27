@@ -194,7 +194,7 @@ export function DictionaryPage(props: { connectionId: string; navigate: Navigate
   }
   const cardIds = useMemo(() => {
     const detail = active ? details[active] : null;
-    if (!detail) return ['dict-summary', 'dict-agents'];
+    if (!detail) return ['dict-summary', 'dict-import', 'dict-export', 'dict-agents'];
     return detail.definition ? ['def-what', 'def-logic', 'def-params', 'def-tables', 'def-calls', 'def-sql', 'cols', 'used', 'keys', 'joins', 'tests'] : ['cols', 'used', 'keys', 'joins', 'tests'];
   }, [active, details]);
   const isOpen = (id: string) => cards[id] ?? id !== 'dict-agents';
@@ -224,7 +224,7 @@ export function DictionaryPage(props: { connectionId: string; navigate: Navigate
         </div>}
         <SegmentedControl label="Standard or custom" selected={shownTab ?? 'standard'} onSelect={(id) => setTab(id as Tab)}
           items={(['standard', 'custom'] as Tab[]).map((item) => ({ id: item, label: <>{TAB_LABEL[item]} <span className="dict-seg-count">{number(list?.counts[item] ?? 0)}</span></> }))} />
-        <Input type="search" aria-label="Search tables, columns or SQL code" placeholder="Search tables, columns or SQL code" value={query} onChange={(event) => setQuery(event.target.value)} />
+        <Input type="search" aria-label="Search tables, columns or SQL code" placeholder="Search names, columns, SQL" value={query} onChange={(event) => setQuery(event.target.value)} />
         {list && shownTab && list.descriptions && descriptionLine(list.descriptions) && <div className="dict-approve-all">
           <span>Descriptions {debounced ? 'matching this search' : `on ${TAB_LABEL[shownTab]}`}: {descriptionLine(list.descriptions)}</span>
           {list.drafted > 0 && <Button size="small" onClick={() => setApproving({ count: list.drafted, scope: debounced ? `matching “${debounced}” on ${TAB_LABEL[shownTab]}` : `on ${TAB_LABEL[shownTab]}`, body: { tab: shownTab, ...(debounced ? { q: debounced } : {}) } })}>Approve all</Button>}
@@ -238,7 +238,7 @@ export function DictionaryPage(props: { connectionId: string; navigate: Navigate
             return <li key={item.name}><Button variant="ghost" size="small" className={`dict-item${active === item.name ? ' is-active' : ''}`} aria-current={active === item.name ? 'true' : undefined} title={item.name} onClick={() => void openObject(item.name)}>
               <span className="mono">{shown.title}</span>{shown.hint && <span className="dict-hint">{shown.hint}</span>}{item.matchedColumns ? <span className="dict-count">{item.matchedColumns} col</span> : null}
               {item.copyOf ? <span className="dict-copy" title={copyLabel(item.copyOf, item.copySimilarity)}>Copy</span> : null}</Button></li>; })}</ul>
-          {group.nextOffset !== null && <Button size="small" onClick={() => void showMore(group)}>Show more</Button>}
+          {group.nextOffset !== null && <Button size="small" onClick={() => void showMore(group)}>Show {number(Math.min(200, group.total - group.items.length))} more</Button>}
         </div>)}
         {list && list.sqlHits.length > 0 && <div className="dict-group">
           <h3><span>In SQL code · {list.sqlHits.length}</span><span>{number(list.sqlHits.reduce((total, hit) => total + hit.matches, 0))} matches</span></h3>
@@ -250,7 +250,7 @@ export function DictionaryPage(props: { connectionId: string; navigate: Navigate
       <div className="dict-main">
         <div className="dict-tabs-row">
           <PillTabs label="Open objects" selected={active || '__overview'} onSelect={(id) => setActive(id === '__overview' ? '' : id)} onClose={closeObject}
-            items={[{ id: '__overview', label: summary?.importedDictionary ? 'Imported dictionary' : 'Overview' }, ...open.map((name) => ({ id: name, label: objectTitle(name), closable: true }))]} />
+            items={[{ id: '__overview', label: summary?.importedDictionary ? 'Imported dictionary' : 'Overview' }, ...open.map((name) => ({ id: name, label: objectTitle(name), closable: true, mono: true }))]} />
           <div className="dict-tabs-actions"><Button size="small" onClick={() => setAll(false)}>Collapse all</Button><Button size="small" onClick={() => setAll(true)}>Expand all</Button></div>
         </div>
         {!active && summary && <Landing summary={summary} isOpen={isOpen} toggle={toggle} onExport={() => setExporting(true)} onImport={(file) => void importDictionary(file)} onSourceExport={(format) => void exportSource(format)}
@@ -284,7 +284,7 @@ function Landing(props: { summary: Summary; isOpen: (id: string) => boolean; tog
       <div className="dict-stats">{stats.map(([value, label]) => <div key={label}><strong>{value}</strong><span>{label}</span></div>)}</div>
       <Kv rows={[
         ...(imported ? [['Imported file', <span className="mono" key="f">{imported.fileName}</span>], ['Imported', `${new Date(imported.importedAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}${imported.importedBy ? ` by ${imported.importedBy}` : ''}`]] as Array<[string, ReactNode]> : []),
-        ['Described tables', `${number(summary.coverage.tables.documented)} of ${number(summary.coverage.tables.total)} (${percent(summary.coverage.tables.documented, summary.coverage.tables.total)})${summary.coverage.tables.drafted ? `, ${number(summary.coverage.tables.drafted)} drafted` : ''}`],
+        ['Described tables and views', `${number(summary.coverage.tables.documented)} of ${number(summary.coverage.tables.total)} (${percent(summary.coverage.tables.documented, summary.coverage.tables.total)})${summary.coverage.tables.drafted ? `, ${number(summary.coverage.tables.drafted)} drafted` : ''}`],
         ['Documented columns', `${number(summary.coverage.columns.documented)} of ${number(summary.coverage.columns.total)} (${percent(summary.coverage.columns.documented, summary.coverage.columns.total)})`],
         ['Added by Scale Insyght', 'Plain-language descriptions, row counts, nulls and distinct values, sensitivity tags, procedure logic parsed from SQL, links to lineage'],
       ]} />
@@ -292,10 +292,14 @@ function Landing(props: { summary: Summary; isOpen: (id: string) => boolean; tog
       {!imported && !['excel', 'dbt', 'tableau'].includes(type) && <p className="dict-note">No vendor dictionary imported. Descriptions are drafted by Scale Insyght from names, keys and parsed SQL and used straight away, marked Drafted. Approving them is optional.</p>}
       <p className="dict-note">Standard objects are the source’s tables. Custom objects are what is built over them: views, materialized views, procedures, functions and packages.</p>
       {summary.descriptions && descriptionLine(summary.descriptions) && <div className="dict-approve-all"><span>Descriptions in this source: {descriptionLine(summary.descriptions)}</span>{summary.drafted > 0 && <Button size="small" onClick={props.onApproveAll}>Approve all</Button>}</div>}
-      <div className="dict-actions">
-        {!['excel', 'dbt', 'tableau'].includes(type) && <FileInput label={imported ? 'Upload a newer dictionary' : 'Import dictionary file'} accept=".csv,.xlsx" onChange={(event) => props.onImport(event.target.files?.[0])} />}
-        <Button variant="primary" size="small" onClick={props.onExport}>Export as interactive HTML</Button>
-      </div>
+      {type === 'dbt' && summary.counts.tables === 0 && <p className="dict-note">This dbt project was imported before the Dictionary recorded its models and sources. Import its artifacts again from Connectors to list them here.</p>}
+    </Section>
+    {!['excel', 'dbt', 'tableau'].includes(type) && <Section id="dict-import" title="Import vendor dictionary" open={props.isOpen('dict-import')} onToggle={props.toggle}>
+      <p>A CSV or Excel export from the vendor's dictionary tool, with a table, column and description on each row. Its descriptions are shown instead of drafted ones; it never changes Standard or Custom.</p>
+      <div className="dict-actions"><FileInput label={imported ? 'Upload a newer dictionary' : 'Import dictionary file'} accept=".csv,.xlsx" onChange={(event) => props.onImport(event.target.files?.[0])} /></div>
+    </Section>}
+    <Section id="dict-export" title="Export" open={props.isOpen('dict-export')} onToggle={props.toggle}>
+      <div className="dict-actions"><Button variant="primary" size="small" onClick={props.onExport}>Export as interactive HTML</Button><span className="dict-note">One file that works offline, for everyone in this source.</span></div>
       <div className="dict-actions dict-export"><span>Whole source</span><Button size="small" onClick={() => props.onSourceExport('markdown')}>Export Markdown</Button><Button size="small" onClick={() => props.onSourceExport('docx')}>Export Word (.docx)</Button><Button size="small" onClick={() => props.onSourceExport('copy')}>Copy</Button></div>
     </Section>
     <Section id="dict-agents" title="How the agents use it" open={props.isOpen('dict-agents')} onToggle={props.toggle}>

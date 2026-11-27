@@ -37,9 +37,9 @@ export function SegmentedControl({ label, items, selected, onSelect }: { label: 
 }
 
 /** Open documents as pill tabs, each closable except the fixed ones (prototype .dtab). */
-export function PillTabs({ label, items, selected, onSelect, onClose }: { label: string; items: Array<{ id: string; label: string; closable?: boolean }>; selected: string; onSelect: (id: string) => void; onClose?: (id: string) => void }) {
+export function PillTabs({ label, items, selected, onSelect, onClose }: { label: string; items: Array<{ id: string; label: string; closable?: boolean; mono?: boolean }>; selected: string; onSelect: (id: string) => void; onClose?: (id: string) => void }) {
   return <div className="ui-pill-tabs" role="tablist" aria-label={label}>{items.map(item => <span key={item.id} className={`ui-pill-tab${selected === item.id ? ' is-selected' : ''}`}>
-    <button type="button" role="tab" aria-selected={selected === item.id} onClick={() => onSelect(item.id)}>{item.label}</button>
+    <button type="button" role="tab" aria-selected={selected === item.id} onClick={() => onSelect(item.id)}>{item.mono ? <span className="ui-pill-tab__mono">{item.label}</span> : item.label}</button>
     {item.closable && onClose && <button type="button" className="ui-pill-tab__close" aria-label={`Close ${item.label}`} onClick={() => onClose(item.id)}>×</button>}
   </span>)}</div>;
 }

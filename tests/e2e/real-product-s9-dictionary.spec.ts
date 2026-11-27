@@ -75,6 +75,12 @@ test('s9_dictionary_matches_testbed_truth_for_every_connector_type_and_exports_o
 
   // SQL Server: landing, standard and custom objects, procedure tabs, encrypted state, SQL search, Show original.
   await expect(page.locator('.dict-card').first()).toContainText('No vendor dictionary imported');
+  // Polish: separate Import and Export areas, a placeholder that fits, and the UI font for the Overview pill.
+  // The file control's name is on its native input (aria-label), as S2 uses it.
+  await expect(page.locator('.dict-card', { hasText: 'Import vendor dictionary' }).getByLabel('Import dictionary file')).toHaveCount(1);
+  await expect(page.locator('.dict-card', { has: page.locator('summary', { hasText: /^Export$/ }) })).toContainText('Export as interactive HTML');
+  await expect(page.locator('.dict-card').first()).toContainText('Described tables and views');
+  await expect(side(page).getByLabel('Search tables, columns or SQL code')).toHaveAttribute('placeholder', 'Search names, columns, SQL');
   await page.screenshot({ path: screen('landing') });
   // Decision 64: Standard is every table, X_ tables included; the page opens on it.
   await expect(side(page).getByRole('tab', { name: /^Standard/ })).toHaveAttribute('aria-selected', 'true');
@@ -83,6 +89,9 @@ test('s9_dictionary_matches_testbed_truth_for_every_connector_type_and_exports_o
   const header = page.locator('.dict-header');
   await expect(header.getByRole('heading', { name: 'encounters' })).toBeVisible();
   await expect(header).toContainText('Standard table');
+  const pills = page.getByRole('tablist', { name: 'Open objects' });
+  expect(await pills.getByRole('tab', { name: 'Overview' }).evaluate((element) => getComputedStyle(element).fontFamily)).toMatch(/^"?Inter/);
+  expect(await pills.getByRole('tab', { name: 'encounters' }).locator('span').evaluate((element) => getComputedStyle(element).fontFamily)).toMatch(/JetBrains Mono/);
   // Drafted descriptions are shown and used as they are; approving is optional.
   await expect(header.locator('.dict-review')).toContainText('Drafted');
   await expect(header).not.toContainText('waiting for approval');
