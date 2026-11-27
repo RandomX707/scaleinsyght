@@ -455,3 +455,5 @@ h3 { font-size: 14px; line-height: 1.3; }
 .login .ui-button--secondary { background:var(--surface); color:var(--ink); border:1px solid var(--line); font-weight:500; }
 .login .ui-button--secondary:hover:not(:disabled) { border-color:var(--primary); color:var(--primary-ink); }
 .login label small { display:block; margin-top:4px; font-weight:400; }
+/* Usage: "12 of 20" against the plan's allowance (prototype V.usage). */
+.usage-of { font-size:14px; font-weight:500; color:var(--faint); }
