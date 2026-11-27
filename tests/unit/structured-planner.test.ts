@@ -85,6 +85,25 @@ describe('structured planner with declared intent (decision 44)', () => {
     expect(JSON.stringify(plannerSchema(encounters, []))).toContain('"exposed_columns"');
     expect((plannerSchema(encounters, []) as {properties:{declaration:{properties:{exposed_columns:{items:{enum:string[]}}}}}}).properties.declaration.properties.exposed_columns.items.enum).toEqual(['dbo.encounters.patient_id','dbo.encounters.provider_id']);
   });
+  it('accepts a group key that is read but not listed as exposed (K16: name shown, key used to group)', () => {
+    const byName = {...orderStep,kind:'grouped_join',groupBy:'dbo.departments.department_name',groupKey:'dbo.departments.department_id',order:'desc',
+      declared:{...orderStep.declared,grouping_column:'dbo.departments.department_name'}};
+    const read = ['dbo.departments.department_name','dbo.departments.department_id','dbo.orders.department_id'];
+    expect(decodePlannerOutput(wrap(byName,{...declaration,grouping:'department',exposed_columns:['dbo.departments.department_name'],read_columns:read}), orders, orderJoins).steps[0]?.intent)
+      .toMatchObject({kind:'grouped_join',groupBy:'department_name',groupKey:'department_id'});
+    // The key must still be read.
+    expect(() => decodePlannerOutput(wrap(byName,{...declaration,grouping:'department',exposed_columns:['dbo.departments.department_name'],read_columns:read.slice(0,1).concat('dbo.orders.department_id')}), orders, orderJoins))
+      .toThrow('plan_reads_undeclared_columns: dbo.departments.department_id');
+  });
+  it('refuses a tagged group key even when the shown name is untagged and the key is not exposed (K16)', () => {
+    // The key is read, not exposed, but grouping by it would return its values as group keys: still the privacy refusal.
+    const tagged = [{name:'SQL Server hospital',assets:[{qualified_name:'dbo.orders',columns:[{name:'order_id'},{name:'department_id'}]},
+      {qualified_name:'dbo.departments',columns:[{name:'department_id',sensitivity_tags:['identifier']},{name:'department_name'}]}]}];
+    const byName = {...orderStep,kind:'grouped_join',groupBy:'dbo.departments.department_name',groupKey:'dbo.departments.department_id',order:'desc',
+      declared:{...orderStep.declared,grouping_column:'dbo.departments.department_name'}};
+    const top = {...declaration,grouping:'department',exposed_columns:['dbo.departments.department_name'],read_columns:['dbo.departments.department_name','dbo.departments.department_id','dbo.orders.department_id']};
+    expect(() => decodePlannerOutput(wrap(byName,top), tagged, orderJoins)).toThrow('grouping_by_a_sensitive_column_is_not_allowed: dbo.departments.department_id is tagged identifier');
+  });
   it('never accepts a plan that reads or shows a column its declaration did not name', () => {
     const filtered = {...step,kind:'filtered_count',filters:[{column:'Charges.charge_type',operator:'eq',value:'lab',upperExclusive:null}],declared:{...declared,filter_columns:['Charges.charge_type']}};
     expect(decodePlannerOutput(wrap(filtered), catalog, []).steps).toHaveLength(1);
@@ -221,6 +240,19 @@ describe('display labels for key columns (decision 45)', () => {
     expect(decode(byName, repeated).intent).not.toHaveProperty('groupKey');
     expect(decode(byName, []).intent).toMatchObject({groupBy:'department_name'});
     expect(decode(byName, []).intent).not.toHaveProperty('groupKey');
+  });
+  it('tells the verifier when grouping by a unique name runs by the key, so it does not object to shared names (K16)', () => {
+    // Q49: "each provider ... use provider names" planned by name; verification rejected it as able to merge providers.
+    const byName = {...perDepartment,kind:'grouped_join',join:'dbo.orders.department_id = dbo.departments.department_id',groupBy:'dbo.departments.department_name',
+      declared:{...perDepartment.declared,grouping_column:'dbo.departments.department_name'}};
+    expect(describePlan([decode(byName)], catalog)).toContain('for each department_name, grouped by dbo.departments.department_id and shown by department_name, so records with the same department_name are never merged (the profile shows each department_name names exactly one dbo.departments record)');
+    // The model's own group key is described too (the failing Q49 attempts set it and were still told "for each name").
+    const keyed = {...byName,groupKey:'dbo.departments.department_id'};
+    expect(describePlan([decode(keyed)], catalog)).toContain('for each department_name, grouped by dbo.departments.department_id and shown by department_name, so records with the same department_name are never merged');
+    expect(describePlan([decode(keyed)], catalog)).not.toContain('(the profile shows');
+    // When names can repeat nothing is attached, so nothing is claimed.
+    const repeated = facts(); repeated[0]!['dbo.departments']!.columns.department_name = stat(9, 9);
+    expect(describePlan([decode(byName, repeated)], catalog)).not.toContain('grouped by dbo.departments.department_id');
   });
   it('keeps the conditions of a grouped count when the key is relabelled ("cancelled orders per department")', () => {
     const cancelled = {...perDepartment,filters:[{column:'dbo.orders.order_id',operator:'gt',value:0,upperExclusive:null}],
