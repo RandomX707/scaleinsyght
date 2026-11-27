@@ -95,7 +95,11 @@ test('s9_dictionary_matches_testbed_truth_for_every_connector_type_and_exports_o
   // Drafted descriptions are shown and used as they are; approving is optional.
   await expect(header.locator('.dict-review')).toContainText('Drafted');
   await expect(header).not.toContainText('waiting for approval');
-  await expect(page.locator('.dict-card', { hasText: 'Keys and indexes' })).toContainText('patients.patient_id');
+  const keysCard = page.locator('.dict-card', { hasText: 'Keys and indexes' });
+  await expect(keysCard).toContainText('patients.patient_id');
+  // Read from the catalog: the primary key and the testbed's index.
+  await expect(keysCard).toContainText('encounter_id Primary key');
+  await expect(keysCard).toContainText('ix_encounters_patient');
   await page.screenshot({ path: screen('table'), fullPage: false });
   // Show in ER diagram opens the ER explorer on this table and its neighbours.
   await header.getByRole('button', { name: 'Show in ER diagram' }).click();
@@ -206,6 +210,7 @@ test('s9_dictionary_matches_testbed_truth_for_every_connector_type_and_exports_o
   await side(page).getByRole('button', { name: sheet.name, exact: true }).click();
   const sheetColumns = page.locator('.dict-card', { hasText: 'Columns, with original headers' });
   for (const header of sheet.headers.filter((header, index) => header !== sheet.columns[index])) await expect(sheetColumns).toContainText(header);
+  await expect(page.locator('.dict-card', { hasText: 'Keys and indexes' })).toContainText('A workbook sheet has no keys or indexes.');
   await page.locator('.dict-header').getByRole('button', { name: 'Ask about this' }).click();
   await page.getByRole('button', { name: `Back to Dictionary · ${sheet.name}` }).click();
   await expect(page.locator('.dict-header').getByRole('heading', { name: sheet.name })).toBeVisible();

@@ -5,7 +5,7 @@ import { DEFAULT_SAMPLING, SENSITIVITY_MIN_VALUES, SENSITIVITY_VALUES, type Samp
 import { createHash } from 'node:crypto';
 import { Pool, type QueryResultRow } from 'pg';
 import { classifyColumn } from '@scaleinsyght/classification';
-import { POSSIBLE_REFERENCE_COVERAGE, REFERENCE_CHECK_SAMPLE, isSkippableCheckError, isSourceQueryTimeout, withSkippedChecks, type SkippedReference, UNMEASURED, type ColumnStatistics, type ConnectorScope, type DiscoveryResult, type Routine, type ObjectProfile, type ReadOnlyConnector , type ObjectOrigin } from './index.js';
+import { POSSIBLE_REFERENCE_COVERAGE, REFERENCE_CHECK_SAMPLE, isSkippableCheckError, isSourceQueryTimeout, withSkippedChecks, type SkippedReference, UNMEASURED, type ColumnStatistics, type ConnectorScope, type DiscoveryResult, type Routine, type ObjectProfile, type ReadOnlyConnector, type ObjectOrigin, type TableKeys } from './index.js';
 
 export type Table = { schema_name: string; table_name: string; table_type: 'BASE TABLE' | 'VIEW'; readable?: boolean };
 type Column = { column_name: string; data_type: string; is_nullable: 'YES' | 'NO'; comment: string | null };
@@ -325,6 +325,18 @@ export class PostgresConnector implements ReadOnlyConnector {
     return result.rows.map(row=>({qualifiedName:row.qualified_name,owner:row.owner,createdOrder:row.created_order===null?null:Number(row.created_order)}));
   }
 
+  async keysAndIndexes():Promise<TableKeys[]>{
+    // Catalog only. Expression parts of an index have no column and are shown as "(expression)".
+    const result=await this.pool.query<{table_name:string;index_name:string;is_primary:boolean;is_unique:boolean;columns:string[]}>(`SELECT n.nspname||'.'||t.relname AS table_name,i.relname AS index_name,ix.indisprimary AS is_primary,ix.indisunique AS is_unique,
+        array_agg(coalesce(a.attname::text,'(expression)') ORDER BY k.ord) AS columns
+      FROM pg_index ix JOIN pg_class t ON t.oid=ix.indrelid JOIN pg_class i ON i.oid=ix.indexrelid JOIN pg_namespace n ON n.oid=t.relnamespace
+      CROSS JOIN LATERAL unnest(ix.indkey::int2[]) WITH ORDINALITY AS k(attnum,ord) LEFT JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum=k.attnum AND k.attnum>0
+      WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_toast%' AND t.relkind IN ('r','p','m') AND k.ord<=ix.indnkeyatts
+      GROUP BY 1,2,3,4 ORDER BY 1,2 LIMIT $1`,[this.maxCatalogRows+1]);
+    if(result.rows.length>this.maxCatalogRows)throw new Error('postgres_connector_result_limit_exceeded');
+    return groupTableKeys(result.rows.map(row=>({table:row.table_name,name:row.index_name,columns:row.columns,unique:row.is_unique,primary:row.is_primary})));
+  }
+
   async routines():Promise<Routine[]>{
     // PostgreSQL never encrypts definitions; parameters come from the declared argument names, types and modes. Mode t
     // (RETURNS TABLE) and a function's OUT arguments are the columns it returns, not parameters (decision 64); a
@@ -412,4 +424,11 @@ export function splitRoutineArguments(kind:'function'|'procedure',args:Array<{na
     parameters:args.filter(arg=>!returned(arg.mode)).map(arg=>({name:arg.name,dataType:arg.dataType,mode:(arg.mode==='out'||arg.mode==='inout'?arg.mode:'in') as 'in'|'out'|'inout'})),
     returns:args.filter(arg=>returned(arg.mode)).map(arg=>({name:arg.name,dataType:arg.dataType})),
   };
+}
+
+/** One entry per table: its primary key columns and every index, in catalog order. */
+export function groupTableKeys(rows:Array<{table:string;name:string;columns:string[];unique:boolean;primary:boolean}>):TableKeys[]{
+  const tables=new Map<string,TableKeys>();
+  for(const row of rows){const entry=tables.get(row.table)??{table:row.table,primaryKey:[],indexes:[]};entry.indexes.push({name:row.name,columns:row.columns,unique:row.unique,primary:row.primary});if(row.primary)entry.primaryKey=row.columns;tables.set(row.table,entry);}
+  return [...tables.values()];
 }

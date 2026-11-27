@@ -1,3 +1,4 @@
+import { groupTableKeys } from './postgres.js';
 import { columnScope, objectScope } from './scope.js';
 import { CATALOG_ROW_LIMIT, sourceTimeouts, withSourceDeadline, type SourceTimeoutOptions } from './limits.js';
 import { inIdSample, sqlServerIdSampleCondition } from './id-sample.js';
@@ -261,6 +262,18 @@ export class SqlServerConnector implements ReadOnlyConnector {
       FROM sys.objects o JOIN sys.schemas s ON s.schema_id=o.schema_id WHERE o.type IN ('U','V','P','FN','IF','TF') AND o.is_ms_shipped=0`);
     if (rows.recordset.length > this.maxCatalogRows) throw new Error('sqlserver_connector_result_limit_exceeded');
     return rows.recordset.map((row) => ({ qualifiedName: row.qualified_name, owner: row.owner, createdOrder: row.created_order === null ? null : Number(row.created_order) }));
+  }
+
+  async keysAndIndexes() {
+    // Catalog only (sys.indexes): key columns in key order; included columns are not part of a key.
+    const rows = await (await this.request()).query<{ table_name: string; index_name: string; is_primary_key: boolean; is_unique: boolean; columns: string }>(`SELECT TOP (${this.maxCatalogRows + 1}) s.name+'.'+t.name AS table_name,i.name AS index_name,i.is_primary_key,i.is_unique,
+        STRING_AGG(c.name, NCHAR(31)) WITHIN GROUP (ORDER BY ic.key_ordinal) AS columns
+      FROM sys.indexes i JOIN sys.tables t ON t.object_id=i.object_id JOIN sys.schemas s ON s.schema_id=t.schema_id
+      JOIN sys.index_columns ic ON ic.object_id=i.object_id AND ic.index_id=i.index_id AND ic.is_included_column=0
+      JOIN sys.columns c ON c.object_id=ic.object_id AND c.column_id=ic.column_id
+      WHERE i.type>0 AND i.is_hypothetical=0 AND t.is_ms_shipped=0 GROUP BY s.name,t.name,i.name,i.is_primary_key,i.is_unique ORDER BY 1,2`);
+    if (rows.recordset.length > this.maxCatalogRows) throw new Error('sqlserver_connector_result_limit_exceeded');
+    return groupTableKeys(rows.recordset.map((row) => ({ table: row.table_name, name: row.index_name, columns: row.columns.split(String.fromCharCode(31)), unique: Boolean(row.is_unique), primary: Boolean(row.is_primary_key) })));
   }
 
   async routines() {

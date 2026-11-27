@@ -563,7 +563,7 @@ async function objectDetail(client: PoolClient, tenantId: string, connectionId: 
   const objects = prepared?.objects ?? await listObjects(client, tenantId, source);
   const listed = objects.find((object) => object.name === name); if (!listed) return null;
   const datasetSource = source.connector_type === 'dbt' && source.source_ref?.startsWith('warehouse:') ? source.source_ref.slice('warehouse:'.length) : connectionId;
-  const dataset = (await client.query<{ asset_id: string; asset_type: string; statistics: { row_count?: number; row_count_estimated?: boolean } | null; structural: { columns?: Array<{ name: string }> } | null; first_seen_at: Date }>(
+  const dataset = (await client.query<{ asset_id: string; asset_type: string; statistics: { row_count?: number; row_count_estimated?: boolean } | null; structural: { columns?: Array<{ name: string }>; primary_key?: string[]; indexes?: Array<{ name: string; columns: string[]; unique: boolean; primary: boolean }> } | null; first_seen_at: Date }>(
     `SELECT a.asset_id,a.asset_type,v.statistics,v.structural_attributes AS structural,a.first_seen_at FROM graph.assets a
        LEFT JOIN LATERAL(SELECT statistics,structural_attributes FROM graph.asset_versions WHERE tenant_id=a.tenant_id AND asset_id=a.asset_id ORDER BY version DESC LIMIT 1)v ON true
      WHERE a.tenant_id=$1 AND a.source_id=ANY($2::uuid[]) AND a.qualified_name=$3 AND a.active AND a.asset_type IN ('dataset','report','field')
@@ -672,6 +672,8 @@ async function objectDetail(client: PoolClient, tenantId: string, connectionId: 
     description,
     stats: dataset ? { rows: typeof dataset.statistics?.row_count === 'number' ? dataset.statistics.row_count : null, ...(dataset.statistics?.row_count_estimated ? { rowsEstimated: true } : {}), lastProfiled, dependentReports, builtBy: builtBy.map((item) => item.name) } : null,
     columns, keys, joins, tests,
+    // Primary key and indexes from the catalog; null when this source or profile did not read them.
+    indexes: dataset?.structural && Array.isArray(dataset.structural.indexes) ? { primaryKey: dataset.structural.primary_key ?? [], indexes: dataset.structural.indexes } : null,
     usedBy: [...readBy.map((item) => ({ name: item.name, kind: item.kind, how: 'reads', source: source.name })), ...builtBy.map((item) => ({ name: item.name, kind: item.kind, how: `writes (${item.mode})`, source: source.name })),
       ...flowUsers.map((item) => ({ name: item.name, kind: item.type === 'report' ? 'report' : 'dataset', how: 'data flows into it', source: item.source }))],
     definition: definition ? {

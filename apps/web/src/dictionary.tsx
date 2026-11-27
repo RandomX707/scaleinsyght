@@ -41,6 +41,7 @@ type Detail = {
   description: { text: string; origin: 'imported' | 'dbt' | 'drafted' | 'approved' | 'edited'; by?: string | null; at?: string | null } | null;
   stats: { rows: number | null; rowsEstimated?: boolean; lastProfiled: string | null; dependentReports: number; builtBy: string[] } | null;
   columns: Column[]; keys: Array<{ column: string; references: string; evidence: string }>;
+  indexes?: { primaryKey: string[]; indexes: Array<{ name: string; columns: string[]; unique: boolean; primary: boolean }> } | null;
   joins: Array<{ column: string; otherTable: string; otherColumn: string; direction: string; evidenceMethod: string; reviewStatus: string; verification: string | null; confidence: number | null; probable: boolean }>;
   tests: Array<{ column: string | null; test: string }>;
   usedBy: Array<{ name: string; kind: string; how: string; source: string }>;
@@ -455,8 +456,7 @@ function ObjectView(props: { detail: Detail; base: string; isOpen: (id: string) 
       {detail.usedBy.length ? <ul className="dict-list">{detail.usedBy.map((item) => <li key={`${item.name}-${item.how}`}><Button variant="ghost" size="small" className="dict-name mono" onClick={() => item.source === detail.source.name && props.onOpen(item.name)}>{shortName(item.name)}</Button> <span className="dict-note">{item.how}{item.source !== detail.source.name ? ` · ${item.source}` : ''}</span></li>)}</ul> : <p>Nothing in the graph reads this yet.</p>}
     </Section>}
     {isTableLike && detail.stats && <Section id="keys" title="Keys and indexes" open={props.isOpen('keys')} onToggle={props.toggle}>
-      {detail.keys.length ? <ul className="dict-list">{detail.keys.map((key) => <li key={key.column}><span className="mono">{key.column}</span> → <Button variant="ghost" size="small" className="dict-name mono" onClick={() => props.onOpen(key.references.split('.').slice(0, -1).join('.'))}>{shortName(key.references)}</Button> <Badge tone="good">Declared foreign key</Badge></li>)}</ul> : <p>No declared foreign keys.</p>}
-      <p className="dict-note">Primary keys and indexes are not harvested yet.</p>
+      <KeysAndIndexes detail={detail} onOpen={props.onOpen} />
     </Section>}
     {isTableLike && detail.stats && <Section id="joins" title={`Joins to other tables ${detail.joins.length}`} open={props.isOpen('joins')} onToggle={props.toggle}>
       {detail.joins.length ? <table className="dict-table"><thead><tr><th scope="col">Column</th><th scope="col">Joins to</th><th scope="col">Evidence</th><th scope="col">Review</th></tr></thead>
@@ -467,6 +467,23 @@ function ObjectView(props: { detail: Detail; base: string; isOpen: (id: string) 
     {detail.tests.length > 0 && <Section id="tests" title={`dbt tests ${detail.tests.length}`} open={props.isOpen('tests')} onToggle={props.toggle}>
       <ul className="dict-list">{detail.tests.map((test) => <li key={`${test.column}-${test.test}`}><span className="mono">{test.column ?? 'model'}</span> · {test.test}</li>)}</ul>
     </Section>}
+  </>;
+}
+
+/** Primary key, indexes (unique ones marked) and declared foreign keys, all read from the source catalog. */
+export function KeysAndIndexes(props: { detail: Pick<Detail, 'kind' | 'keys' | 'indexes' | 'source'>; onOpen: (name: string) => void }) {
+  const { detail } = props; const info = detail.indexes;
+  const other = info?.indexes.filter((index) => !index.primary) ?? [];
+  return <>
+    {detail.kind === 'sheet' ? <p>A workbook sheet has no keys or indexes.</p> : info === null || info === undefined ? <p className="dict-note">Primary key and indexes are read on this source's next profile.</p> : <>
+      <h4>Primary key</h4>
+      {info.primaryKey.length ? <p><span className="mono">{info.primaryKey.join(', ')}</span> <Badge tone="good">Primary key</Badge></p> : <p>No primary key.</p>}
+      <h4>Indexes {other.length}</h4>
+      {other.length ? <table className="dict-table"><thead><tr><th scope="col">Index</th><th scope="col">Columns</th><th scope="col">Kind</th></tr></thead>
+        <tbody>{other.map((index) => <tr key={index.name}><td className="mono">{index.name}</td><td className="mono">{index.columns.join(', ')}</td><td>{index.unique ? <Badge tone="primary">Unique</Badge> : 'Index'}</td></tr>)}</tbody></table> : <p>No other indexes.</p>}
+    </>}
+    <h4>Foreign keys {detail.keys.length}</h4>
+    {detail.keys.length ? <ul className="dict-list">{detail.keys.map((key) => <li key={key.column}><span className="mono">{key.column}</span> → <Button variant="ghost" size="small" className="dict-name mono" onClick={() => props.onOpen(key.references.split('.').slice(0, -1).join('.'))}>{shortName(key.references)}</Button> <Badge tone="good">Declared foreign key</Badge></li>)}</ul> : <p>No declared foreign keys.</p>}
   </>;
 }
 

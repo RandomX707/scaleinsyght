@@ -12,6 +12,9 @@ export interface DiscoveredObject {
   scopeMode: ScopeMode;
 }
 
+/** A table's primary key and indexes, read from the source catalog (metadata only). Unique constraints are reported
+ *  as unique indexes, which is how both PostgreSQL and SQL Server enforce them. */
+export type TableKeys = { table: string; primaryKey: string[]; indexes: Array<{ name: string; columns: string[]; unique: boolean; primary: boolean }> };
 /** createdOrder only orders objects within one source (PostgreSQL object id; SQL Server creation time in seconds). */
 export type ObjectOrigin = {qualifiedName:string;owner:string|null;createdOrder:number|null};
 /** parameters are what a caller passes (and, for a procedure, gets back through OUT parameters); returns are the columns a
@@ -113,6 +116,8 @@ export interface ReadOnlyConnector {
   /** Procedures and functions: definition text as the source returns it (null when withheld), whether the source
    *  encrypts it, and the declared parameters. Callers scrub the text before storing it (decision 53). */
   routines?():Promise<Routine[]>;
+  /** Primary keys and indexes of the source's tables, from the catalog only (Dictionary "Keys and indexes"). */
+  keysAndIndexes?():Promise<TableKeys[]>;
   /** Who owns each table, view, procedure and function, and the order they were created: used to tell which of two
    *  near-identical routines is the copy, shown as an informational badge (decision 64). */
   objectOrigins?():Promise<ObjectOrigin[]>;
@@ -129,7 +134,7 @@ export interface ReadOnlyConnector {
   close?(): Promise<void>;
 }
 
-export { PostgresConnector, createPostgresConnector, splitRoutineArguments, type PostgresStructuralReference } from './postgres.js';
+export { PostgresConnector, createPostgresConnector, groupTableKeys, splitRoutineArguments, type PostgresStructuralReference } from './postgres.js';
 export { SqlServerConnector, createSqlServerConnector, type SqlServerConnection } from './sql-server.js';
 export { encryptConnectionSecret, decryptConnectionSecret, type EncryptedConnectionSecret } from './connection-secrets.js';
 export { ExcelConnector, createExcelConnector, parseWorkbook, normaliseIdentifier, type WorkbookSheet, type WorkbookColumn } from './excel.js';
