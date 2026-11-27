@@ -76,7 +76,8 @@ test('s9_dictionary_matches_testbed_truth_for_every_connector_type_and_exports_o
   // SQL Server: landing, standard and custom objects, procedure tabs, encrypted state, SQL search, Show original.
   await expect(page.locator('.dict-card').first()).toContainText('No vendor dictionary imported');
   // Polish: separate Import and Export areas, a placeholder that fits, and the UI font for the Overview pill.
-  await expect(page.locator('.dict-card', { hasText: 'Import vendor dictionary' }).getByText('Import dictionary file')).toBeVisible();
+  // The file control's name is on its native input (aria-label), as S2 uses it.
+  await expect(page.locator('.dict-card', { hasText: 'Import vendor dictionary' }).getByLabel('Import dictionary file')).toHaveCount(1);
   await expect(page.locator('.dict-card', { has: page.locator('summary', { hasText: /^Export$/ }) })).toContainText('Export as interactive HTML');
   await expect(page.locator('.dict-card').first()).toContainText('Described tables and views');
   await expect(side(page).getByLabel('Search tables, columns or SQL code')).toHaveAttribute('placeholder', 'Search names, columns, SQL');
