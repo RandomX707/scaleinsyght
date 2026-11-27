@@ -26,7 +26,8 @@ export class SqlServerConnector implements ReadOnlyConnector {
   readonly id: string;
   readonly name: string;
   private readonly timeouts: ReturnType<typeof sourceTimeouts>;
-  private readonly pool: sql.ConnectionPool;
+  private pool: sql.ConnectionPool;
+  private readonly newPool: () => sql.ConnectionPool;
   private readonly maxRows: number;
   /** Ceiling for catalog listings (tables, columns, keys, definitions), separate from the data-read row limit. */
   private readonly maxCatalogRows: number;
@@ -42,20 +43,34 @@ export class SqlServerConnector implements ReadOnlyConnector {
     this.maxCatalogRows = input.maxCatalogRows ?? CATALOG_ROW_LIMIT;
     if (!Number.isSafeInteger(this.maxRows) || this.maxRows < 1) throw new Error('sqlserver_row_limit_invalid');
     if (!Number.isSafeInteger(this.maxCatalogRows) || this.maxCatalogRows < 1) throw new Error('sqlserver_catalog_limit_invalid');
-    this.pool = new sql.ConnectionPool({
+    this.newPool = () => new sql.ConnectionPool({
       server: input.server, port: input.port, database: input.database, user: input.username, password: input.password,
       options: { encrypt: true, trustServerCertificate: input.trustServerCertificate ?? false },
       connectionTimeout: this.timeouts.connect, requestTimeout: this.timeouts.query, pool: { max: 2, min: 0, idleTimeoutMillis: 30_000 },
     });
+    this.pool = this.newPool();
     this.id = input.id ?? 'sql-server-source';
     this.name = input.name ?? 'SQL Server source';
   }
 
   private async request() {
-    if (!this.pool.connected) {
-      await withSourceDeadline(this.pool.connect(), this.timeouts.connect, 'source_unreachable');
+    const pool = this.pool;
+    if (!pool.connected) {
+      const opening = pool.connect();
+      try {
+        await withSourceDeadline(opening, this.timeouts.connect, 'source_unreachable', () => {
+          if (this.pool !== pool) return;
+          this.pool = this.newPool();
+          // The driver cannot close during login. Dispose this pool if a delayed login still succeeds.
+          void opening.then(() => pool.close()).catch(() => undefined);
+        });
+      } catch (error) {
+        if ((error as { code?: string })?.code === 'ETIMEOUT') throw new Error('source_unreachable', { cause: error });
+        throw error;
+      }
+      if (this.pool !== pool) throw new Error('source_unreachable');
     }
-    const request = this.pool.request();
+    const request = pool.request();
     const query = request.query.bind(request);
     return {
       input(name: string, typeOrValue: unknown, ...values: unknown[]) {

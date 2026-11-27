@@ -15,7 +15,7 @@ import { OpenAIModelGateway } from '@scaleinsyght/model-gateway';
 import { authorise } from '@scaleinsyght/policy';
 import { checkStepAgent } from '@scaleinsyght/registry';
 import { answerLineageRequest } from '@scaleinsyght/graph';
-import { connectorForConnection, checkQueryScope, OutOfScopeError, queueDueNightly, runNextDiscovery } from '@scaleinsyght/profiler';
+import { connectorForConnection, checkQueryScope, OutOfScopeError, queueDueNightly, runNextDiscovery, sourceErrorCode } from '@scaleinsyght/profiler';
 import { claimDueSchedule, markScheduleSlotSkipped, markScheduleSlotStarted, persistReportSnapshot, startScheduledReportRun } from '@scaleinsyght/reports';
 
 config({path:fileURLToPath(new URL('../../../.env',import.meta.url))});
@@ -167,8 +167,8 @@ while(!stopping){
     }else{
     if(!task.ciphertext||!task.nonce||!task.authTag||!process.env.CONNECTION_SECRET_KEY)throw new Error('source_query_executor_unavailable');
     const secret=decryptConnectionSecret<Record<string,unknown>>({version:1,ciphertext:task.ciphertext.toString('base64'),nonce:task.nonce.toString('base64'),authTag:task.authTag.toString('base64')});
-    if(task.connectorType==='sql_server')connector=createSqlServerConnector({server:String(secret.host),port:Number(secret.port),database:String(secret.database),username:String(secret.username),password:String(secret.password),encrypt:true,trustServerCertificate:secret.trustServerCertificate===true,id:step.source_id,name:task.displayName||'SQL Server source',statementTimeoutMs:10_000,maxRows:1_000});
-    else{const sourceUrl=new URL('postgresql://placeholder');sourceUrl.hostname=String(secret.host);sourceUrl.port=String(secret.port);sourceUrl.username=String(secret.username);sourceUrl.password=String(secret.password);sourceUrl.pathname=`/${String(secret.database)}`;sourceUrl.searchParams.set('sslmode',String(secret.sslMode));connector=createPostgresConnector({connectionString:sourceUrl.toString(),id:step.source_id,name:task.displayName||'PostgreSQL source',statementTimeoutMs:10_000,maxRows:1_000});}
+    if(task.connectorType==='sql_server')connector=createSqlServerConnector({server:String(secret.host),port:Number(secret.port),database:String(secret.database),username:String(secret.username),password:String(secret.password),encrypt:true,trustServerCertificate:secret.trustServerCertificate===true,id:step.source_id,name:task.displayName||'SQL Server source',maxRows:1_000});
+    else{const sourceUrl=new URL('postgresql://placeholder');sourceUrl.hostname=String(secret.host);sourceUrl.port=String(secret.port);sourceUrl.username=String(secret.username);sourceUrl.password=String(secret.password);sourceUrl.pathname=`/${String(secret.database)}`;sourceUrl.searchParams.set('sslmode',String(secret.sslMode));connector=createPostgresConnector({connectionString:sourceUrl.toString(),id:step.source_id,name:task.displayName||'PostgreSQL source',maxRows:1_000});}
     }
     try{
       await connector.test();await connector.discover({mode:'profile',...(scope?{scope}:{})});
@@ -225,7 +225,8 @@ while(!stopping){
     }
    }catch(error){
     if(error instanceof OutOfScopeError){await failStep(pool,claim,{reasonCode:'object_out_of_scope',objects:error.objects});}else{
-    const reason=error instanceof Error&&error.message==='source_timeout'?'source_timeout':error instanceof Error&&error.message==='policy_revoked'?'authorization_revoked'
+    const sourceReason = sourceErrorCode(error);
+    const reason=sourceReason==='source_timeout'||sourceReason==='source_query_timeout'?'source_timeout':error instanceof Error&&error.message==='policy_revoked'?'authorization_revoked'
       :error instanceof Error&&['agent_not_found','agent_not_active','agent_capability_missing','connection_not_active'].includes(error.message)?error.message:'source_query_executor_unavailable';
     await failStep(pool,claim,{reasonCode:reason});}
    }
