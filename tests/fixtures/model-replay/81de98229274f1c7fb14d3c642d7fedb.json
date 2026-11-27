@@ -1,0 +1,714 @@
+{
+ "hash": "81de98229274f1c7fb14d3c642d7fedb",
+ "recordedAt": "2026-11-27T19:29:47.550Z",
+ "model": "gpt-6.2-sol",
+ "purpose": "plan",
+ "request": {
+  "max_completion_tokens": 1800,
+  "messages": [
+   {
+    "content": "You write typed, read-only query plans from disclosed metadata. You never see row values, and you do not need to: a category, label or date named in the question is used as a filter value on the matching column, and is bound as a query parameter. Return an empty plan only when no table or column in the metadata can express the request. Never return SQL. Respond with a single JSON object.",
+    "role": "system"
+   },
+   {
+    "content": "{\"question\":\"Plan the exact question using the catalog and the typed response schema. First fill the declaration: what the question counts or measures (subject), the dimension it is broken down by (grouping, or null for a single value), each condition, whether it asks for values from two or more sources (comparison), and whether the catalog has a table for the subject (answerable). If it is not answerable, return an empty intents array; a loosely related object is insufficient. Then plan each source step and fill its declared fields to match: subject_table, measure, measure_column, grouping_column (null unless the answer is broken down) and filter_columns. Use the source and subject from earlier turns only when resolving a follow-up. A qualifier in the question that is not a column name is usually a category value: filter the text column most likely to hold it, in the subject table or in a table reachable through a catalog join. Never refuse only because category values are not shown to you. Count records for quantities, order totals, volume or \\\"how many\\\". Sum a numeric column only for a requested amount. Use the exact display header to resolve workbook columns. For a date range use gte and upperExclusive with the next calendar boundary. Ranked groups use value sort and a limit. For join operations select a catalog join and its left table. Use null for unused fields. When the question asks where a table or column comes from, its lineage, or what depends on it or would break if it changed, set lineage to that source, table or column, and direction (upstream for where it comes from, downstream for what depends on it), declare it answerable, and leave intents empty; otherwise lineage is null.\\nQuestion: Total charge amount by department in the workbook, top 5\\nPrior turns: \",\"metadata\":{\"structural\":{\"sources\":[{\"index\":0,\"name\":\"Operations workbook\",\"type\":\"excel\",\"assets\":[{\"columns\":[{\"name\":\"amount\",\"label\":\"Amount\",\"data_type\":\"decimal\",\"sensitivity_tags\":[]},{\"name\":\"charge_id\",\"label\":\"Charge ID\",\"data_type\":\"integer\",\"sensitivity_tags\":[]},{\"name\":\"charge_type\",\"label\":\"Charge Type\",\"data_type\":\"text\",\"sensitivity_tags\":[]},{\"name\":\"charged_on\",\"label\":\"Charged On\",\"data_type\":\"timestamp\",\"sensitivity_tags\":[]},{\"name\":\"department\",\"label\":\"Department\",\"data_type\":\"text\",\"sensitivity_tags\":[]},{\"name\":\"patient_id\",\"label\":\"Patient ID\",\"data_type\":\"integer\",\"sensitivity_tags\":[]},{\"name\":\"status\",\"label\":\"Status\",\"data_type\":\"text\",\"sensitivity_tags\":[]},{\"name\":\"visit_id\",\"label\":\"Visit ID\",\"data_type\":\"integer\",\"sensitivity_tags\":[]}],\"qualified_name\":\"Charges\"},{\"columns\":[{\"name\":\"date_of_birth\",\"label\":\"Date of Birth\",\"data_type\":\"date\",\"sensitivity_tags\":[\"regulated\"]},{\"name\":\"full_name\",\"label\":\"Full Name\",\"data_type\":\"text\",\"sensitivity_tags\":[\"personal\"]},{\"name\":\"mrn\",\"label\":\"MRN\",\"data_type\":\"text\",\"sensitivity_tags\":[\"identifier\"]},{\"name\":\"patient_id\",\"label\":\"Patient ID\",\"data_type\":\"integer\",\"sensitivity_tags\":[]},{\"name\":\"phone\",\"label\":\"Phone\",\"data_type\":\"text\",\"sensitivity_tags\":[\"personal\"]}],\"qualified_name\":\"Patients\"},{\"columns\":[{\"name\":\"date_of_birth\",\"label\":\"Date of Birth\",\"data_type\":\"date\",\"sensitivity_tags\":[\"regulated\"]},{\"name\":\"full_name\",\"label\":\"Full Name\",\"data_type\":\"text\",\"sensitivity_tags\":[\"personal\"]},{\"name\":\"mrn\",\"label\":\"MRN\",\"data_type\":\"text\",\"sensitivity_tags\":[\"identifier\"]},{\"name\":\"patient_id\",\"label\":\"Patient ID\",\"data_type\":\"integer\",\"sensitivity_tags\":[]},{\"name\":\"phone_number\",\"label\":\"Phone Number\",\"data_type\":\"text\",\"sensitivity_tags\":[\"personal\"]},{\"name\":\"registered_on\",\"label\":\"Registered On\",\"data_type\":\"timestamp\",\"sensitivity_tags\":[]}],\"qualified_name\":\"Registrations\"},{\"columns\":[{\"name\":\"admitted_on\",\"label\":\"Admitted On\",\"data_type\":\"timestamp\",\"sensitivity_tags\":[]},{\"name\":\"department\",\"label\":\"Department\",\"data_type\":\"text\",\"sensitivity_tags\":[]},{\"name\":\"discharged_on\",\"label\":\"Discharged On\",\"data_type\":\"timestamp\",\"sensitivity_tags\":[]},{\"name\":\"patient_id\",\"label\":\"Patient ID\",\"data_type\":\"integer\",\"sensitivity_tags\":[]},{\"name\":\"provider_id\",\"label\":\"Provider ID\",\"data_type\":\"integer\",\"sensitivity_tags\":[]},{\"name\":\"visit_id\",\"label\":\"Visit ID\",\"data_type\":\"integer\",\"sensitivity_tags\":[]}],\"qualified_name\":\"Visits\"}]}],\"relationships\":[{\"source_index\":0,\"from_name\":\"Charges.patient_id\",\"to_name\":\"Patients.patient_id\",\"evidence_method\":\"inferred\",\"confidence_score\":\"1.000\"},{\"source_index\":0,\"from_name\":\"Charges.visit_id\",\"to_name\":\"Visits.visit_id\",\"evidence_method\":\"inferred\",\"confidence_score\":\"1.000\"},{\"source_index\":0,\"from_name\":\"Registrations.mrn\",\"to_name\":\"Patients.mrn\",\"evidence_method\":\"inferred\",\"confidence_score\":\"1.000\"},{\"source_index\":0,\"from_name\":\"Registrations.patient_id\",\"to_name\":\"Patients.patient_id\",\"evidence_method\":\"inferred\",\"confidence_score\":\"1.000\"},{\"source_index\":0,\"from_name\":\"Visits.patient_id\",\"to_name\":\"Patients.patient_id\",\"evidence_method\":\"inferred\",\"confidence_score\":\"1.000\"}]},\"descriptive\":{}},\"identifier_fingerprints\":[]}",
+    "role": "user"
+   }
+  ],
+  "model": "gpt-6.2-sol",
+  "response_format": {
+   "json_schema": {
+    "name": "typed_analytic_plan",
+    "schema": {
+     "additionalProperties": false,
+     "properties": {
+      "declaration": {
+       "additionalProperties": false,
+       "properties": {
+        "answerable": {
+         "description": "False when the catalog has no table for the subject; then intents is empty.",
+         "type": "boolean"
+        },
+        "comparison": {
+         "description": "True when the question asks for values from two or more sources.",
+         "type": "boolean"
+        },
+        "conditions": {
+         "description": "Each condition the question applies, in a few words.",
+         "items": {
+          "type": "string"
+         },
+         "type": "array"
+        },
+        "every_group": {
+         "description": "True when the question asks for a value for each member of the grouping (each department, every provider), so members with none should appear with 0.",
+         "type": "boolean"
+        },
+        "exposed_columns": {
+         "description": "Every catalog column whose values the answer would show: the column the answer is broken down by (the grouping) and any column the question asks to list per record. Fill it even when the question cannot be answered. Not columns used only in a condition, a measure or a join. Empty for a single total.",
+         "items": {
+          "enum": [
+           "Charges.amount",
+           "Charges.charge_id",
+           "Charges.charge_type",
+           "Charges.charged_on",
+           "Charges.department",
+           "Charges.patient_id",
+           "Charges.status",
+           "Charges.visit_id",
+           "Patients.date_of_birth",
+           "Patients.full_name",
+           "Patients.mrn",
+           "Patients.patient_id",
+           "Patients.phone",
+           "Registrations.date_of_birth",
+           "Registrations.full_name",
+           "Registrations.mrn",
+           "Registrations.patient_id",
+           "Registrations.phone_number",
+           "Registrations.registered_on",
+           "Visits.admitted_on",
+           "Visits.department",
+           "Visits.discharged_on",
+           "Visits.patient_id",
+           "Visits.provider_id",
+           "Visits.visit_id"
+          ],
+          "type": "string"
+         },
+         "type": "array"
+        },
+        "grouping": {
+         "anyOf": [
+          {
+           "description": "The dimension the answer is broken down by, or null for a single value per source.",
+           "type": "string"
+          },
+          {
+           "type": "null"
+          }
+         ]
+        },
+        "read_columns": {
+         "description": "Every catalog column the answer reads: the exposed columns plus each column measured, counted per entity, used in a condition or used as a join key. Fill it even when the question cannot be answered, with the columns the question refers to. Empty only when no catalog column relates to the question.",
+         "items": {
+          "enum": [
+           "Charges.amount",
+           "Charges.charge_id",
+           "Charges.charge_type",
+           "Charges.charged_on",
+           "Charges.department",
+           "Charges.patient_id",
+           "Charges.status",
+           "Charges.visit_id",
+           "Patients.date_of_birth",
+           "Patients.full_name",
+           "Patients.mrn",
+           "Patients.patient_id",
+           "Patients.phone",
+           "Registrations.date_of_birth",
+           "Registrations.full_name",
+           "Registrations.mrn",
+           "Registrations.patient_id",
+           "Registrations.phone_number",
+           "Registrations.registered_on",
+           "Visits.admitted_on",
+           "Visits.department",
+           "Visits.discharged_on",
+           "Visits.patient_id",
+           "Visits.provider_id",
+           "Visits.visit_id"
+          ],
+          "type": "string"
+         },
+         "type": "array"
+        },
+        "subject": {
+         "description": "What the question counts or measures, in a few words.",
+         "type": "string"
+        }
+       },
+       "required": [
+        "subject",
+        "grouping",
+        "conditions",
+        "comparison",
+        "every_group",
+        "answerable",
+        "exposed_columns",
+        "read_columns"
+       ],
+       "type": "object"
+      },
+      "intents": {
+       "items": {
+        "anyOf": [
+         {
+          "additionalProperties": false,
+          "properties": {
+           "aggregateColumn": {
+            "anyOf": [
+             {
+              "description": "Charges.amount is displayed as Amount; Charges.charge_id is displayed as Charge ID; Charges.charge_type is displayed as Charge Type; Charges.charged_on is displayed as Charged On; Charges.department is displayed as Department; Charges.patient_id is displayed as Patient ID; Charges.status is displayed as Status; Charges.visit_id is displayed as Visit ID; Patients.date_of_birth is displayed as Date of Birth; Patients.full_name is displayed as Full Name; Patients.mrn is displayed as MRN; Patients.patient_id is displayed as Patient ID; Patients.phone is displayed as Phone; Registrations.date_of_birth is displayed as Date of Birth; Registrations.full_name is displayed as Full Name; Registrations.mrn is displayed as MRN; Registrations.patient_id is displayed as Patient ID; Registrations.phone_number is displayed as Phone Number; Registrations.registered_on is displayed as Registered On; Visits.admitted_on is displayed as Admitted On; Visits.department is displayed as Department; Visits.discharged_on is displayed as Discharged On; Visits.patient_id is displayed as Patient ID; Visits.provider_id is displayed as Provider ID; Visits.visit_id is displayed as Visit ID",
+              "enum": [
+               "Charges.amount",
+               "Charges.charge_id",
+               "Charges.charge_type",
+               "Charges.charged_on",
+               "Charges.department",
+               "Charges.patient_id",
+               "Charges.status",
+               "Charges.visit_id",
+               "Patients.date_of_birth",
+               "Patients.full_name",
+               "Patients.mrn",
+               "Patients.patient_id",
+               "Patients.phone",
+               "Registrations.date_of_birth",
+               "Registrations.full_name",
+               "Registrations.mrn",
+               "Registrations.patient_id",
+               "Registrations.phone_number",
+               "Registrations.registered_on",
+               "Visits.admitted_on",
+               "Visits.department",
+               "Visits.discharged_on",
+               "Visits.patient_id",
+               "Visits.provider_id",
+               "Visits.visit_id"
+              ],
+              "type": "string"
+             },
+             {
+              "type": "null"
+             }
+            ]
+           },
+           "declared": {
+            "additionalProperties": false,
+            "description": "What this step must compute, declared before the executable fields.",
+            "properties": {
+             "filter_columns": {
+              "items": {
+               "description": "Charges.amount is displayed as Amount; Charges.charge_id is displayed as Charge ID; Charges.charge_type is displayed as Charge Type; Charges.charged_on is displayed as Charged On; Charges.department is displayed as Department; Charges.patient_id is displayed as Patient ID; Charges.status is displayed as Status; Charges.visit_id is displayed as Visit ID; Patients.date_of_birth is displayed as Date of Birth; Patients.full_name is displayed as Full Name; Patients.mrn is displayed as MRN; Patients.patient_id is displayed as Patient ID; Patients.phone is displayed as Phone; Registrations.date_of_birth is displayed as Date of Birth; Registrations.full_name is displayed as Full Name; Registrations.mrn is displayed as MRN; Registrations.patient_id is displayed as Patient ID; Registrations.phone_number is displayed as Phone Number; Registrations.registered_on is displayed as Registered On; Visits.admitted_on is displayed as Admitted On; Visits.department is displayed as Department; Visits.discharged_on is displayed as Discharged On; Visits.patient_id is displayed as Patient ID; Visits.provider_id is displayed as Provider ID; Visits.visit_id is displayed as Visit ID",
+               "enum": [
+                "Charges.amount",
+                "Charges.charge_id",
+                "Charges.charge_type",
+                "Charges.charged_on",
+                "Charges.department",
+                "Charges.patient_id",
+                "Charges.status",
+                "Charges.visit_id",
+                "Patients.date_of_birth",
+                "Patients.full_name",
+                "Patients.mrn",
+                "Patients.patient_id",
+                "Patients.phone",
+                "Registrations.date_of_birth",
+                "Registrations.full_name",
+                "Registrations.mrn",
+                "Registrations.patient_id",
+                "Registrations.phone_number",
+                "Registrations.registered_on",
+                "Visits.admitted_on",
+                "Visits.department",
+                "Visits.discharged_on",
+                "Visits.patient_id",
+                "Visits.provider_id",
+                "Visits.visit_id"
+               ],
+               "type": "string"
+              },
+              "type": "array"
+             },
+             "grouping_column": {
+              "anyOf": [
+               {
+                "enum": [
+                 "Charges.amount",
+                 "Charges.charge_id",
+                 "Charges.charge_type",
+                 "Charges.charged_on",
+                 "Charges.department",
+                 "Charges.patient_id",
+                 "Charges.status",
+                 "Charges.visit_id",
+                 "Patients.patient_id",
+                 "Registrations.patient_id",
+                 "Registrations.registered_on",
+                 "Visits.admitted_on",
+                 "Visits.department",
+                 "Visits.discharged_on",
+                 "Visits.patient_id",
+                 "Visits.provider_id",
+                 "Visits.visit_id"
+                ],
+                "type": "string"
+               },
+               {
+                "type": "null"
+               }
+              ]
+             },
+             "measure": {
+              "description": "count records, sum a numeric column, or average the number of records per entity.",
+              "enum": [
+               "count",
+               "sum",
+               "average_count_per_entity"
+              ],
+              "type": "string"
+             },
+             "measure_column": {
+              "anyOf": [
+               {
+                "description": "Charges.amount is displayed as Amount; Charges.charge_id is displayed as Charge ID; Charges.charge_type is displayed as Charge Type; Charges.charged_on is displayed as Charged On; Charges.department is displayed as Department; Charges.patient_id is displayed as Patient ID; Charges.status is displayed as Status; Charges.visit_id is displayed as Visit ID; Patients.date_of_birth is displayed as Date of Birth; Patients.full_name is displayed as Full Name; Patients.mrn is displayed as MRN; Patients.patient_id is displayed as Patient ID; Patients.phone is displayed as Phone; Registrations.date_of_birth is displayed as Date of Birth; Registrations.full_name is displayed as Full Name; Registrations.mrn is displayed as MRN; Registrations.patient_id is displayed as Patient ID; Registrations.phone_number is displayed as Phone Number; Registrations.registered_on is displayed as Registered On; Visits.admitted_on is displayed as Admitted On; Visits.department is displayed as Department; Visits.discharged_on is displayed as Discharged On; Visits.patient_id is displayed as Patient ID; Visits.provider_id is displayed as Provider ID; Visits.visit_id is displayed as Visit ID",
+                "enum": [
+                 "Charges.amount",
+                 "Charges.charge_id",
+                 "Charges.charge_type",
+                 "Charges.charged_on",
+                 "Charges.department",
+                 "Charges.patient_id",
+                 "Charges.status",
+                 "Charges.visit_id",
+                 "Patients.date_of_birth",
+                 "Patients.full_name",
+                 "Patients.mrn",
+                 "Patients.patient_id",
+                 "Patients.phone",
+                 "Registrations.date_of_birth",
+                 "Registrations.full_name",
+                 "Registrations.mrn",
+                 "Registrations.patient_id",
+                 "Registrations.phone_number",
+                 "Registrations.registered_on",
+                 "Visits.admitted_on",
+                 "Visits.department",
+                 "Visits.discharged_on",
+                 "Visits.patient_id",
+                 "Visits.provider_id",
+                 "Visits.visit_id"
+                ],
+                "type": "string"
+               },
+               {
+                "type": "null"
+               }
+              ]
+             },
+             "subject_table": {
+              "description": "The table whose records are counted, summed or averaged.",
+              "enum": [
+               "Charges",
+               "Patients",
+               "Registrations",
+               "Visits"
+              ],
+              "type": "string"
+             }
+            },
+            "required": [
+             "subject_table",
+             "measure",
+             "measure_column",
+             "grouping_column",
+             "filter_columns"
+            ],
+            "type": "object"
+           },
+           "entityColumn": {
+            "anyOf": [
+             {
+              "description": "Charges.amount is displayed as Amount; Charges.charge_id is displayed as Charge ID; Charges.charge_type is displayed as Charge Type; Charges.charged_on is displayed as Charged On; Charges.department is displayed as Department; Charges.patient_id is displayed as Patient ID; Charges.status is displayed as Status; Charges.visit_id is displayed as Visit ID; Patients.date_of_birth is displayed as Date of Birth; Patients.full_name is displayed as Full Name; Patients.mrn is displayed as MRN; Patients.patient_id is displayed as Patient ID; Patients.phone is displayed as Phone; Registrations.date_of_birth is displayed as Date of Birth; Registrations.full_name is displayed as Full Name; Registrations.mrn is displayed as MRN; Registrations.patient_id is displayed as Patient ID; Registrations.phone_number is displayed as Phone Number; Registrations.registered_on is displayed as Registered On; Visits.admitted_on is displayed as Admitted On; Visits.department is displayed as Department; Visits.discharged_on is displayed as Discharged On; Visits.patient_id is displayed as Patient ID; Visits.provider_id is displayed as Provider ID; Visits.visit_id is displayed as Visit ID",
+              "enum": [
+               "Charges.amount",
+               "Charges.charge_id",
+               "Charges.charge_type",
+               "Charges.charged_on",
+               "Charges.department",
+               "Charges.patient_id",
+               "Charges.status",
+               "Charges.visit_id",
+               "Patients.date_of_birth",
+               "Patients.full_name",
+               "Patients.mrn",
+               "Patients.patient_id",
+               "Patients.phone",
+               "Registrations.date_of_birth",
+               "Registrations.full_name",
+               "Registrations.mrn",
+               "Registrations.patient_id",
+               "Registrations.phone_number",
+               "Registrations.registered_on",
+               "Visits.admitted_on",
+               "Visits.department",
+               "Visits.discharged_on",
+               "Visits.patient_id",
+               "Visits.provider_id",
+               "Visits.visit_id"
+              ],
+              "type": "string"
+             },
+             {
+              "type": "null"
+             }
+            ]
+           },
+           "filters": {
+            "items": {
+             "additionalProperties": false,
+             "properties": {
+              "column": {
+               "description": "Charges.amount is displayed as Amount; Charges.charge_id is displayed as Charge ID; Charges.charge_type is displayed as Charge Type; Charges.charged_on is displayed as Charged On; Charges.department is displayed as Department; Charges.patient_id is displayed as Patient ID; Charges.status is displayed as Status; Charges.visit_id is displayed as Visit ID; Patients.date_of_birth is displayed as Date of Birth; Patients.full_name is displayed as Full Name; Patients.mrn is displayed as MRN; Patients.patient_id is displayed as Patient ID; Patients.phone is displayed as Phone; Registrations.date_of_birth is displayed as Date of Birth; Registrations.full_name is displayed as Full Name; Registrations.mrn is displayed as MRN; Registrations.patient_id is displayed as Patient ID; Registrations.phone_number is displayed as Phone Number; Registrations.registered_on is displayed as Registered On; Visits.admitted_on is displayed as Admitted On; Visits.department is displayed as Department; Visits.discharged_on is displayed as Discharged On; Visits.patient_id is displayed as Patient ID; Visits.provider_id is displayed as Provider ID; Visits.visit_id is displayed as Visit ID",
+               "enum": [
+                "Charges.amount",
+                "Charges.charge_id",
+                "Charges.charge_type",
+                "Charges.charged_on",
+                "Charges.department",
+                "Charges.patient_id",
+                "Charges.status",
+                "Charges.visit_id",
+                "Patients.date_of_birth",
+                "Patients.full_name",
+                "Patients.mrn",
+                "Patients.patient_id",
+                "Patients.phone",
+                "Registrations.date_of_birth",
+                "Registrations.full_name",
+                "Registrations.mrn",
+                "Registrations.patient_id",
+                "Registrations.phone_number",
+                "Registrations.registered_on",
+                "Visits.admitted_on",
+                "Visits.department",
+                "Visits.discharged_on",
+                "Visits.patient_id",
+                "Visits.provider_id",
+                "Visits.visit_id"
+               ],
+               "type": "string"
+              },
+              "operator": {
+               "enum": [
+                "eq",
+                "neq",
+                "gt",
+                "gte",
+                "lt",
+                "lte",
+                "is_not_null"
+               ],
+               "type": "string"
+              },
+              "upperExclusive": {
+               "anyOf": [
+                {
+                 "description": "Exclusive ISO date endpoint with gte; otherwise null",
+                 "type": "string"
+                },
+                {
+                 "type": "null"
+                }
+               ]
+              },
+              "value": {
+               "anyOf": [
+                {
+                 "anyOf": [
+                  {
+                   "type": "boolean"
+                  },
+                  {
+                   "type": "number"
+                  },
+                  {
+                   "type": "string"
+                  }
+                 ]
+                },
+                {
+                 "type": "null"
+                }
+               ]
+              }
+             },
+             "required": [
+              "column",
+              "operator",
+              "value",
+              "upperExclusive"
+             ],
+             "type": "object"
+            },
+            "type": "array"
+           },
+           "groupBy": {
+            "anyOf": [
+             {
+              "enum": [
+               "Charges.amount",
+               "Charges.charge_id",
+               "Charges.charge_type",
+               "Charges.charged_on",
+               "Charges.department",
+               "Charges.patient_id",
+               "Charges.status",
+               "Charges.visit_id",
+               "Patients.patient_id",
+               "Registrations.patient_id",
+               "Registrations.registered_on",
+               "Visits.admitted_on",
+               "Visits.department",
+               "Visits.discharged_on",
+               "Visits.patient_id",
+               "Visits.provider_id",
+               "Visits.visit_id"
+              ],
+              "type": "string"
+             },
+             {
+              "type": "null"
+             }
+            ]
+           },
+           "groupKey": {
+            "anyOf": [
+             {
+              "enum": [
+               "Charges.amount",
+               "Charges.charge_id",
+               "Charges.charge_type",
+               "Charges.charged_on",
+               "Charges.department",
+               "Charges.patient_id",
+               "Charges.status",
+               "Charges.visit_id",
+               "Patients.patient_id",
+               "Registrations.patient_id",
+               "Registrations.registered_on",
+               "Visits.admitted_on",
+               "Visits.department",
+               "Visits.discharged_on",
+               "Visits.patient_id",
+               "Visits.provider_id",
+               "Visits.visit_id"
+              ],
+              "type": "string"
+             },
+             {
+              "type": "null"
+             }
+            ]
+           },
+           "join": {
+            "anyOf": [
+             {
+              "enum": [
+               "Charges.patient_id = Patients.patient_id",
+               "Charges.visit_id = Visits.visit_id",
+               "Registrations.mrn = Patients.mrn",
+               "Registrations.patient_id = Patients.patient_id",
+               "Visits.patient_id = Patients.patient_id"
+              ],
+              "type": "string"
+             },
+             {
+              "type": "null"
+             }
+            ]
+           },
+           "kind": {
+            "enum": [
+             "count",
+             "filtered_count",
+             "group_by",
+             "join_aggregate",
+             "grouped_join",
+             "average_count_by",
+             "compare_aggregates"
+            ],
+            "type": "string"
+           },
+           "limit": {
+            "anyOf": [
+             {
+              "type": "integer"
+             },
+             {
+              "type": "null"
+             }
+            ]
+           },
+           "operation": {
+            "enum": [
+             "count",
+             "sum"
+            ],
+            "type": "string"
+           },
+           "order": {
+            "anyOf": [
+             {
+              "enum": [
+               "asc",
+               "desc"
+              ],
+              "type": "string"
+             },
+             {
+              "type": "null"
+             }
+            ]
+           },
+           "source_index": {
+            "enum": [
+             0
+            ],
+            "type": "integer"
+           },
+           "table": {
+            "enum": [
+             "Charges",
+             "Patients",
+             "Registrations",
+             "Visits"
+            ],
+            "type": "string"
+           }
+          },
+          "required": [
+           "source_index",
+           "declared",
+           "kind",
+           "table",
+           "join",
+           "groupBy",
+           "groupKey",
+           "entityColumn",
+           "aggregateColumn",
+           "operation",
+           "order",
+           "limit",
+           "filters"
+          ],
+          "type": "object"
+         }
+        ]
+       },
+       "type": "array"
+      },
+      "lineage": {
+       "anyOf": [
+        {
+         "anyOf": [
+          {
+           "additionalProperties": false,
+           "properties": {
+            "asset": {
+             "description": "The table, or table.column, the question asks about.",
+             "enum": [
+              "Charges",
+              "Charges.amount",
+              "Charges.charge_id",
+              "Charges.charge_type",
+              "Charges.charged_on",
+              "Charges.department",
+              "Charges.patient_id",
+              "Charges.status",
+              "Charges.visit_id",
+              "Patients",
+              "Patients.date_of_birth",
+              "Patients.full_name",
+              "Patients.mrn",
+              "Patients.patient_id",
+              "Patients.phone",
+              "Registrations",
+              "Registrations.date_of_birth",
+              "Registrations.full_name",
+              "Registrations.mrn",
+              "Registrations.patient_id",
+              "Registrations.phone_number",
+              "Registrations.registered_on",
+              "Visits",
+              "Visits.admitted_on",
+              "Visits.department",
+              "Visits.discharged_on",
+              "Visits.patient_id",
+              "Visits.provider_id",
+              "Visits.visit_id"
+             ],
+             "type": "string"
+            },
+            "direction": {
+             "description": "upstream: where its data comes from. downstream: what reads it or would break if it changed.",
+             "enum": [
+              "upstream",
+              "downstream"
+             ],
+             "type": "string"
+            },
+            "source_index": {
+             "enum": [
+              0
+             ],
+             "type": "integer"
+            }
+           },
+           "required": [
+            "source_index",
+            "asset",
+            "direction"
+           ],
+           "type": "object"
+          }
+         ]
+        },
+        {
+         "type": "null"
+        }
+       ]
+      },
+      "privacy_refusal": {
+       "anyOf": [
+        {
+         "description": "Sensitive column the question asks to expose or group by. Set answerable false and leave intents empty. Otherwise null.",
+         "enum": [
+          "Patients.date_of_birth",
+          "Patients.full_name",
+          "Patients.mrn",
+          "Patients.phone",
+          "Registrations.date_of_birth",
+          "Registrations.full_name",
+          "Registrations.mrn",
+          "Registrations.phone_number"
+         ],
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ]
+      }
+     },
+     "required": [
+      "privacy_refusal",
+      "lineage",
+      "declaration",
+      "intents"
+     ],
+     "type": "object"
+    },
+    "strict": true
+   },
+   "type": "json_schema"
+  }
+ },
+ "response": {
+  "content": "{\n  \"privacy_refusal\": null,\n  \"lineage\": null,\n  \"declaration\": {\n    \"subject\": \"Total charge amount\",\n    \"grouping\": \"Department\",\n    \"conditions\": [\"Top 5 departments by total charge amount\"],\n    \"comparison\": false,\n    \"every_group\": false,\n    \"answerable\": true,\n    \"exposed_columns\": [\"Charges.department\"],\n    \"read_columns\": [\"Charges.department\", \"Charges.amount\"]\n  },\n  \"intents\": [\n    {\n      \"source_index\": 0,\n      \"declared\": {\n        \"subject_table\": \"Charges\",\n        \"measure\": \"sum\",\n        \"measure_column\": \"Charges.amount\",\n        \"grouping_column\": \"Charges.department\",\n        \"filter_columns\": []\n      },\n      \"kind\": \"group_by\",\n      \"table\": \"Charges\",\n      \"join\": null,\n      \"groupBy\": \"Charges.department\",\n      \"groupKey\": null,\n      \"entityColumn\": null,\n      \"aggregateColumn\": \"Charges.amount\",\n      \"operation\": \"sum\",\n      \"order\": \"desc\",\n      \"limit\": 5,\n      \"filters\": []\n    }\n  ]\n}",
+  "promptTokens": 4643,
+  "completionTokens": 255
+ }
+}

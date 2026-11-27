@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Badge, Button, FileInput, Input, Modal, PillTabs, SegmentedControl, Select, Tabs, Textarea } from '@scaleinsyght/ui';
-import './dictionary.css';
+// One stylesheet for the page and the offline HTML export (item 5).
+import '@scaleinsyght/ui/dictionary.css';
+import type { Navigate } from './back.js';
 
 /**
  * The Dictionary (docs/phases/dictionary-rebuild.md). Lazy: the object list is paged and searched on the server and an
@@ -15,8 +17,15 @@ type Summary = {
   counts: { standard: number; custom: number; tables: number; tablesNotInDictionary: number | null; views: number; procedures: number; functions: number; packages: number; worksheets: number; calculatedFields: number; dbtTests: number | null };
   coverage: { tables: { documented: number; drafted: number; total: number }; columns: { documented: number; total: number } };
   drafted: number;
+  descriptions?: DescriptionStates;
   newerThanDictionary: { count: number; names: string[] } | null;
 };
+type DescriptionStates = { drafted: number; approved: number; edited: number; imported: number };
+/** "271 drafted, 1 approved": every description state of what is shown, so the numbers add up. */
+export function descriptionLine(states: DescriptionStates): string {
+  return ([[states.drafted, 'drafted'], [states.approved, 'approved'], [states.edited, 'edited'], [states.imported, 'from a dictionary']] as Array<[number, string]>)
+    .filter(([count]) => count > 0).map(([count, label]) => `${count.toLocaleString('en-US')} ${label}`).join(', ');
+}
 type ListItem = { name: string; kind: string; columns: number | null; matchedColumns?: number; copyOf?: string; copySimilarity?: number };
 type Group = { key: string; label: string; total: number; items: ListItem[]; nextOffset: number | null };
 /** Decision 64: Standard is base tables (and sheets, dbt sources, BI data sources); Custom is everything built over them. */
@@ -24,7 +33,7 @@ type Tab = 'standard' | 'custom';
 const TAB_LABEL: Record<Tab, string> = { standard: 'Standard', custom: 'Custom' };
 /** Information only: copy detection never changes the tab. */
 const copyLabel = (copyOf: string, similarity?: number) => `Copy of ${objectTitle(copyOf)}${similarity ? ` · ${Math.round(similarity * 100)}% similar` : ''}`;
-type ObjectList = { tab: Tab; hasVendorDictionary: boolean; counts: { standard: number; custom: number }; drafted: number; sqlCoverage: { routines: number; captured: number; encrypted: number } | null; groups: Group[]; sqlHits: Array<{ name: string; kind: string; matches: number; lines: Array<{ line: number; text: string }> }> };
+type ObjectList = { tab: Tab; hasVendorDictionary: boolean; counts: { standard: number; custom: number }; drafted: number; descriptions?: DescriptionStates; sqlCoverage: { routines: number; captured: number; encrypted: number } | null; groups: Group[]; sqlHits: Array<{ name: string; kind: string; matches: number; lines: Array<{ line: number; text: string }> }> };
 type Column = { statisticsEstimated?: boolean; name: string; label: string | null; dataType: string | null; nullable: boolean | null; tags: string[]; inferredTags?: string[]; key: boolean; statsWithheld: boolean; withheldReason?: string; nullRate: number | null; distinctCount: number | null; description: string | null; usedBy: number };
 type Detail = {
   source: { connectionId: string; name: string; type: string };
@@ -100,7 +109,7 @@ function Kv(props: { rows: Array<[string, ReactNode]> }) {
   return <dl className="dict-kv">{props.rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>;
 }
 
-export function DictionaryPage(props: { connectionId: string; navigate: (path: string) => void }) {
+export function DictionaryPage(props: { connectionId: string; navigate: Navigate }) {
   const [sources, setSources] = useState<Source[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
   // The first view is the one the API picks: Standard, unless a source has only Custom objects.
@@ -216,9 +225,9 @@ export function DictionaryPage(props: { connectionId: string; navigate: (path: s
         <SegmentedControl label="Standard or custom" selected={shownTab ?? 'standard'} onSelect={(id) => setTab(id as Tab)}
           items={(['standard', 'custom'] as Tab[]).map((item) => ({ id: item, label: <>{TAB_LABEL[item]} <span className="dict-seg-count">{number(list?.counts[item] ?? 0)}</span></> }))} />
         <Input type="search" aria-label="Search tables, columns or SQL code" placeholder="Search names, columns, SQL" value={query} onChange={(event) => setQuery(event.target.value)} />
-        {list && list.drafted > 0 && shownTab && <div className="dict-approve-all">
-          <span>{number(list.drafted)} drafted {list.drafted === 1 ? 'description' : 'descriptions'} {debounced ? 'match this search' : `on ${TAB_LABEL[shownTab]}`}</span>
-          <Button size="small" onClick={() => setApproving({ count: list.drafted, scope: debounced ? `matching “${debounced}” on ${TAB_LABEL[shownTab]}` : `on ${TAB_LABEL[shownTab]}`, body: { tab: shownTab, ...(debounced ? { q: debounced } : {}) } })}>Approve all</Button>
+        {list && shownTab && list.descriptions && descriptionLine(list.descriptions) && <div className="dict-approve-all">
+          <span>Descriptions {debounced ? 'matching this search' : `on ${TAB_LABEL[shownTab]}`}: {descriptionLine(list.descriptions)}</span>
+          {list.drafted > 0 && <Button size="small" onClick={() => setApproving({ count: list.drafted, scope: debounced ? `matching “${debounced}” on ${TAB_LABEL[shownTab]}` : `on ${TAB_LABEL[shownTab]}`, body: { tab: shownTab, ...(debounced ? { q: debounced } : {}) } })}>Approve all</Button>}
         </div>}
         {list?.sqlCoverage && !debounced && <p className="dict-note">SQL captured for {number(list.sqlCoverage.captured)} of {number(list.sqlCoverage.routines)} procedures and functions{list.sqlCoverage.encrypted ? ` · ${number(list.sqlCoverage.encrypted)} encrypted` : ''}</p>}
         {!list && <p role="status" className="dict-note">Loading objects…</p>}
@@ -282,7 +291,7 @@ function Landing(props: { summary: Summary; isOpen: (id: string) => boolean; tog
       {imported && summary.newerThanDictionary && summary.newerThanDictionary.count > 0 && <p>{number(summary.newerThanDictionary.count)} {summary.newerThanDictionary.count === 1 ? 'table was' : 'tables were'} first seen after this dictionary was imported, so {summary.newerThanDictionary.count === 1 ? 'it has' : 'they have'} no entry in it yet: <span className="mono">{summary.newerThanDictionary.names.slice(0, 5).map(shortName).join(', ')}{summary.newerThanDictionary.count > 5 ? '…' : ''}</span></p>}
       {!imported && !['excel', 'dbt', 'tableau'].includes(type) && <p className="dict-note">No vendor dictionary imported. Descriptions are drafted by Scale Insyght from names, keys and parsed SQL and used straight away, marked Drafted. Approving them is optional.</p>}
       <p className="dict-note">Standard objects are the source’s tables. Custom objects are what is built over them: views, materialized views, procedures, functions and packages.</p>
-      {summary.drafted > 0 && <div className="dict-approve-all"><span>{number(summary.drafted)} drafted {summary.drafted === 1 ? 'description' : 'descriptions'} in this source</span><Button size="small" onClick={props.onApproveAll}>Approve all</Button></div>}
+      {summary.descriptions && descriptionLine(summary.descriptions) && <div className="dict-approve-all"><span>Descriptions in this source: {descriptionLine(summary.descriptions)}</span>{summary.drafted > 0 && <Button size="small" onClick={props.onApproveAll}>Approve all</Button>}</div>}
       {type === 'dbt' && summary.counts.tables === 0 && <p className="dict-note">This dbt project was imported before the Dictionary recorded its models and sources. Import its artifacts again from Connectors to list them here.</p>}
     </Section>
     {!['excel', 'dbt', 'tableau'].includes(type) && <Section id="dict-import" title="Import vendor dictionary" open={props.isOpen('dict-import')} onToggle={props.toggle}>
@@ -302,7 +311,7 @@ function Landing(props: { summary: Summary; isOpen: (id: string) => boolean; tog
   </>;
 }
 
-function ObjectView(props: { detail: Detail; base: string; isOpen: (id: string) => boolean; toggle: (id: string, open: boolean) => void; navigate: (path: string) => void; onOpen: (name: string) => void; onChanged: () => void; setMessage: (text: string) => void }) {
+function ObjectView(props: { detail: Detail; base: string; isOpen: (id: string) => boolean; toggle: (id: string, open: boolean) => void; navigate: Navigate; onOpen: (name: string) => void; onChanged: () => void; setMessage: (text: string) => void }) {
   const { detail } = props; const definition = detail.definition;
   const [hidden, setHidden] = useState(false); const [editing, setEditing] = useState(false); const [draft, setDraft] = useState(detail.description?.text ?? '');
   const [showAll, setShowAll] = useState(false); const [defTab, setDefTab] = useState('overview');
@@ -331,6 +340,8 @@ function ObjectView(props: { detail: Detail; base: string; isOpen: (id: string) 
   const reviewChip = origin === 'drafted' ? <Badge tone="muted">Drafted</Badge> : origin === 'approved' ? <Badge tone="good">Approved{detail.description?.by ? ` by ${detail.description.by}` : ''}</Badge>
     : origin === 'edited' ? <Badge tone="good">Edited{detail.description?.by ? ` by ${detail.description.by}` : ''}</Badge> : origin === 'dbt' ? <Badge tone="muted">From the dbt project</Badge> : origin === 'imported' ? <Badge tone="muted">From the imported dictionary</Badge> : null;
   const isTableLike = !definition || ['view', 'materialized_view'].includes(definition.kind);
+  // Jumps to other pages keep this object as the origin, so they show "Back to Dictionary · <object>".
+  const back = { label: `Dictionary · ${objectTitle(detail.name)}`, url: `/dictionary?connection=${encodeURIComponent(detail.source.connectionId)}&object=${encodeURIComponent(detail.name)}` };
   const stats: Array<[string, string]> = definition && !['view', 'materialized_view', 'calculated_field'].includes(definition.kind)
     ? [[definition.encrypted ? 'Unknown' : number(definition.reads.length), definition.reads.length === 1 ? 'table it reads' : 'tables it reads'], [definition.encrypted ? 'Unknown' : number(definition.writes.length), definition.writes.length === 1 ? 'table it writes' : 'tables it writes'], [number(definition.calledBy.length), 'called by'], [number(definition.parameters.length), definition.parameters.length === 1 ? 'parameter' : 'parameters']]
     : detail.stats && !['calculated_field', 'worksheet'].includes(detail.kind) ? [[detail.stats.rows === null ? '—' : `${detail.stats.rowsEstimated ? '≈ ' : ''}${number(detail.stats.rows)}`, detail.stats.rowsEstimated ? 'rows (estimated)' : 'rows'], [detail.stats.lastProfiled ? new Date(detail.stats.lastProfiled).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—', 'last profiled'],
@@ -361,9 +372,9 @@ function ObjectView(props: { detail: Detail; base: string; isOpen: (id: string) 
         {stats.length > 0 && <div className="dict-stats">{stats.map(([value, label]) => <div key={label}><strong>{value}</strong><span>{label}</span></div>)}</div>}
         <div className="dict-header-actions">
           <div className="dict-actions">
-            <Button size="small" onClick={() => props.navigate('/lineage')}>Open in Lineage</Button>
-            {isTableLike && detail.stats && !['dbt', 'tableau'].includes(detail.source.type) && <Button size="small" onClick={() => props.navigate(`/er?connection=${detail.source.connectionId}&focus=${encodeURIComponent(detail.name)}`)}>Show in ER diagram</Button>}
-            <Button size="small" onClick={() => props.navigate(`/?ask=${encodeURIComponent(`What is ${shortName(detail.name)} and how is it used?`)}`)}>Ask about this</Button>
+            <Button size="small" onClick={() => props.navigate('/lineage', { back })}>Open in Lineage</Button>
+            {isTableLike && detail.stats && !['dbt', 'tableau'].includes(detail.source.type) && <Button size="small" onClick={() => props.navigate(`/er?connection=${detail.source.connectionId}&focus=${encodeURIComponent(detail.name)}`, { back })}>Show in ER diagram</Button>}
+            <Button size="small" onClick={() => props.navigate(`/?ask=${encodeURIComponent(`What is ${shortName(detail.name)} and how is it used?`)}`, { back })}>Ask about this</Button>
           </div>
           {isTableLike && detail.columns.length > 0 && <div className="dict-actions dict-export"><span>Export</span><Button size="small" onClick={() => void exportObject('markdown')}>Markdown</Button><Button size="small" onClick={() => void exportObject('docx')}>Word</Button><Button size="small" onClick={() => void exportObject('copy')}>Copy</Button></div>}
         </div>
@@ -434,7 +445,7 @@ function ObjectView(props: { detail: Detail; base: string; isOpen: (id: string) 
           <td>{column.statsWithheld ? <span title={column.withheldReason}>Withheld</span> : column.nullRate === null ? '—' : <>{estimate(column)}{`${(column.nullRate * 100).toLocaleString('en-US', { maximumFractionDigits: column.nullRate < 0.01 && column.nullRate > 0 ? 2 : 1 })}%`}</>}</td>
           <td>{column.statsWithheld ? <span title={column.withheldReason}>Withheld</span> : column.distinctCount === null ? '—' : <>{estimate(column)}{number(column.distinctCount)}</>}</td>
           <td>{column.usedBy ? `${number(column.usedBy)}` : '—'}</td>
-          <td className="dict-cell-actions">{column.tags.map((tag) => <Badge key={tag} tone="bad">{tag.charAt(0).toUpperCase() + tag.slice(1).replaceAll('_', ' ')}{column.inferredTags?.includes(tag) ? ' · inferred' : ''}</Badge>)}<Button size="small" onClick={() => props.navigate('/lineage/columns')}>Lineage</Button></td>
+          <td className="dict-cell-actions">{column.tags.map((tag) => <Badge key={tag} tone="bad">{tag.charAt(0).toUpperCase() + tag.slice(1).replaceAll('_', ' ')}{column.inferredTags?.includes(tag) ? ' · inferred' : ''}</Badge>)}<Button size="small" onClick={() => props.navigate('/lineage/columns', { back })}>Lineage</Button></td>
         </tr>)}</tbody></table> : <p>No columns recorded.</p>}
       {detail.columns.some((column) => column.statisticsEstimated) && <p className="dict-note">Figures marked ≈ are estimates: this table is large, so null rates come from a sample of its rows and distinct counts from the database’s own statistics.</p>}
       {detail.columns.some((column) => column.statsWithheld) && <p className="dict-note">Withheld: tagged columns are never sampled, so their statistics are not collected.</p>}
