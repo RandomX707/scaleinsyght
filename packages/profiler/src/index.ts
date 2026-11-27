@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import { EncryptedArtifactStore, type StoredArtifact } from '@scaleinsyght/artifacts';
-import { objectScope, type ControlsPolicy, type ConnectorScope, type DiscoveryResult, type ObjectProfile, type ReadOnlyConnector, type ScopeMode } from '@scaleinsyght/connectors';
+import { objectScope, type ControlsPolicy, type ConnectorScope, type DiscoveryResult, type ObjectProfile, type ReadOnlyConnector, type ScopeMode , type TableKeys } from '@scaleinsyght/connectors';
 import { withTenant } from '@scaleinsyght/db';
 import { queueNewObjectReview } from './controls.js';
 import { runIdAgent } from './id-agent.js';
@@ -156,6 +156,13 @@ export async function runProfile(
     if (discovery.objects.length && !profiles.length) throw new Error([...failed.values()][0] ?? 'discovery_failed');
   } finally { ownBeat?.stop(); }
   const jobId = job?.jobId ?? randomUUID();
+  // Primary keys and indexes, from the catalog (Dictionary "Keys and indexes"). Auxiliary: if they cannot be read the
+  // profile carries on and the Dictionary says they were not read.
+  let tableKeys: Map<string, TableKeys> | null = null;
+  if (input.connector.keysAndIndexes) {
+    try { tableKeys = new Map((await input.connector.keysAndIndexes()).map((entry) => [entry.table, entry])); }
+    catch (error) { console.error(`Keys and indexes not read for connection ${input.connectionId}: ${sourceErrorCode(error)}`); }
+  }
   let createdVersions = 0;
   let referenceChecksSkipped = 0;
 
@@ -195,7 +202,9 @@ export async function runProfile(
     for (const { object, profile } of profiles) {
       const datasetId = await ensureAsset(client, input.tenantId, input.connectionId, object.assetKey, 'dataset', object.qualifiedName);
       tableAssets.set(object.qualifiedName, datasetId);
-      const structural = { object_type: object.type, columns: profile.columns.map(({ name, dataType, isNullable }) => ({ name, data_type: dataType, nullable: isNullable })) };
+      const keys = tableKeys?.get(object.qualifiedName);
+      const structural = { object_type: object.type, columns: profile.columns.map(({ name, dataType, isNullable }) => ({ name, data_type: dataType, nullable: isNullable })),
+        ...(tableKeys ? { primary_key: keys?.primaryKey ?? [], indexes: keys?.indexes ?? [] } : {}) };
       const statistics = { row_count: profile.rowCount, ...(profile.rowCountEstimated ? { row_count_estimated: true } : {}) };
       const version = await ensureAssetVersion(client, input.tenantId, datasetId, structural, statistics);
       if (version.created) createdVersions += 1;
