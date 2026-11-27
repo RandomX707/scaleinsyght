@@ -36,6 +36,7 @@ describe('SQL Server definition names resolve against the catalog', () => {
       `CREATE FUNCTION dbo.fn_SplitIds (@Ids nvarchar(max)) RETURNS TABLE AS RETURN SELECT CAST(value AS int) AS CustomerId FROM STRING_SPLIT(@Ids, ',');`,
       `CREATE FUNCTION dbo.fn_Region (@CustomerId int) RETURNS nvarchar(20) AS BEGIN RETURN CASE WHEN @CustomerId % 2 = 0 THEN N'East' ELSE N'West' END; END;`,
       `CREATE PROCEDURE dbo.usp_WriteLog @Name nvarchar(80) AS BEGIN SET NOCOUNT ON; END;`,
+      `CREATE PROCEDURE dbo.usp_Secret WITH ENCRYPTION AS BEGIN SELECT COUNT(*) FROM dbo.Orders; EXEC dbo.usp_WriteLog @Name = N'secret'; END;`,
       `CREATE PROCEDURE dbo.usp_LoadOrderSummary @Ids nvarchar(max) AS
        BEGIN
          DECLARE @picked TABLE (CustomerId int);
@@ -70,6 +71,16 @@ describe('SQL Server definition names resolve against the catalog', () => {
     expect(opened.definition.calls).toEqual(['dbo.fn_Region', 'dbo.fn_SplitIds', 'dbo.usp_WriteLog']);
     expect(opened.definition.unresolved).toEqual([]);
     expect(opened.definition.tablesAndColumns.map((item: { table: string }) => item.table).sort()).toEqual(['dbo.Customers', 'dbo.OrderSummary', 'dbo.Orders']);
-    for (const callee of ['dbo.fn_Region', 'dbo.fn_SplitIds', 'dbo.usp_WriteLog']) expect((await detail(callee)).definition.calledBy, callee).toEqual(['dbo.usp_LoadOrderSummary']);
+    expect((await detail('dbo.fn_Region')).definition.calledBy).toEqual(['dbo.usp_LoadOrderSummary']);
+    expect((await detail('dbo.fn_SplitIds')).definition.calledBy).toEqual(['dbo.usp_LoadOrderSummary']);
+    expect((await detail('dbo.usp_WriteLog')).definition.calledBy).toEqual(['dbo.usp_LoadOrderSummary', 'dbo.usp_Secret']);
+  });
+
+  it('c7_an_encrypted_procedure_shows_what_the_catalog_records_it_refers_to', async () => {
+    const secret = await detail('dbo.usp_Secret');
+    expect(secret.definition).toMatchObject({ encrypted: true, text: null, reads: [], writes: [], uses: ['dbo.Orders'], calls: ['dbo.usp_WriteLog'], usesFromCatalog: true });
+    expect(secret.description.text).toBe('Procedure whose SQL the source encrypts. The database catalog records that it refers to Orders and runs usp_WriteLog, but not whether it reads or writes them.');
+    const orders = await detail('dbo.Orders');
+    expect(orders.usedBy).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'dbo.usp_Secret', how: 'refers to it (database catalog; the module is encrypted)' })]));
   });
 });

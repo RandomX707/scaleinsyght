@@ -87,6 +87,8 @@ describe('Dictionary on the SQL Server testbed', () => {
     expect(flags.description.text).toContain('Loaded by usp_X_LOAD_READMIT_FLAGS');
     const secret = await get(`/api/connections/${connectionId}/dictionary/object?name=dbo.usp_X_SECRET_SCORE`);
     expect(secret.description.text).toContain('encrypts');
+    // Encrypted, but the database catalog still records what it refers to.
+    expect(secret.definition).toMatchObject({ encrypted: true, reads: [], writes: [], uses: ['dbo.encounters'], usesFromCatalog: true });
   });
 
   it('c7_stored_definitions_hold_no_literal_values_and_show_original_is_live_only', async () => {

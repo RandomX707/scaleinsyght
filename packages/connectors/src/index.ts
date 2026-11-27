@@ -100,6 +100,9 @@ export interface ReadOnlyConnector {
   /** Procedures and functions: definition text as the source returns it (null when withheld), whether the source
    *  encrypts it, and the declared parameters. Callers scrub the text before storing it (decision 53). */
   routines?():Promise<Routine[]>;
+  /** What each procedure or function refers to, as the database catalog records it. Readable even when the module is
+   *  encrypted; it names the objects, not whether they are read or written. */
+  routineDependencies?():Promise<Array<{routine:string;references:string[]}>>;
   /** Who owns each table, view, procedure and function, and the order they were created: used to tell which of two
    *  near-identical routines is the copy, shown as an informational badge (decision 64). */
   objectOrigins?():Promise<ObjectOrigin[]>;

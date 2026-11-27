@@ -228,6 +228,18 @@ export class SqlServerConnector implements ReadOnlyConnector {
     return rows.recordset.map((row) => ({ qualifiedName: row.qualified_name, owner: row.owner, createdOrder: row.created_order === null ? null : Number(row.created_order) }));
   }
 
+  async routineDependencies() {
+    // sys.sql_expression_dependencies is recorded at create time, so it is there for encrypted modules too.
+    const rows = await (await this.request()).query<{ routine: string; referenced: string }>(`SELECT TOP (${this.maxCatalogRows + 1}) s.name+'.'+o.name AS routine,
+        COALESCE(d.referenced_schema_name, SCHEMA_NAME(ro.schema_id), s.name)+'.'+d.referenced_entity_name AS referenced
+      FROM sys.sql_expression_dependencies d JOIN sys.objects o ON o.object_id=d.referencing_id JOIN sys.schemas s ON s.schema_id=o.schema_id LEFT JOIN sys.objects ro ON ro.object_id=d.referenced_id
+      WHERE o.type IN ('P','FN','IF','TF') AND d.referenced_database_name IS NULL AND d.referenced_server_name IS NULL ORDER BY 1,2`);
+    if (rows.recordset.length > this.maxCatalogRows) throw new Error('sqlserver_connector_result_limit_exceeded');
+    const byRoutine = new Map<string, string[]>();
+    for (const row of rows.recordset) byRoutine.set(row.routine, [...new Set([...(byRoutine.get(row.routine) ?? []), row.referenced])]);
+    return [...byRoutine].map(([routine, references]) => ({ routine, references }));
+  }
+
   async routines() {
     // An encrypted module has no definition in sys.sql_modules (is_encrypted = 1); it is reported as encrypted, not empty.
     const rows = await (await this.request()).query<{ object_id: number; qualified_name: string; kind: 'function'|'procedure'; definition: string | null; encrypted: boolean }>(`SELECT TOP (${this.maxCatalogRows + 1}) o.object_id,s.name+'.'+o.name AS qualified_name,CASE WHEN o.type='P' THEN 'procedure' ELSE 'function' END AS kind,OBJECT_DEFINITION(o.object_id) AS definition,

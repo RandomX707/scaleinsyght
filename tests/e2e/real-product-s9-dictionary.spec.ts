@@ -149,6 +149,9 @@ test('s9_dictionary_matches_testbed_truth_for_every_connector_type_and_exports_o
   await expect(code).toContainText(truth.sqlserver.hardCodedLiterals[0]!);
   const secret = Object.entries(truth.sqlserver.procedures).find(([, procedure]) => procedure.encrypted)![0];
   await side(page).getByRole('button', { name: short(secret), exact: true }).click();
+  const encryptedWhat = page.locator('.dict-card', { hasText: 'What it does' });
+  await expect(encryptedWhat).toContainText('Usesencounters');
+  await expect(encryptedWhat).toContainText('From the database catalog');
   await page.getByRole('tab', { name: 'SQL' }).click();
   await expect(page.locator('.dict-encrypted')).toContainText('Encrypted');
   await expect(header).toContainText('Encrypted');

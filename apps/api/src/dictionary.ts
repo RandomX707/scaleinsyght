@@ -122,12 +122,19 @@ export async function listObjects(client: PoolClient, tenantId: string, source: 
 
 /** A plain description drafted by code from metadata only: names, types, keys and parsed SQL. Never data values. */
 export function draftDescription(input: { kind: ObjectKind; name: string; encrypted?: boolean; columns?: number; references?: string[]; builtBy?: Array<{ name: string; mode: string }>; readBy?: number;
-  analysis?: { writes: Array<{ table: string; mode: string }>; reads: string[]; calls: string[] } }): string {
+  analysis?: { writes: Array<{ table: string; mode: string }>; reads: string[]; calls: string[]; uses?: string[] } }): string {
   const own = input.name.replace(/\(.*\)$/, '');
   // Names read better without the default schema (dbo, public); other schemas stay.
   const short = (value: string) => value.replace(/^(?:dbo|public|PUBLIC)\.(?=[^.]+$)/, '');
   const list = (raw: string[]) => { const items = raw.map(short); return items.length <= 2 ? items.join(' and ') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`; };
-  if (input.encrypted) return `${input.kind === 'procedure' ? 'Procedure' : 'Routine'} whose SQL the source encrypts, so what it reads and writes is not known.`;
+  if (input.encrypted) {
+    const noun = input.kind === 'procedure' ? 'Procedure' : 'Routine';
+    // The catalog's record names what an encrypted module refers to, never whether it reads or writes it.
+    if (!input.analysis?.uses?.length && !input.analysis?.calls.length) return `${noun} whose SQL the source encrypts, so what it reads and writes is not known.`;
+    const parts = [...(input.analysis.uses?.length ? [`refers to ${list(input.analysis.uses.slice(0, 4))}${input.analysis.uses.length > 4 ? ` and ${input.analysis.uses.length - 4} more` : ''}`] : []),
+      ...(input.analysis.calls.length ? [`runs ${list([...new Set(input.analysis.calls.map((call) => call.replace(/\(.*\)$/s, '')))])}`] : [])];
+    return `${noun} whose SQL the source encrypts. The database catalog records that it ${parts.join(' and ')}, but not whether it reads or writes them.`;
+  }
   if (input.analysis && ['procedure', 'function', 'package'].includes(input.kind)) {
     const how: Record<string, string> = { 'truncate-insert': 'empties and reloads', merge: 'merges into', insert: 'inserts into', update: 'updates', delete: 'deletes from' };
     const parts = input.analysis.writes.map((write) => `${how[write.mode] ?? 'writes'} ${short(write.table)}`);
@@ -156,7 +163,7 @@ export async function draftDescriptions(client: PoolClient, tenantId: string, so
   const wanted = objects.filter((object) => DRAFTED_KINDS.has(object.kind));
   if (!wanted.length || source.connector_type === 'dbt' || source.connector_type === 'tableau') return new Map();
   const names = wanted.map((object) => object.name);
-  const definitions = (await client.query<{ qualified_name: string; kind: string; encrypted: boolean; analysis: { writes?: Array<{ table: string; mode: string }>; reads?: string[]; calls?: string[] } }>(
+  const definitions = (await client.query<{ qualified_name: string; kind: string; encrypted: boolean; analysis: { writes?: Array<{ table: string; mode: string }>; reads?: string[]; calls?: string[]; uses?: string[] } }>(
     `SELECT qualified_name,kind,encrypted,analysis FROM graph.definitions WHERE tenant_id=$1 AND source_id=$2 AND active AND kind<>'calculated_field' ORDER BY qualified_name`, [tenantId, source.connection_id])).rows;
   const columnCounts = new Map((await client.query<{ qualified_name: string; n: number }>(
     `SELECT d.qualified_name,count(f.asset_id)::int AS n FROM graph.assets d
@@ -187,7 +194,7 @@ export async function draftDescriptions(client: PoolClient, tenantId: string, so
   const drafts = new Map<string, string>();
   for (const object of wanted) {
     const definition = byName.get(object.name); const lower = object.name.toLowerCase();
-    const analysis = definition ? { writes: definition.analysis.writes ?? [], reads: definition.analysis.reads ?? [], calls: definition.analysis.calls ?? [] } : undefined;
+    const analysis = definition ? { writes: definition.analysis.writes ?? [], reads: definition.analysis.reads ?? [], calls: definition.analysis.calls ?? [], uses: definition.analysis.uses ?? [] } : undefined;
     drafts.set(object.name, draftDescription({ kind: object.kind, name: object.name, encrypted: definition?.encrypted ?? false, columns: columnCounts.get(object.name) ?? 0,
       references: references.get(object.name) ?? [], builtBy: builtBy.get(lower) ?? [], readBy: readBy.get(lower) ?? 0, ...(analysis ? { analysis } : {}) }));
   }
@@ -542,17 +549,20 @@ async function objectDetail(client: PoolClient, tenantId: string, connectionId: 
        LEFT JOIN LATERAL(SELECT statistics,structural_attributes FROM graph.asset_versions WHERE tenant_id=a.tenant_id AND asset_id=a.asset_id ORDER BY version DESC LIMIT 1)v ON true
      WHERE a.tenant_id=$1 AND a.source_id=ANY($2::uuid[]) AND a.qualified_name=$3 AND a.active AND a.asset_type IN ('dataset','report','field')
      ORDER BY (a.source_id=$4) DESC LIMIT 1`, [tenantId, [datasetSource, connectionId], name, datasetSource])).rows[0] ?? null;
-  const definition = (await client.query<{ kind: string; scrubbed_text: string | null; encrypted: boolean; parameters: Array<{ name: string; dataType: string; mode: string }>; returned_columns: Array<{ name: string; dataType: string }>; analysis: { writes?: Array<{ table: string; mode: string }>; reads?: string[]; calls?: string[]; unresolved?: string[]; steps?: string[]; kind?: string }; captured_at: Date; version: number }>(
+  const definition = (await client.query<{ kind: string; scrubbed_text: string | null; encrypted: boolean; parameters: Array<{ name: string; dataType: string; mode: string }>; returned_columns: Array<{ name: string; dataType: string }>; analysis: { writes?: Array<{ table: string; mode: string }>; reads?: string[]; calls?: string[]; unresolved?: string[]; uses?: string[]; dependencySource?: string; steps?: string[]; kind?: string }; captured_at: Date; version: number }>(
     `SELECT kind,scrubbed_text,encrypted,parameters,returned_columns,analysis,captured_at,version FROM graph.definitions WHERE tenant_id=$1 AND source_id=$2 AND qualified_name=$3 AND active`, [tenantId, connectionId, name])).rows[0] ?? null;
   const lower = name.toLowerCase();
   // Stored definitions of this source that read, write or call this object (parsed from SQL).
-  const related = (await client.query<{ qualified_name: string; kind: string; analysis: { writes?: Array<{ table: string; mode: string }>; reads?: string[]; calls?: string[] } }>(
+  const related = (await client.query<{ qualified_name: string; kind: string; analysis: { writes?: Array<{ table: string; mode: string }>; reads?: string[]; calls?: string[]; uses?: string[] } }>(
     `SELECT qualified_name,kind,analysis FROM graph.definitions WHERE tenant_id=$1 AND source_id=$2 AND active AND qualified_name<>$3 AND kind<>'calculated_field'
        AND (EXISTS(SELECT 1 FROM jsonb_array_elements_text(analysis->'reads') x WHERE lower(x)=$4) OR EXISTS(SELECT 1 FROM jsonb_array_elements(analysis->'writes') w WHERE lower(w->>'table')=$4)
+         OR EXISTS(SELECT 1 FROM jsonb_array_elements_text(analysis->'uses') u WHERE lower(u)=$4)
          OR EXISTS(SELECT 1 FROM jsonb_array_elements_text(analysis->'calls') c WHERE lower(regexp_replace(c,'\\(.*\\)$',''))=lower(regexp_replace($3,'\\(.*\\)$',''))))
      ORDER BY qualified_name LIMIT 500`, [tenantId, connectionId, name, lower])).rows;
   const builtBy = related.flatMap((row) => (row.analysis.writes ?? []).filter((write) => write.table.toLowerCase() === lower).map((write) => ({ name: row.qualified_name, kind: row.kind, mode: write.mode })));
   const readBy = related.filter((row) => (row.analysis.reads ?? []).some((read) => read.toLowerCase() === lower)).map((row) => ({ name: row.qualified_name, kind: row.kind }));
+  // Encrypted modules: the database catalog says they refer to this object, not how.
+  const referredBy = related.filter((row) => (row.analysis.uses ?? []).some((use) => use.toLowerCase() === lower)).map((row) => ({ name: row.qualified_name, kind: row.kind }));
   // Calls name a routine by its catalog name, with arguments when the source has them; match on the name alone.
   const calledBy = related.filter((row) => (row.analysis.calls ?? []).some((call) => call.replace(/\(.*\)$/s, '').toLowerCase() === name.replace(/\(.*\)$/s, '').toLowerCase())).map((row) => row.qualified_name);
 
@@ -646,13 +656,13 @@ async function objectDetail(client: PoolClient, tenantId: string, connectionId: 
     description,
     stats: dataset ? { rows: typeof dataset.statistics?.row_count === 'number' ? dataset.statistics.row_count : null, ...(dataset.statistics?.row_count_estimated ? { rowsEstimated: true } : {}), lastProfiled, dependentReports, builtBy: builtBy.map((item) => item.name) } : null,
     columns, keys, joins, tests,
-    usedBy: [...readBy.map((item) => ({ name: item.name, kind: item.kind, how: 'reads', source: source.name })), ...builtBy.map((item) => ({ name: item.name, kind: item.kind, how: `writes (${item.mode})`, source: source.name })),
+    usedBy: [...readBy.map((item) => ({ name: item.name, kind: item.kind, how: 'reads', source: source.name })), ...referredBy.map((item) => ({ name: item.name, kind: item.kind, how: 'refers to it (database catalog; the module is encrypted)', source: source.name })), ...builtBy.map((item) => ({ name: item.name, kind: item.kind, how: `writes (${item.mode})`, source: source.name })),
       ...flowUsers.map((item) => ({ name: item.name, kind: item.type === 'report' ? 'report' : 'dataset', how: 'data flows into it', source: item.source }))],
     definition: definition ? {
       kind: definition.kind, encrypted: definition.encrypted, text: definition.scrubbed_text, literalsHidden: true, version: definition.version, capturedAt: definition.captured_at,
       // Inputs (and a procedure's OUT parameters) apart from the columns a function returns (decision 64).
       parameters: definition.parameters.map((parameter) => ({ ...parameter, declared: true })), returns: definition.returned_columns,
-      writes: definition.analysis.writes ?? [], reads: definition.analysis.reads ?? [], calls: definition.analysis.calls ?? [], unresolved: definition.analysis.unresolved ?? [], steps: definition.analysis.steps ?? [],
+      writes: definition.analysis.writes ?? [], reads: definition.analysis.reads ?? [], calls: definition.analysis.calls ?? [], unresolved: definition.analysis.unresolved ?? [], uses: definition.analysis.uses ?? [], usesFromCatalog: definition.analysis.dependencySource === 'catalog', steps: definition.analysis.steps ?? [],
       calledBy, runBy: [] as string[], tablesAndColumns,
       originalAvailable: !definition.encrypted && definition.kind !== 'calculated_field',
     } : null,
