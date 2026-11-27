@@ -93,7 +93,7 @@ export class PostgresConnector implements ReadOnlyConnector {
     return result.rows;
   }
 
-  async discover(input:{mode:'profile'|'nightly';scope?:ConnectorScope}):Promise<DiscoveryResult>{
+  async discover(input:{mode:'profile'|'nightly';scope?:ConnectorScope;known?:ReadonlyMap<string,string>}):Promise<DiscoveryResult>{
     const tables=await this.tables();this.current.clear();
     const estimates=await this.catalogEstimates();this.estimates=estimates;
     const timedOutObjects = new Set<string>();
@@ -124,10 +124,13 @@ export class PostgresConnector implements ReadOnlyConnector {
       const signature=createHash('sha256').update(JSON.stringify({rows,columns:columns.map(({column_name,data_type,is_nullable,comment})=>({column_name,data_type,is_nullable,comment}))})).digest('hex');
       const key=assetKey(qualifiedName);profiles.set(qualifiedName,{table,columns,key,signature});result.coverage.accessible++;
       const object={assetKey:key,qualifiedName,type:table.table_type==='VIEW'?'view' as const:'table' as const,scopeMode:'profile' as const};
-      if(input.mode==='nightly'&&this.seen.get(qualifiedName)===signature&&rows!==null&&rows!=='view'){result.unchanged++;result.unchangedObjects.push(object);continue;}
+      // K11: the stored signature from the last run decides, so a fresh connector (a new worker) still skips unchanged tables.
+      const previous=input.known?.get(qualifiedName)??this.seen.get(qualifiedName);
+      if(input.mode==='nightly'&&previous===signature&&rows!==null&&rows!=='view'){result.unchanged++;result.unchangedObjects.push(object);continue;}
       result.objects.push(object);
     }
-    for(const [name,{signature}] of profiles)this.seen.set(name,signature);
+    result.signatures={};
+    for(const [name,{signature}] of profiles){this.seen.set(name,signature);result.signatures[name]=signature;}
     return result;
   }
 
