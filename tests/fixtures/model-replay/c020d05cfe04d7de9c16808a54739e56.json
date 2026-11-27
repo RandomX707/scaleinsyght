@@ -1,0 +1,66 @@
+{
+ "hash": "c020d05cfe04d7de9c16808a54739e56",
+ "recordedAt": "2026-11-27T21:43:48.469Z",
+ "model": "gpt-6-luna",
+ "purpose": "describe",
+ "request": {
+  "max_completion_tokens": 680,
+  "messages": [
+   {
+    "content": "You write short, plain descriptions of database objects for people who are not engineers, from disclosed metadata only: names, column names, keys and SQL with literal values hidden. You never see row values or statistics. Say what each object is or does in one or two sentences, in sentence case, without jargon or a list of tables. Respond with a single JSON object.",
+    "role": "system"
+   },
+   {
+    "content": "{\"question\":\"Describe each listed object in one or two plain sentences: what it holds or does and what it is for, as a business reader would understand it. Do not list its columns or tables. Use only the metadata given. Objects: dbo.department_order_summary, dbo.patient_encounter_summary, dbo.count_patient_encounters, dbo.patient_order_total\",\"metadata\":{\"structural\":{\"objects\":[{\"name\":\"dbo.department_order_summary\",\"kind\":\"view\",\"columns\":[\"department_id\",\"order_amount\",\"order_count\"],\"keys\":[],\"parameters\":[],\"returns\":[],\"reads\":[\"dbo.departments\",\"dbo.orders\"],\"writes\":[],\"calls\":[]},{\"name\":\"dbo.patient_encounter_summary\",\"kind\":\"view\",\"columns\":[\"encounter_count\",\"patient_id\"],\"keys\":[],\"parameters\":[],\"returns\":[],\"reads\":[\"dbo.encounters\",\"dbo.patients\"],\"writes\":[],\"calls\":[]},{\"name\":\"dbo.count_patient_encounters\",\"kind\":\"procedure\",\"columns\":[],\"keys\":[],\"parameters\":[\"@patient_id\"],\"returns\":[],\"reads\":[\"dbo.encounters\"],\"writes\":[],\"calls\":[]},{\"name\":\"dbo.patient_order_total\",\"kind\":\"procedure\",\"columns\":[],\"keys\":[],\"parameters\":[\"@patient_id\"],\"returns\":[],\"reads\":[\"dbo.encounters\",\"dbo.orders\"],\"writes\":[],\"calls\":[]}]},\"descriptive\":{\"definition dbo.department_order_summary\":\"CREATE VIEW dbo.department_order_summary AS\\nSELECT d.department_id, COUNT_BIG(o.order_id) AS order_count, COALESCE(SUM(o.amount),<number>) AS order_amount\\nFROM dbo.departments d LEFT JOIN dbo.orders o ON o.department_id=d.department_id\\nGROUP BY d.department_id;\\n\",\"definition dbo.patient_encounter_summary\":\"\\nCREATE VIEW dbo.patient_encounter_summary AS\\nSELECT p.patient_id, COUNT_BIG(e.encounter_id) AS encounter_count\\nFROM dbo.patients p LEFT JOIN dbo.encounters e ON e.patient_id=p.patient_id\\nGROUP BY p.patient_id;\\n\",\"definition dbo.count_patient_encounters\":\"CREATE   PROCEDURE dbo.count_patient_encounters @patient_id int AS\\nBEGIN\\n  SET NOCOUNT ON;\\n  SELECT COUNT_BIG(*) AS encounter_count FROM dbo.encounters WHERE patient_id=@patient_id;\\nEND;\\n\",\"definition dbo.patient_order_total\":\"CREATE   PROCEDURE dbo.patient_order_total @patient_id int AS\\nBEGIN\\n  SET NOCOUNT ON;\\n  SELECT COALESCE(SUM(o.amount),<number>) AS order_total\\n  FROM dbo.orders o JOIN dbo.encounters e ON e.encounter_id=o.encounter_id\\n  WHERE e.patient_id=@patient_id;\\nEND;\\n\"}},\"identifier_fingerprints\":[]}",
+    "role": "user"
+   }
+  ],
+  "model": "gpt-6-luna",
+  "response_format": {
+   "json_schema": {
+    "name": "dictionary_descriptions",
+    "schema": {
+     "additionalProperties": false,
+     "properties": {
+      "descriptions": {
+       "items": {
+        "additionalProperties": false,
+        "properties": {
+         "name": {
+          "enum": [
+           "dbo.department_order_summary",
+           "dbo.patient_encounter_summary",
+           "dbo.count_patient_encounters",
+           "dbo.patient_order_total"
+          ],
+          "type": "string"
+         },
+         "text": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "name",
+         "text"
+        ],
+        "type": "object"
+       },
+       "type": "array"
+      }
+     },
+     "required": [
+      "descriptions"
+     ],
+     "type": "object"
+    },
+    "strict": true
+   },
+   "type": "json_schema"
+  }
+ },
+ "response": {
+  "content": "{\"descriptions\":[{\"name\":\"dbo.department_order_summary\",\"text\":\"Shows the number and total amount of orders for each department. It helps compare order activity across departments.\"},{\"name\":\"dbo.patient_encounter_summary\",\"text\":\"Shows the number of encounters for each patient. It provides a per-patient summary of encounter activity.\"},{\"name\":\"dbo.count_patient_encounters\",\"text\":\"Counts the encounters for a specified patient. It can be used to check that patient’s encounter activity.\"},{\"name\":\"dbo.patient_order_total\",\"text\":\"Calculates the total amount of orders associated with a specified patient’s encounters. It provides a patient-level view of order amounts.\"}]}",
+  "promptTokens": 696,
+  "completionTokens": 229
+ }
+}

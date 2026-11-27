@@ -1,0 +1,66 @@
+{
+ "hash": "4570ca8bfcf26fe6f03b8689e817272f",
+ "recordedAt": "2026-11-27T21:44:08.264Z",
+ "model": "gpt-6-luna",
+ "purpose": "describe",
+ "request": {
+  "max_completion_tokens": 680,
+  "messages": [
+   {
+    "content": "You write short, plain descriptions of database objects for people who are not engineers, from disclosed metadata only: names, column names, keys and SQL with literal values hidden. You never see row values or statistics. Say what each object is or does in one or two sentences, in sentence case, without jargon or a list of tables. Respond with a single JSON object.",
+    "role": "system"
+   },
+   {
+    "content": "{\"question\":\"Describe each listed object in one or two plain sentences: what it holds or does and what it is for, as a business reader would understand it. Do not list its columns or tables. Use only the metadata given. Objects: Charges, Patients, Registrations, Visits\",\"metadata\":{\"structural\":{\"objects\":[{\"name\":\"Charges\",\"kind\":\"sheet\",\"columns\":[\"amount\",\"charge_id\",\"charge_type\",\"charged_on\",\"department\",\"patient_id\",\"status\",\"visit_id\"],\"keys\":[],\"parameters\":[],\"returns\":[],\"reads\":[],\"writes\":[],\"calls\":[]},{\"name\":\"Patients\",\"kind\":\"sheet\",\"columns\":[\"date_of_birth\",\"full_name\",\"mrn\",\"patient_id\",\"phone\"],\"keys\":[],\"parameters\":[],\"returns\":[],\"reads\":[],\"writes\":[],\"calls\":[]},{\"name\":\"Registrations\",\"kind\":\"sheet\",\"columns\":[\"date_of_birth\",\"full_name\",\"mrn\",\"patient_id\",\"phone_number\",\"registered_on\"],\"keys\":[],\"parameters\":[],\"returns\":[],\"reads\":[],\"writes\":[],\"calls\":[]},{\"name\":\"Visits\",\"kind\":\"sheet\",\"columns\":[\"admitted_on\",\"department\",\"discharged_on\",\"patient_id\",\"provider_id\",\"visit_id\"],\"keys\":[],\"parameters\":[],\"returns\":[],\"reads\":[],\"writes\":[],\"calls\":[]}]},\"descriptive\":{}},\"identifier_fingerprints\":[]}",
+    "role": "user"
+   }
+  ],
+  "model": "gpt-6-luna",
+  "response_format": {
+   "json_schema": {
+    "name": "dictionary_descriptions",
+    "schema": {
+     "additionalProperties": false,
+     "properties": {
+      "descriptions": {
+       "items": {
+        "additionalProperties": false,
+        "properties": {
+         "name": {
+          "enum": [
+           "Charges",
+           "Patients",
+           "Registrations",
+           "Visits"
+          ],
+          "type": "string"
+         },
+         "text": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "name",
+         "text"
+        ],
+        "type": "object"
+       },
+       "type": "array"
+      }
+     },
+     "required": [
+      "descriptions"
+     ],
+     "type": "object"
+    },
+    "strict": true
+   },
+   "type": "json_schema"
+  }
+ },
+ "response": {
+  "content": "{\"descriptions\":[{\"name\":\"Charges\",\"text\":\"Records charges associated with patients and visits, including the amount, type, date, department, and status. It is used to track charges for care.\"},{\"name\":\"Patients\",\"text\":\"Holds patient identity and contact details, including date of birth and medical record number. It is used to identify patients.\"},{\"name\":\"Registrations\",\"text\":\"Records patient details and when each patient registered. It is used to track patient registrations.\"},{\"name\":\"Visits\",\"text\":\"Records patient visits, including the department, provider, and admission and discharge dates. It is used to track care encounters.\"}]}",
+  "promptTokens": 415,
+  "completionTokens": 196
+ }
+}

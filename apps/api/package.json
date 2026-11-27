@@ -14,20 +14,23 @@
     "dev": "tsx watch src/main.ts"
   },
   "dependencies": {
-    "fastify": "^5.6.2",
-    "exceljs": "^4.4.0",
+    "@fontsource/inter": "5.1.1",
+    "@fontsource/jetbrains-mono": "5.1.2",
+    "@scaleinsyght/analytic": "workspace:*",
     "@scaleinsyght/artifacts": "workspace:*",
     "@scaleinsyght/auth-oidc": "workspace:*",
     "@scaleinsyght/connectors": "workspace:*",
     "@scaleinsyght/customer-gateway": "workspace:*",
     "@scaleinsyght/db": "workspace:*",
+    "@scaleinsyght/model-gateway": "workspace:*",
     "@scaleinsyght/policy": "workspace:*",
     "@scaleinsyght/profiler": "workspace:*",
     "@scaleinsyght/registry": "workspace:*",
-    "@scaleinsyght/model-gateway": "workspace:*",
-    "@scaleinsyght/runner": "workspace:*",
-    "@scaleinsyght/analytic": "workspace:*",
     "@scaleinsyght/reports": "workspace:*",
-    "@scaleinsyght/tableau": "workspace:*"
+    "@scaleinsyght/runner": "workspace:*",
+    "@scaleinsyght/tableau": "workspace:*",
+    "@scaleinsyght/ui": "workspace:*",
+    "exceljs": "^4.4.0",
+    "fastify": "^5.6.2"
   }
 }

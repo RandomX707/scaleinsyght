@@ -166,7 +166,7 @@ describe('decision 64 Standard and Custom by object type', () => {
     const html = await inject('POST', '/api/dictionary/export-html', { acknowledged: true, connectionIds: [connectionId] });
     expect(html.statusCode).toBe(200);
     expect(html.body).toContain('linked by declared keys to');
-    expect(html.body).toContain('"descriptionDrafted":true');
+    expect(html.body).toContain('"descriptionState":"drafted"');
     // Markdown and Word carry the same descriptions, drafted ones marked (tables and views; routines are not in them).
     const markdown = await inject('GET', `/api/connections/${connectionId}/dictionary/export?format=markdown`);
     expect(markdown.body).toContain(`## ${schema}.X_READMITS\n\n**Drafted:** Table X_READMITS with 1 column, linked by declared keys to ${schema}.encounters.`);
@@ -183,11 +183,14 @@ describe('decision 64 Standard and Custom by object type', () => {
     expect((await detail(`${schema}.admissions`)).description).toMatchObject({ text: shown, origin: 'approved', by: 'Type Tester' });
     expect((await list('?tab=standard')).drafted).toBe(2);
     expect((await list('?tab=custom')).drafted).toBe(1 + routines.length);
+    // The list says what the rest are, so 3 Standard tables read "2 drafted, 1 approved", never just "2 drafted".
+    expect((await list('?tab=standard') as unknown as { descriptions: object }).descriptions).toEqual({ drafted: 2, approved: 1, edited: 0, imported: 0 });
     // One object edited without opening it first, then the Custom tab, then the rest of the source.
     const edited = await inject('POST', `/api/connections/${connectionId}/dictionary/description`, { name: `${schema}.v_ward_census`, action: 'edit', text: 'Stays per ward.' });
     expect(edited.statusCode, edited.body).toBe(200);
     expect((await inject('POST', `/api/connections/${connectionId}/dictionary/descriptions/approve-all`, { tab: 'custom' })).json()).toEqual({ approved: routines.length });
     expect((await detail(`${schema}.v_ward_census`)).description).toMatchObject({ text: 'Stays per ward.', origin: 'edited' });
+    expect((await list('?tab=custom') as unknown as { descriptions: object }).descriptions).toEqual({ drafted: 0, approved: routines.length, edited: 1, imported: 0 });
     // An edited description exports as it is, unmarked.
     expect((await inject('GET', `/api/connections/${connectionId}/dictionary/export?format=markdown`)).body).toContain(`## ${schema}.v_ward_census\n\nStays per ward.\n`);
     expect((await inject('POST', `/api/connections/${connectionId}/dictionary/descriptions/approve-all`, {})).json()).toEqual({ approved: 2 });

@@ -1,0 +1,25 @@
+{
+ "hash": "ca164c9902c10102ae2bcedf69086991",
+ "recordedAt": "2026-11-27T19:31:31.876Z",
+ "model": "gpt-6.2-sol",
+ "purpose": "answer",
+ "request": {
+  "max_completion_tokens": 400,
+  "messages": [
+   {
+    "content": "Answer only from the disclosed metadata. Do not infer hidden row values. If metadata is insufficient, say so.",
+    "role": "system"
+   },
+   {
+    "content": "{\"question\":\"Write one concise answer to the exact user question using the disclosed aggregate statistics. Include a result value. Use each executed query and its disclosed filters to interpret its statistic. Group labels appear in the results table and chart below your sentence, so name no group labels. For grouped results, summarise them: give the highest and lowest values and the spread between them, using the disclosed highest, lowest and spread statistics. If difference_between_sources is disclosed you may state it. If tie statistics are disclosed, state each tie, for example '<string>', using the question'<string>'s source field. Do not invent facts. Question: How many encounters does each provider have in the PostgreSQL testbed? Use provider names.\",\"metadata\":{\"structural\":{\"sources\":[{\"source\":\"PostgreSQL testbed\",\"connector_type\":\"postgres\",\"executed_query\":\"SELECT r.\\\"provider_name\\\"::text AS group_value,r.\\\"provider_id\\\"::text AS group_key,count(l.\\\"provider_id\\\")::text AS value,count(l.\\\"provider_id\\\") AS cell_size FROM \\\"public\\\".\\\"providers\\\" r LEFT JOIN \\\"public\\\".\\\"encounters\\\" l ON l.\\\"provider_id\\\"=r.\\\"provider_id\\\" GROUP BY r.\\\"provider_name\\\",r.\\\"provider_id\\\" ORDER BY (count(l.\\\"provider_id\\\")::text)::numeric DESC,r.\\\"provider_id\\\" ASC LIMIT 100\",\"filters\":[]}]},\"statistical\":{\"source_1_aggregate_count\":24,\"source_1_aggregate_1\":296,\"source_1_aggregate_2\":157,\"source_1_aggregate_3\":114,\"source_1_aggregate_4\":69,\"source_1_aggregate_5\":65,\"source_1_aggregate_6\":61,\"source_1_aggregate_7\":51,\"source_1_aggregate_8\":44,\"source_1_aggregate_9\":43,\"source_1_aggregate_10\":40,\"source_1_aggregate_11\":38,\"source_1_aggregate_12\":35,\"source_1_aggregate_13\":35,\"source_1_aggregate_14\":34,\"source_1_aggregate_15\":31,\"source_1_aggregate_16\":29,\"source_1_aggregate_17\":25,\"source_1_aggregate_18\":25,\"source_1_aggregate_19\":23,\"source_1_aggregate_20\":20,\"source_1_aggregate_21\":16,\"source_1_aggregate_22\":15,\"source_1_aggregate_23\":14,\"source_1_aggregate_24\":11,\"source_1_group_count\":24,\"source_1_highest\":296,\"source_1_lowest\":11,\"source_1_spread\":285,\"source_1_tie_1_value\":35,\"source_1_tie_1_group_count\":2,\"source_1_tie_2_value\":25,\"source_1_tie_2_group_count\":2}},\"identifier_fingerprints\":[]}",
+    "role": "user"
+   }
+  ],
+  "model": "gpt-6.2-sol"
+ },
+ "response": {
+  "content": "Across 24 providers in the PostgreSQL testbed, encounter counts ranged from 11 to 296, a spread of 285; two providers tied at 35 encounters and two tied at 25.",
+  "promptTokens": 651,
+  "completionTokens": 44
+ }
+}

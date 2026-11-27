@@ -84,11 +84,11 @@ Notes on the counts:
 
 ## Open items
 
-1. **Standard and custom objects: changed by decision 64, not yet seen on test_emr.** Standard and Custom now follow the object type, automatically, with no classifying to do. Once this change is deployed, test_emr should show:
+1. **Standard and custom objects: done (decision 64).** Standard and Custom now follow the object type, automatically. After the profile of 27 Nov at 12:27 (29 minutes, 272 of 272 tables, none failed), test_emr's Dictionary shows:
    - Standard: the 272 tables;
-   - Custom: the 119 functions, of which 52 carry a "Copy" badge (near-identical to another function, 91% to 100% similar).
+   - Custom: the 119 functions, of which 52 carry a "Copy" badge (near-identical to another function).
 
-   A function's inputs are now listed apart from the columns it returns (test_emr's e02_a1c showed "Parameters 16" for 3 inputs). Stored functions are corrected on the next profile or nightly run.
+   A function's inputs are listed apart from the columns it returns: e02_a1c shows 3 parameters and returns a table with 13 columns (it showed "Parameters 16" before). 111 of the 119 functions return columns, and none lists a returned column as a parameter. 390 descriptions are drafted and in use; Approve all was checked on the source, the Custom tab and a search without approving anything, so approving remains a person's choice.
 2. **Nightly refresh repeats the full profile.** The nightly run doesn't yet remember which tables are unchanged, so it re-profiles all 272 (about 28 minutes a night).
 3. **The identifier step still takes 23 minutes.** It reads every identifier column again on each run. Reusing what earlier runs already fingerprinted is the next improvement.
 4. **Stage times aren't stored.** The times for the 04:55 run were read from the job record while it ran. Recording each stage's start and end, and the time per table, is planned.

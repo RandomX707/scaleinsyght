@@ -1,0 +1,65 @@
+{
+ "hash": "ee4b9d1bfb4e2c66ddc06f3e1e17093c",
+ "recordedAt": "2026-11-27T21:43:43.046Z",
+ "model": "gpt-6-luna",
+ "purpose": "describe",
+ "request": {
+  "max_completion_tokens": 560,
+  "messages": [
+   {
+    "content": "You write short, plain descriptions of database objects for people who are not engineers, from disclosed metadata only: names, column names, keys and SQL with literal values hidden. You never see row values or statistics. Say what each object is or does in one or two sentences, in sentence case, without jargon or a list of tables. Respond with a single JSON object.",
+    "role": "system"
+   },
+   {
+    "content": "{\"question\":\"Describe each listed object in one or two plain sentences: what it holds or does and what it is for, as a business reader would understand it. Do not list its columns or tables. Use only the metadata given. Objects: dbo.usp_X_LOG_JOB, dbo.usp_X_MERGE_CENSUS, dbo.usp_X_SECRET_SCORE\",\"metadata\":{\"structural\":{\"objects\":[{\"name\":\"dbo.usp_X_LOG_JOB\",\"kind\":\"procedure\",\"columns\":[],\"keys\":[],\"parameters\":[\"@JobName\",\"@Rows\"],\"returns\":[],\"reads\":[],\"writes\":[\"dbo.X_JOB_LOG\"],\"calls\":[]},{\"name\":\"dbo.usp_X_MERGE_CENSUS\",\"kind\":\"procedure\",\"columns\":[],\"keys\":[],\"parameters\":[\"@SnapDate\"],\"returns\":[],\"reads\":[\"dbo.encounters\"],\"writes\":[\"dbo.X_CENSUS_SNAP\"],\"calls\":[]},{\"name\":\"dbo.usp_X_SECRET_SCORE\",\"kind\":\"procedure\",\"columns\":[],\"keys\":[],\"parameters\":[],\"returns\":[],\"reads\":[],\"writes\":[],\"calls\":[]}]},\"descriptive\":{\"definition dbo.usp_X_LOG_JOB\":\"\\nCREATE PROCEDURE dbo.usp_X_LOG_JOB @JobName nvarchar(<number>), @Rows int AS\\nBEGIN\\n  INSERT INTO dbo.X_JOB_LOG (job_name, ran_at, row_count) VALUES (@JobName, SYSUTCDATETIME(), @Rows);\\nEND;\\n\",\"definition dbo.usp_X_MERGE_CENSUS\":\"\\nCREATE PROCEDURE dbo.usp_X_MERGE_CENSUS @SnapDate date AS\\nBEGIN\\n  MERGE dbo.X_CENSUS_SNAP AS t\\n  USING (SELECT department_id, COUNT(*) AS census_count FROM dbo.encounters WHERE admitted_at <= @SnapDate AND (discharged_at IS NULL OR discharged_at > @SnapDate) GROUP BY department_id) AS s\\n  ON t.snap_date = @SnapDate AND t.department_id = s.department_id\\n  WHEN MATCHED THEN UPDATE SET census_count = s.census_count\\n  WHEN NOT MATCHED THEN INSERT (snap_date, department_id, census_count) VALUES (@SnapDate, s.department_id, s.census_count);\\nEND;\\n\"}},\"identifier_fingerprints\":[]}",
+    "role": "user"
+   }
+  ],
+  "model": "gpt-6-luna",
+  "response_format": {
+   "json_schema": {
+    "name": "dictionary_descriptions",
+    "schema": {
+     "additionalProperties": false,
+     "properties": {
+      "descriptions": {
+       "items": {
+        "additionalProperties": false,
+        "properties": {
+         "name": {
+          "enum": [
+           "dbo.usp_X_LOG_JOB",
+           "dbo.usp_X_MERGE_CENSUS",
+           "dbo.usp_X_SECRET_SCORE"
+          ],
+          "type": "string"
+         },
+         "text": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "name",
+         "text"
+        ],
+        "type": "object"
+       },
+       "type": "array"
+      }
+     },
+     "required": [
+      "descriptions"
+     ],
+     "type": "object"
+    },
+    "strict": true
+   },
+   "type": "json_schema"
+  }
+ },
+ "response": {
+  "content": "{\"descriptions\":[{\"name\":\"dbo.usp_X_LOG_JOB\",\"text\":\"Records a job run and the number of rows it processed. It is for keeping a basic history of job activity.\"},{\"name\":\"dbo.usp_X_MERGE_CENSUS\",\"text\":\"Creates or updates a census snapshot for a specified date, counting encounters still active on that date by department. It is for tracking department census over time.\"},{\"name\":\"dbo.usp_X_SECRET_SCORE\",\"text\":\"The available metadata does not show what this procedure does or what it is for.\"}]}",
+  "promptTokens": 622,
+  "completionTokens": 191
+ }
+}
