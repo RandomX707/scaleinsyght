@@ -87,7 +87,11 @@ export function plannerSchema(catalog: PlannerCatalog, joins: PlannerJoin[], lin
     lineage: lineageBranches.length ? nullable({anyOf:lineageBranches}) : {type:'null'},
     declaration: object({
       subject: {type:'string',description:'What the question counts or measures, in a few words.'},
-      grouping: nullable({type:'string',description:'The dimension the answer is broken down by, or null for a single value per source.'}),
+      // A breakdown carries its catalog column (decision 70): a grouping with no column cannot be expressed.
+      grouping: nullable(object({
+        label: {type:'string',description:'The dimension the answer is broken down by, in a few words.'},
+        column: allPaths.length ? literal(allPaths, 'The catalog column the answer is broken down by.') : {type:'null'},
+      })),
       conditions: {type:'array',items:{type:'string'},description:'Each condition the question applies, in a few words.'},
       comparison: {type:'boolean',description:'True when the question asks for values from two or more sources.'},
       every_group: {type:'boolean',description:'True when the question asks for a value for each member of the grouping (each department, every provider), so members with none should appear with 0.'},
@@ -99,7 +103,7 @@ export function plannerSchema(catalog: PlannerCatalog, joins: PlannerJoin[], lin
   });
 }
 
-export type PlanDeclaration = {subject: string; grouping: string | null; conditions: string[]; comparison: boolean; answerable: boolean; every_group?: boolean; exposed_columns?: string[]; read_columns?: string[]};
+export type PlanDeclaration = {subject: string; grouping: {label: string; column: string} | null; conditions: string[]; comparison: boolean; answerable: boolean; every_group?: boolean; exposed_columns?: string[]; read_columns?: string[]};
 /** Validation errors about the declared columns. The planner is re-asked once with the error; a second one ends the
  * question as one that cannot be answered yet (decision 65). */
 export const COLUMN_DECLARATION_ERRORS = ['missing_exposed_columns', 'missing_read_columns', 'exposed_column_outside_catalog', 'read_column_outside_catalog',
@@ -136,6 +140,18 @@ export function decodePlannerOutput(text: string, catalog: PlannerCatalog, joins
     if (!matched.length) throw new Error(`exposed_column_outside_catalog: ${ref}`);
     const tags = [...new Set(matched.flatMap(column => column.tags))];
     if (tags.length) throw new Error(`grouping_by_a_sensitive_column_is_not_allowed: ${ref} is tagged ${tags.join(', ')}`);
+  }
+  // The grouping's column is shown and read by definition, so it joins both lists and gets the same tag check.
+  // A grouping in any other shape (the old free-text string, or no column) is the decision 65 re-ask backstop.
+  if (declaration.grouping != null) {
+    const column = typeof declaration.grouping === 'object' ? (declaration.grouping as {column?: unknown}).column : undefined;
+    if (typeof column !== 'string') throw new Error('declared_grouping_without_exposed_column: the grouping names the catalog column the answer is broken down by in grouping.column');
+    if (!exposed.includes(column)) exposed.push(column);
+    if (!read.includes(column)) read.push(column);
+    const matched = columns.filter(item => item.path === column);
+    if (!matched.length) throw new Error(`exposed_column_outside_catalog: ${column}`);
+    const tags = [...new Set(matched.flatMap(item => item.tags))];
+    if (tags.length) throw new Error(`grouping_by_a_sensitive_column_is_not_allowed: ${column} is tagged ${tags.join(', ')}`);
   }
   const missingFromRead = exposed.filter(ref => !read.includes(ref));
   if (missingFromRead.length) throw new Error(`exposed_columns_not_in_read_columns: ${missingFromRead.join(', ')}`);

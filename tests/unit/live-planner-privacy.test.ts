@@ -17,7 +17,7 @@ it('refuses encounters by patient ID after exactly one planning call', async () 
   ]}]}]});
   complete.mockResolvedValueOnce({model:'planner',inputTokens:1,outputTokens:1,text:JSON.stringify({
     privacy_refusal:'public.encounters.patient_id',
-    declaration:{subject:'encounters',grouping:'patient ID',conditions:[],comparison:false,answerable:false,exposed_columns:['public.encounters.patient_id'],read_columns:['public.encounters.patient_id']},
+    declaration:{subject:'encounters',grouping:{label:'patient ID',column:'public.encounters.patient_id'},conditions:[],comparison:false,answerable:false,exposed_columns:['public.encounters.patient_id'],read_columns:['public.encounters.patient_id']},
     intents:[],lineage:null,
   })});
   const result = await planLiveQuestion({} as Pool,'tenant','List the encounters per patient ID',[
@@ -39,7 +39,7 @@ it('refuses by the column tag even when the planner declares the question unsupp
   ]}]}]});
   complete.mockResolvedValueOnce({model:'planner',inputTokens:1,outputTokens:1,text:JSON.stringify({
     privacy_refusal:null,
-    declaration:{subject:'encounters',grouping:'patient ID',conditions:[],comparison:false,answerable:false,exposed_columns:['dbo.encounters.patient_id'],read_columns:['dbo.encounters.patient_id']},
+    declaration:{subject:'encounters',grouping:{label:'patient ID',column:'dbo.encounters.patient_id'},conditions:[],comparison:false,answerable:false,exposed_columns:['dbo.encounters.patient_id'],read_columns:['dbo.encounters.patient_id']},
     intents:[],lineage:null,
   })});
   const result = await planLiveQuestion({} as Pool,'tenant','List the encounters per patient ID',[
@@ -65,6 +65,7 @@ async function plan(...responses: Array<ReturnType<typeof reply>>) {
 }
 
 it('re-asks once when an unanswerable declaration names no columns, then ends neutrally', async () => {
+  // The old free-text grouping with no column: the schema can no longer express it; the decoder's backstop re-asks.
   const empty = reply({grouping:'patient ID',exposed_columns:[],read_columns:[]});
   expect(await plan(empty, empty)).toMatchObject({kind:'rejected',reason:'analytic_query_unsupported'});
   expect(complete).toHaveBeenCalledTimes(2);
@@ -72,14 +73,14 @@ it('re-asks once when an unanswerable declaration names no columns, then ends ne
 });
 
 it('re-asks once with the error and refuses when the second answer names the tagged column', async () => {
-  const resolved = reply({grouping:'patient ID',exposed_columns:['dbo.encounters.patient_id'],read_columns:['dbo.encounters.patient_id']});
+  const resolved = reply({grouping:{label:'patient ID',column:'dbo.encounters.patient_id'},exposed_columns:['dbo.encounters.patient_id'],read_columns:['dbo.encounters.patient_id']});
   expect(await plan(reply({exposed_columns:[],read_columns:[]}), resolved)).toMatchObject({kind:'rejected',reason:'analytic_sensitive_column'});
   expect(complete).toHaveBeenCalledTimes(2);
   expect(complete.mock.calls[1]![0].question).toContain('unanswerable_without_resolved_columns');
 });
 
 it('re-asks once on an unknown column and ends neutrally when it is still unknown', async () => {
-  const unknown = reply({grouping:'patient ID',exposed_columns:['dbo.encounters.patient_number'],read_columns:['dbo.encounters.patient_number']});
+  const unknown = reply({grouping:{label:'patient ID',column:'dbo.encounters.patient_number'},exposed_columns:['dbo.encounters.patient_number'],read_columns:['dbo.encounters.patient_number']});
   expect(await plan(unknown, unknown)).toMatchObject({kind:'rejected',reason:'analytic_query_unsupported'});
   expect(complete).toHaveBeenCalledTimes(2);
   expect(complete.mock.calls[1]![0].question).toContain('outside_catalog: dbo.encounters.patient_number');
@@ -108,7 +109,7 @@ it('refuses a plan whose group key is tagged even though the shown name is not',
     entityColumn:null,operation:'count',aggregateColumn:null,order:'desc',limit:null,filters:[],
     declared:{subject_table:'dbo.encounters',measure:'count',measure_column:null,grouping_column:'dbo.providers.provider_name',filter_columns:[]}};
   complete.mockResolvedValueOnce({model:'planner',inputTokens:1,outputTokens:1,text:JSON.stringify({privacy_refusal:null,lineage:null,intents:[step],
-    declaration:{subject:'encounters',grouping:'provider',conditions:[],comparison:false,answerable:true,
+    declaration:{subject:'encounters',grouping:{label:'provider',column:'dbo.providers.provider_name'},conditions:[],comparison:false,answerable:true,
       exposed_columns:['dbo.providers.provider_name'],read_columns:['dbo.providers.provider_name','dbo.providers.provider_id','dbo.encounters.provider_id']}})});
   const result = await planLiveQuestion({} as Pool,'tenant','How many encounters does each provider have? Use provider names.',[
     {source_id:'source',agent_id:'agent',group_id:'group',group_version:1,display_name:'SQL Server hospital',connector_type:'sql_server'}],[]);

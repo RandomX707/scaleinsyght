@@ -17,7 +17,9 @@ const readOf = (intent: Record<string, unknown>) => [...new Set([...exposedOf(in
 const wrap = (intent: Record<string, unknown>, top: Record<string, unknown> = declaration) => {
   const exposed = (top.exposed_columns as string[] | undefined)?.length ? top.exposed_columns as string[] : exposedOf(intent);
   const read = (top.read_columns as string[] | undefined)?.length ? top.read_columns as string[] : [...new Set([...exposed, ...readOf(intent)])];
-  return JSON.stringify({declaration:{...top,exposed_columns:exposed,read_columns:read},intents:[intent]});
+  // Shorthand in these cases: a string grouping is the label; its column is the one the step groups by (decision 70).
+  const grouping = typeof top.grouping === 'string' ? {label: top.grouping, column: exposed[0] ?? exposedOf(intent)[0]} : top.grouping;
+  return JSON.stringify({declaration:{...top,grouping,exposed_columns:exposed,read_columns:read},intents:[intent]});
 };
 const grouped = {...step,kind:'group_by',groupBy:'Charges.charge_type',order:'asc',limit:2,declared:{...declared,grouping_column:'Charges.charge_type'}};
 const orders = [{name:'SQL Server hospital',assets: [{qualified_name:'dbo.orders',columns:[{name:'order_id'},{name:'department_id'}]},{qualified_name:'dbo.departments',columns:[{name:'department_id'},{name:'department_name'}]}]}];
@@ -67,16 +69,17 @@ describe('structured planner with declared intent (decision 44)', () => {
   it('refuses on the tag of a resolved column even when the response declares the question unanswerable (S2, 27 Nov 2026)', () => {
     // The live failure: privacy_refusal left empty, answerable false and no plan, so it ended as unsupported.
     const encounters = [{name:'SQL Server hospital',assets:[{qualified_name:'dbo.encounters',columns:[{name:'patient_id',sensitivity_tags:['identifier']},{name:'provider_id',sensitivity_tags:[]}]}]}];
-    const unsupported = (exposed: string[], grouping: string | null = 'patient ID', read: string[] = exposed) => JSON.stringify({privacy_refusal:null,lineage:null,intents:[],
-      declaration:{subject:'encounters',grouping,conditions:[],comparison:false,answerable:false,exposed_columns:exposed,read_columns:read}});
+    // A label with exposed columns becomes {label, column}; a label with none stays the old free-text shape (the backstop).
+    const unsupported = (exposed: string[], label: string | null = 'patient ID', read: string[] = exposed) => JSON.stringify({privacy_refusal:null,lineage:null,intents:[],
+      declaration:{subject:'encounters',grouping:label && exposed[0] ? {label, column:exposed[0]} : label,conditions:[],comparison:false,answerable:false,exposed_columns:exposed,read_columns:read}});
     expect(() => decodePlannerOutput(unsupported(['dbo.encounters.patient_id']), encounters, [])).toThrow('grouping_by_a_sensitive_column_is_not_allowed: dbo.encounters.patient_id is tagged identifier');
-    // A declared breakdown must name its column: retried, never accepted as unsupported.
+    // The old shape (a free-text grouping with no column) is the decision 65 backstop: retried, never accepted as unsupported.
     expect(() => decodePlannerOutput(unsupported([]), encounters, [])).toThrow('declared_grouping_without_exposed_column');
     expect(() => decodePlannerOutput(unsupported(['dbo.encounters.not_a_column'], 'patient ID', []), encounters, [])).toThrow('exposed_column_outside_catalog');
     expect(() => decodePlannerOutput(unsupported([], null, ['dbo.encounters.not_a_column']), encounters, [])).toThrow('read_column_outside_catalog');
     // Unanswerable must still name the columns the question refers to.
     expect(() => decodePlannerOutput(unsupported([], null), encounters, [])).toThrow('unanswerable_without_resolved_columns');
-    expect(() => decodePlannerOutput(unsupported(['dbo.encounters.provider_id'], 'provider', []), encounters, [])).toThrow('exposed_columns_not_in_read_columns');
+    expect(() => decodePlannerOutput(unsupported(['dbo.encounters.provider_id'], null, []), encounters, [])).toThrow('exposed_columns_not_in_read_columns');
     expect(() => decodePlannerOutput(JSON.stringify({intents:[],declaration:{subject:'encounters',grouping:null,conditions:[],comparison:false,answerable:false}}), encounters, [])).toThrow('missing_exposed_columns');
     expect(() => decodePlannerOutput(JSON.stringify({intents:[],declaration:{subject:'encounters',grouping:null,conditions:[],comparison:false,answerable:false,exposed_columns:[]}}), encounters, [])).toThrow('missing_read_columns');
     // Untagged resolved columns pass through to the usual handling.
