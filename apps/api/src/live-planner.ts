@@ -4,7 +4,7 @@ import { OpenAIModelGateway } from '@scaleinsyght/model-gateway';
 import type { QueryIntent } from '@scaleinsyght/contracts';
 import { selectSources,type CandidateSource } from './source-selection.js';
 import { CATALOG_JOIN_ALLOWANCE, CATALOG_TABLE_LIMIT, SCHEMA_ENUM_BUDGET, countEnumValues, selectCatalogTables } from './catalog-selection.js';
-import { decodePlannerOutput,describeLineage,describePlan,normalizeCatalogMentions,plannerSchema,verificationSchema,type DisplayLabel,type LineageRequest,type PlannerFacts } from './structured-planner.js';
+import { isColumnDeclarationError,decodePlannerOutput,describeLineage,describePlan,normalizeCatalogMentions,plannerSchema,verificationSchema,type DisplayLabel,type LineageRequest,type PlannerFacts } from './structured-planner.js';
 
 export type PlanningSource = {source_id:string;agent_id:string;group_id:string;group_version:number;display_name:string;connector_type:string};
 
@@ -60,7 +60,7 @@ Prior turns: ${priorTurns.map(turn=>`${turn.role}: ${normalize(turn.content)}`).
   const call=(purpose:'plan'|'verify',text:string,responseSchema:Record<string,unknown>,maxOutputTokens:number)=>gateway.complete({
     tenantId,...(principalId?{principalId}:{}),alias:'planning',purpose,question:text,metadata,responseSchema,maxOutputTokens,
   });
-  let repair='';let verificationRejected=false;let lineage:LineageRequest|undefined;
+  let repair='';let verificationRejected=false;let lineage:LineageRequest|undefined;let columnsReasked=false;
   for(let attempt=0;attempt<3;attempt++){
     const completion=await call('plan',prompt+repair,schema,1800);
     const provenance={model:completion.model,inputTokens:completion.inputTokens,outputTokens:completion.outputTokens};
@@ -72,6 +72,9 @@ Prior turns: ${priorTurns.map(turn=>`${turn.role}: ${normalize(turn.content)}`).
       const reason=error instanceof SyntaxError?'invalid_json':error instanceof Error?error.message:'invalid_intent';
       attempts.at(-1)!.error=reason;
       if(reason.startsWith('grouping_by_a_sensitive_column_is_not_allowed:')) return {kind:'rejected' as const,reason:'analytic_sensitive_column',attempts};
+      // Declared columns that are missing, unknown or do not cover the plan: re-asked once with the error, then the
+      // question ends as one that cannot be answered yet (decision 65). Nothing runs on an incomplete declaration.
+      if(isColumnDeclarationError(reason)){if(columnsReasked)return {kind:'rejected' as const,reason:'analytic_query_unsupported',attempts};columnsReasked=true;}
       repair='\nPrevious response failed validation: '+reason;
       continue;
     }
