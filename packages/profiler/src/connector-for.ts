@@ -23,9 +23,9 @@ export async function connectorForConnection(pool: Pool, tenantId: string, conne
   const sealed = { version: 1 as const, ciphertext: row.ciphertext.toString('base64'), nonce: row.nonce.toString('base64'), authTag: row.auth_tag.toString('base64') };
   if (row.connector_type === 'sql_server') {
     const secret = decryptConnectionSecret<{ host: string; port: number; database: string; username: string; password: string; trustServerCertificate: boolean }>(sealed);
-    return createSqlServerConnector({ server: secret.host, port: secret.port, database: secret.database, username: secret.username, password: secret.password, encrypt: true, trustServerCertificate: secret.trustServerCertificate, id: connectionId, name: row.display_name || 'SQL Server source', statementTimeoutMs: 10_000, maxRows: 1_000 });
+    return createSqlServerConnector({ server: secret.host, port: secret.port, database: secret.database, username: secret.username, password: secret.password, encrypt: true, trustServerCertificate: secret.trustServerCertificate, id: connectionId, name: row.display_name || 'SQL Server source', maxRows: 1_000 });
   }
   const secret = decryptConnectionSecret<{ host: string; port: number; database: string; username: string; password: string; sslMode: string }>(sealed);
   const url = new URL('postgresql://placeholder'); url.hostname = secret.host; url.port = String(secret.port); url.username = secret.username; url.password = secret.password; url.pathname = `/${secret.database}`; url.searchParams.set('sslmode', secret.sslMode);
-  return createPostgresConnector({ connectionString: url.toString(), id: connectionId, name: row.display_name || 'PostgreSQL source', statementTimeoutMs: 10_000, maxRows: 1_000 });
+  return createPostgresConnector({ connectionString: url.toString(), id: connectionId, name: row.display_name || 'PostgreSQL source', maxRows: 1_000 });
 }

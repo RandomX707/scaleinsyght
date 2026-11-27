@@ -1,5 +1,5 @@
 import { columnScope, objectScope } from './scope.js';
-import { CATALOG_ROW_LIMIT } from './limits.js';
+import { CATALOG_ROW_LIMIT, sourceTimeouts, withSourceDeadline, type SourceTimeoutOptions } from './limits.js';
 import { inIdSample, sqlServerIdSampleCondition } from './id-sample.js';
 import { DEFAULT_SAMPLING, SENSITIVITY_MIN_VALUES, SENSITIVITY_VALUES, type SamplingLimits, catalogEstimate, samplePercent } from './sampling.js';
 import { createHash } from 'node:crypto';
@@ -18,13 +18,14 @@ const keyFor = (name: string) => createHash('sha256').update(`sql_server\0${name
 export type SqlServerConnection = { server: string; port: number; database: string; username: string; password: string; encrypt: true; trustServerCertificate?: boolean };
 
 /** The driver gave up on a request that ran past its time limit (mssql ETIMEOUT). */
-const isTimeout = (error: unknown) => (error as { code?: string })?.code === 'ETIMEOUT';
+const isTimeout = (error: unknown) => (error as { code?: string })?.code === 'ETIMEOUT' || (error instanceof Error && error.message === 'source_query_timeout');
 
 export class SqlServerConnector implements ReadOnlyConnector {
   readonly type = 'sql_server' as const;
   readonly modelRequests = 0;
   readonly id: string;
   readonly name: string;
+  private readonly timeouts: ReturnType<typeof sourceTimeouts>;
   private readonly pool: sql.ConnectionPool;
   private readonly maxRows: number;
   /** Ceiling for catalog listings (tables, columns, keys, definitions), separate from the data-read row limit. */
@@ -33,25 +34,40 @@ export class SqlServerConnector implements ReadOnlyConnector {
 
   /** Decision 59: when to count exactly and how many rows to sample. */
   private readonly limits: SamplingLimits;
-  constructor(input: SqlServerConnection & { id?: string; name?: string; statementTimeoutMs?: number; maxRows?: number; maxCatalogRows?: number; sampling?: Partial<SamplingLimits> }) {
+  constructor(input: SqlServerConnection & { id?: string; name?: string; maxRows?: number; maxCatalogRows?: number; sampling?: Partial<SamplingLimits> } & SourceTimeoutOptions) {
     this.limits = { ...DEFAULT_SAMPLING, ...input.sampling };
     if (!input.encrypt) throw new Error('sqlserver_encryption_required');
-    const statementTimeoutMs = input.statementTimeoutMs ?? 10_000;
+    this.timeouts = sourceTimeouts(input);
     this.maxRows = input.maxRows ?? 1_000;
     this.maxCatalogRows = input.maxCatalogRows ?? CATALOG_ROW_LIMIT;
-    if (!Number.isSafeInteger(statementTimeoutMs) || statementTimeoutMs < 1) throw new Error('sqlserver_statement_timeout_invalid');
     if (!Number.isSafeInteger(this.maxRows) || this.maxRows < 1) throw new Error('sqlserver_row_limit_invalid');
     if (!Number.isSafeInteger(this.maxCatalogRows) || this.maxCatalogRows < 1) throw new Error('sqlserver_catalog_limit_invalid');
     this.pool = new sql.ConnectionPool({
       server: input.server, port: input.port, database: input.database, user: input.username, password: input.password,
       options: { encrypt: true, trustServerCertificate: input.trustServerCertificate ?? false },
-      connectionTimeout: 5_000, requestTimeout: statementTimeoutMs, pool: { max: 2, min: 0, idleTimeoutMillis: 30_000 },
+      connectionTimeout: this.timeouts.connect, requestTimeout: this.timeouts.query, pool: { max: 2, min: 0, idleTimeoutMillis: 30_000 },
     });
     this.id = input.id ?? 'sql-server-source';
     this.name = input.name ?? 'SQL Server source';
   }
 
-  private async request() { if (!this.pool.connected) await this.pool.connect(); return this.pool.request(); }
+  private async request() {
+    if (!this.pool.connected) {
+      await withSourceDeadline(this.pool.connect(), this.timeouts.connect, 'source_unreachable');
+    }
+    const request = this.pool.request();
+    const query = request.query.bind(request);
+    return {
+      input(name: string, typeOrValue: unknown, ...values: unknown[]) {
+        if (values.length === 0) request.input(name, typeOrValue);
+        else request.input(name, typeOrValue as Parameters<sql.Request['input']>[1], values[0]);
+        return this;
+      },
+      query: <T>(text: string) => withSourceDeadline(
+        query<T>(text), this.timeouts.query, 'source_query_timeout', () => request.cancel(),
+      ),
+    };
+  }
 
   async test(): Promise<{ ok: true; capabilities: ['discover', 'profile']; readOnly: true }> {
     const request = await this.request();
@@ -289,7 +305,7 @@ export class SqlServerConnector implements ReadOnlyConnector {
   }
 
   async queryAggregate(assetKey: string, metric: 'count') { if (metric !== 'count') throw new Error('connector_query_not_supported'); const found = [...this.objects].find(([name]) => keyFor(name) === assetKey); if (!found) throw new Error('asset_not_found'); const object = found[1]; const result = await (await this.request()).query<{ value: number }>(`SELECT TOP (1) COUNT_BIG(*) AS value FROM ${quote(object.schema_name)}.${quote(object.object_name)}`); return { metric: 'count' as const, value: Number(result.recordset[0]?.value ?? 0) }; }
-  async close() { if (this.pool.connected) await this.pool.close(); }
+  async close() { await withSourceDeadline(this.pool.close(), this.timeouts.connect, 'source_close_timeout').catch(() => undefined); }
 }
 
-export function createSqlServerConnector(input: SqlServerConnection & { id?: string; name?: string; statementTimeoutMs?: number; maxRows?: number; maxCatalogRows?: number; sampling?: Partial<SamplingLimits> }) { return new SqlServerConnector(input); }
+export function createSqlServerConnector(input: SqlServerConnection & { id?: string; name?: string; maxRows?: number; maxCatalogRows?: number; sampling?: Partial<SamplingLimits> } & SourceTimeoutOptions) { return new SqlServerConnector(input); }

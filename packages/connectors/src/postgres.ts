@@ -1,9 +1,9 @@
 import { columnScope, objectScope } from './scope.js';
-import { CATALOG_ROW_LIMIT } from './limits.js';
+import { CATALOG_ROW_LIMIT, sourceTimeouts, type SourceTimeoutOptions } from './limits.js';
 import { inIdSample, postgresIdSampleCondition } from './id-sample.js';
 import { DEFAULT_SAMPLING, SENSITIVITY_MIN_VALUES, SENSITIVITY_VALUES, type SamplingLimits, catalogEstimate, distinctFromCatalog, samplePercent } from './sampling.js';
 import { createHash } from 'node:crypto';
-import { Pool } from 'pg';
+import { Pool, type QueryResultRow } from 'pg';
 import { classifyColumn } from '@scaleinsyght/classification';
 import { POSSIBLE_REFERENCE_COVERAGE, REFERENCE_CHECK_SAMPLE, isSkippableCheckError, withSkippedChecks, UNMEASURED, type ColumnStatistics, type ConnectorScope, type DiscoveryResult, type Routine, type ObjectProfile, type ReadOnlyConnector , type ObjectOrigin } from './index.js';
 
@@ -37,21 +37,29 @@ export class PostgresConnector implements ReadOnlyConnector {
 
   /** Decision 59: when to count exactly and how many rows to sample. */
   private readonly limits:SamplingLimits;
-  constructor(input:{connectionString:string;id?:string;name?:string;statementTimeoutMs?:number;maxRows?:number;maxCatalogRows?:number;sampling?:Partial<SamplingLimits>}){
+  constructor(input:{connectionString:string;id?:string;name?:string;maxRows?:number;maxCatalogRows?:number;sampling?:Partial<SamplingLimits>} & SourceTimeoutOptions){
     this.limits={...DEFAULT_SAMPLING,...input.sampling};
-    const statementTimeoutMs=input.statementTimeoutMs??10_000;
+    const timeouts=sourceTimeouts(input);
     this.maxRows=input.maxRows??1_000; this.maxCatalogRows=input.maxCatalogRows??CATALOG_ROW_LIMIT;
-    if(!Number.isSafeInteger(statementTimeoutMs)||statementTimeoutMs<1)throw new Error('postgres_statement_timeout_invalid');
     if(!Number.isSafeInteger(this.maxRows)||this.maxRows<1)throw new Error('postgres_row_limit_invalid'); if(!Number.isSafeInteger(this.maxCatalogRows)||this.maxCatalogRows<1)throw new Error('postgres_catalog_limit_invalid');
-    this.pool=new Pool({connectionString:input.connectionString,max:2,connectionTimeoutMillis:5000,statement_timeout:statementTimeoutMs,options:`-c default_transaction_read_only=on -c statement_timeout=${statementTimeoutMs}`});
+    this.pool=new Pool({connectionString:input.connectionString,max:2,connectionTimeoutMillis:timeouts.connect,query_timeout:timeouts.query,statement_timeout:timeouts.query,options:`-c default_transaction_read_only=on -c statement_timeout=${timeouts.query}`});
     // An idle connection the source closes (restart, failover, a dropped database) must not crash the process: pg emits
     // the error on the pool, and the next query opens a fresh connection.
     this.pool.on('error',()=>undefined);
     this.id=input.id??'postgres-source';this.name=input.name??'PostgreSQL source';
   }
 
+  private async query<T extends QueryResultRow = QueryResultRow>(text: string, values?: unknown[]) {
+    try {
+      return await this.pool.query<T>(text, values);
+    } catch (error) {
+      if (isClientTimeout(error)) throw postgresClientTimeout(error);
+      throw error;
+    }
+  }
+
   async test():Promise<{ok:true;capabilities:['discover','profile'];readOnly:true}>{
-    const result=await this.pool.query<RoleSafety>(`SELECT
+    const result=await this.query<RoleSafety>(`SELECT
       (r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolbypassrls OR r.rolreplication) AS elevated,
       has_database_privilege(current_user,d.oid,'CREATE') AS database_write,
       EXISTS(SELECT 1 FROM pg_namespace n WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_toast%' AND has_schema_privilege(current_user,n.oid,'CREATE')) AS schema_write,
@@ -64,12 +72,12 @@ export class PostgresConnector implements ReadOnlyConnector {
       EXISTS(SELECT 1 FROM pg_auth_members m WHERE m.member=r.oid) AS inherited_roles
       FROM pg_roles r CROSS JOIN pg_database d WHERE r.rolname=current_user AND d.datname=current_database()`);
     const role=result.rows[0];if(!role||Object.values(role).some(Boolean))throw new Error('postgres_connector_role_not_read_only');
-    await this.pool.query('SELECT 1 FROM information_schema.tables LIMIT 1');
+    await this.query('SELECT 1 FROM information_schema.tables LIMIT 1');
     return {ok:true,capabilities:['discover','profile'],readOnly:true};
   }
 
   private async tables():Promise<Table[]>{
-    const rows=await this.pool.query<Table>(`SELECT table_schema AS schema_name,table_name,
+    const rows=await this.query<Table>(`SELECT table_schema AS schema_name,table_name,
       CASE WHEN table_type='VIEW' THEN 'VIEW' ELSE 'BASE TABLE' END AS table_type,
       has_schema_privilege(current_user,table_schema,'USAGE') AND has_table_privilege(current_user,format('%I.%I',table_schema,table_name),'SELECT') AS readable
       FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema') AND table_type IN ('BASE TABLE','VIEW') ORDER BY table_schema,table_name LIMIT $1`,[this.maxCatalogRows+1]);
@@ -78,7 +86,7 @@ export class PostgresConnector implements ReadOnlyConnector {
   }
 
   private async columns(table:Table):Promise<Column[]>{
-    const result=await this.pool.query<Column>(`SELECT c.column_name,c.data_type,c.is_nullable,
+    const result=await this.query<Column>(`SELECT c.column_name,c.data_type,c.is_nullable,
       pg_catalog.col_description(pg_catalog.to_regclass(format('%I.%I',c.table_schema,c.table_name)),c.ordinal_position) AS comment
       FROM information_schema.columns c WHERE c.table_schema=$1 AND c.table_name=$2 ORDER BY c.ordinal_position LIMIT $3`,[table.schema_name,table.table_name,this.maxCatalogRows+1]);
     if(result.rows.length>this.maxCatalogRows)throw new Error('postgres_connector_result_limit_exceeded');
@@ -116,7 +124,7 @@ export class PostgresConnector implements ReadOnlyConnector {
 
   /** Row estimates from the catalog for every table, in one query (decision 59). */
   private async catalogEstimates():Promise<Map<string,number|null>>{
-    const result=await this.pool.query<{name:string;tuples:number;pages:number}>(`SELECT n.nspname||'.'||c.relname AS name,c.reltuples::float8 AS tuples,c.relpages::int AS pages
+    const result=await this.query<{name:string;tuples:number;pages:number}>(`SELECT n.nspname||'.'||c.relname AS name,c.reltuples::float8 AS tuples,c.relpages::int AS pages
       FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relkind IN ('r','p','m') AND n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_toast%'`);
     return new Map(result.rows.map(row=>[row.name,catalogEstimate(Number(row.tuples),Number(row.pages))]));
   }
@@ -124,7 +132,7 @@ export class PostgresConnector implements ReadOnlyConnector {
   /** A table's size: exact for small or unanalysed tables, the catalog estimate for large ones or when counting times out. */
   private async rowCount(table:Table,estimate:number|null):Promise<{rows:number|null;estimated:boolean}>{
     if(estimate!==null&&estimate>this.limits.exactCountLimit)return{rows:estimate,estimated:true};
-    try{return{rows:Number((await this.pool.query<{n:string}>(`SELECT count(*)::text AS n FROM ${quoteIdentifier(table.schema_name)}.${quoteIdentifier(table.table_name)}`)).rows[0]!.n),estimated:false};}
+    try{return{rows:Number((await this.query<{n:string}>(`SELECT count(*)::text AS n FROM ${quoteIdentifier(table.schema_name)}.${quoteIdentifier(table.table_name)}`)).rows[0]!.n),estimated:false};}
     catch{return estimate===null?{rows:null,estimated:false}:{rows:estimate,estimated:true};}
   }
 
@@ -149,12 +157,12 @@ export class PostgresConnector implements ReadOnlyConnector {
     const textColumns=rowCount===null?[]:columns.filter(column=>!columnScope(scope,qualifiedName,column.column_name)&&POSTGRES_TEXT.has(column.data_type));
     try{
       if(textColumns.length){
-        const rows=(await this.pool.query<Record<string,string|null>>(`SELECT ${textColumns.map((column,index)=>`${quoteIdentifier(column.column_name)}::text AS t${index}`).join(',')} FROM ${relation}${sampled(this.limits.sensitivitySampleRows)} LIMIT ${this.limits.sensitivitySampleRows}`)).rows;
+        const rows=(await this.query<Record<string,string|null>>(`SELECT ${textColumns.map((column,index)=>`${quoteIdentifier(column.column_name)}::text AS t${index}`).join(',')} FROM ${relation}${sampled(this.limits.sensitivitySampleRows)} LIMIT ${this.limits.sensitivitySampleRows}`)).rows;
         textColumns.forEach((column,index)=>samples.set(column.column_name,rows.map(row=>row[`t${index}`]).filter((value):value is string=>value!==null).slice(0,SENSITIVITY_VALUES)));
         // Sparse text columns get more values in one further query per table, reading only rows where one of them is set.
         const sparse=textColumns.filter(column=>samples.get(column.column_name)!.length<SENSITIVITY_MIN_VALUES&&(rowCount??0)>samples.get(column.column_name)!.length);
         if(sparse.length){
-          const more=(await this.pool.query<Record<string,string|null>>(`SELECT ${sparse.map((column,index)=>`${quoteIdentifier(column.column_name)}::text AS s${index}`).join(',')} FROM ${relation}${sampled(this.limits.statisticsSampleRows)} WHERE ${sparse.map(column=>`${quoteIdentifier(column.column_name)} IS NOT NULL`).join(' OR ')} LIMIT ${this.limits.sensitivitySampleRows}`)).rows;
+          const more=(await this.query<Record<string,string|null>>(`SELECT ${sparse.map((column,index)=>`${quoteIdentifier(column.column_name)}::text AS s${index}`).join(',')} FROM ${relation}${sampled(this.limits.statisticsSampleRows)} WHERE ${sparse.map(column=>`${quoteIdentifier(column.column_name)} IS NOT NULL`).join(' OR ')} LIMIT ${this.limits.sensitivitySampleRows}`)).rows;
           sparse.forEach((column,index)=>samples.set(column.column_name,[...samples.get(column.column_name)!,...more.map(row=>row[`s${index}`]).filter((value):value is string=>value!==null)].slice(0,SENSITIVITY_VALUES)));
         }
       }
@@ -170,7 +178,7 @@ export class PostgresConnector implements ReadOnlyConnector {
       const parts=measurable.flatMap((column,index)=>{const ref=quoteIdentifier(column.column_name);return [`count(${ref}) AS n${index}`,...(estimated?[]:[`count(DISTINCT ${ref}) AS d${index}`]),POSTGRES_TEXT.has(column.data_type)?`avg(length(${ref}))::float8 AS l${index}`:`NULL::float8 AS l${index}`];});
       const from=estimated?`(SELECT ${measurable.map(column=>quoteIdentifier(column.column_name)).join(',')} FROM ${relation}${sampled(this.limits.statisticsSampleRows)} LIMIT ${this.limits.statisticsSampleRows}) sampled`:relation;
       let measured:Record<string,string|number|null>|undefined;
-      try{measured=(await this.pool.query<Record<string,string|number|null>>(`SELECT count(*) AS total,${parts.join(',')} FROM ${from}`)).rows[0]!;}
+      try{measured=(await this.query<Record<string,string|number|null>>(`SELECT count(*) AS total,${parts.join(',')} FROM ${from}`)).rows[0]!;}
       catch(error){if(!isTimeout(error))throw error;limited='timeout';}
       const total=Number(measured?.total??0);
       if(measured&&total>0){
@@ -185,12 +193,12 @@ export class PostgresConnector implements ReadOnlyConnector {
 
   /** PostgreSQL's own per-column distinct estimates (pg_stats.n_distinct), read without scanning the table. */
   private async catalogDistinct(table:Table):Promise<Map<string,number|null>>{
-    const result=await this.pool.query<{name:string;n:number|null}>('SELECT attname AS name,n_distinct::float8 AS n FROM pg_stats WHERE schemaname=$1 AND tablename=$2',[table.schema_name,table.table_name]);
+    const result=await this.query<{name:string;n:number|null}>('SELECT attname AS name,n_distinct::float8 AS n FROM pg_stats WHERE schemaname=$1 AND tablename=$2',[table.schema_name,table.table_name]);
     return new Map(result.rows.map(row=>[row.name,row.n===null?null:Number(row.n)]));
   }
 
   async structuralReferences(scope?: ConnectorScope):Promise<PostgresStructuralReference[]&{skippedChecks?:number}>{
-    const result=await this.pool.query<PostgresStructuralReference>(`SELECT local_ns.nspname||'.'||local_table.relname AS "from",target_ns.nspname||'.'||target_table.relname AS "to",
+    const result=await this.query<PostgresStructuralReference>(`SELECT local_ns.nspname||'.'||local_table.relname AS "from",target_ns.nspname||'.'||target_table.relname AS "to",
       local_column.attname AS "fromColumn",target_column.attname AS "toColumn"
       FROM pg_constraint fk
       JOIN pg_class local_table ON local_table.oid=fk.conrelid
@@ -216,10 +224,10 @@ export class PostgresConnector implements ReadOnlyConnector {
     const readable=`FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
       WHERE c.relkind IN ('r','p') AND n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_toast%'
         AND has_schema_privilege(current_user,n.oid,'USAGE') AND has_table_privilege(current_user,c.oid,'SELECT')`;
-    const columns=await this.pool.query<{table_name:string;column_name:string;type_id:number}>(`SELECT n.nspname||'.'||c.relname AS table_name,a.attname::text AS column_name,a.atttypid::int AS type_id
+    const columns=await this.query<{table_name:string;column_name:string;type_id:number}>(`SELECT n.nspname||'.'||c.relname AS table_name,a.attname::text AS column_name,a.atttypid::int AS type_id
       ${readable.replace('WHERE','JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped WHERE')} LIMIT $1`,[this.maxCatalogRows+1]);
     if(columns.rows.length>this.maxCatalogRows)throw new Error('postgres_connector_result_limit_exceeded');
-    const keys=await this.pool.query<{table_name:string;kind:'p'|'f';key_columns:string[]}>(`SELECT n.nspname||'.'||c.relname AS table_name,k.contype::text AS kind,
+    const keys=await this.query<{table_name:string;kind:'p'|'f';key_columns:string[]}>(`SELECT n.nspname||'.'||c.relname AS table_name,k.contype::text AS kind,
         array(SELECT a.attname::text FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attnum=ANY(k.conkey)) AS key_columns
       ${readable.replace('WHERE','JOIN pg_constraint k ON k.conrelid=c.oid AND k.contype IN (\'p\',\'f\') WHERE')} LIMIT $1`,[this.maxCatalogRows+1]);
     if(keys.rows.length>this.maxCatalogRows)throw new Error('postgres_connector_result_limit_exceeded');
@@ -248,7 +256,7 @@ export class PostgresConnector implements ReadOnlyConnector {
       const [fromSchema,fromTable]=candidate.from.split('.');const [toSchema,toTable]=candidate.to.split('.');if(!fromSchema||!fromTable||!toSchema||!toTable)continue;
       // Decision 63: the first REFERENCE_CHECK_SAMPLE non-null values, each looked up in the target's primary key.
       const from=quoteIdentifier(candidate.fromColumn);const to=quoteIdentifier(candidate.toColumn);let counts;
-      try{counts=await this.pool.query<{source_count:string;matched_count:string}>(`SELECT count(*)::text AS source_count,
+      try{counts=await this.query<{source_count:string;matched_count:string}>(`SELECT count(*)::text AS source_count,
           count(*) FILTER (WHERE EXISTS(SELECT 1 FROM ${quoteIdentifier(toSchema)}.${quoteIdentifier(toTable)} dst WHERE dst.${to}=src.v))::text AS matched_count
         FROM (SELECT ${from} AS v FROM ${quoteIdentifier(fromSchema)}.${quoteIdentifier(fromTable)} WHERE ${from} IS NOT NULL LIMIT $1) src`,[REFERENCE_CHECK_SAMPLE]);}
       catch(error){if(!isSkippableCheckError(error))throw error;skippedChecks++;continue;}
@@ -264,7 +272,7 @@ export class PostgresConnector implements ReadOnlyConnector {
     const table=this.current.get(qualifiedName);if(!table)throw new Error('asset_not_found');
     if(!(await this.columns(table)).some(item=>item.column_name===column))throw new Error('column_not_found');
     const ref=quoteIdentifier(column);
-    const result=await this.pool.query<{v:string}>(`SELECT DISTINCT ${ref}::text AS v FROM ${quoteIdentifier(table.schema_name)}.${quoteIdentifier(table.table_name)} WHERE ${ref} IS NOT NULL${options.sample?` AND ${postgresIdSampleCondition(`${ref}::text`)}`:''} LIMIT $1`,[limit+1]);
+    const result=await this.query<{v:string}>(`SELECT DISTINCT ${ref}::text AS v FROM ${quoteIdentifier(table.schema_name)}.${quoteIdentifier(table.table_name)} WHERE ${ref} IS NOT NULL${options.sample?` AND ${postgresIdSampleCondition(`${ref}::text`)}`:''} LIMIT $1`,[limit+1]);
     if(result.rows.length>limit)return null;
     return (options.sample?result.rows.filter(row=>inIdSample(row.v)):result.rows).map(row=>row.v);
   }
@@ -277,7 +285,13 @@ export class PostgresConnector implements ReadOnlyConnector {
       result=await client.query<{qualified_name:string;schema_name:string;definition:string|null}>(`SELECT schemaname||'.'||viewname AS qualified_name,schemaname AS schema_name,definition FROM pg_catalog.pg_views WHERE schemaname NOT IN ('pg_catalog','information_schema')
         UNION ALL SELECT schemaname||'.'||matviewname,schemaname,definition FROM pg_catalog.pg_matviews ORDER BY 1 LIMIT $1`,[this.maxCatalogRows+1]);
       await client.query('COMMIT');
-    }catch(error){await client.query('ROLLBACK').catch(()=>undefined);throw error;}finally{client.release();}
+    }catch(error){
+      // A timed-out read leaves protocol state unknown. Discard the session instead of queuing rollback.
+      client.release(true);
+      if (isClientTimeout(error)) throw postgresClientTimeout(error);
+      throw error;
+    }
+    client.release();
     if(result.rows.length>this.maxCatalogRows)throw new Error('postgres_connector_result_limit_exceeded');
     return result.rows.map(row=>({qualifiedName:row.qualified_name,schema:row.schema_name,definition:row.definition}));
   }
@@ -285,7 +299,7 @@ export class PostgresConnector implements ReadOnlyConnector {
   /** Owners and creation order of tables, views, procedures and functions (decision 62); names as harvested elsewhere. */
   async objectOrigins():Promise<ObjectOrigin[]>{
     const filter=`n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_toast%'`;
-    const result=await this.pool.query<{qualified_name:string;owner:string|null;created_order:string|null}>(`SELECT n.nspname||'.'||c.relname AS qualified_name,pg_get_userbyid(c.relowner) AS owner,c.oid::bigint::text AS created_order
+    const result=await this.query<{qualified_name:string;owner:string|null;created_order:string|null}>(`SELECT n.nspname||'.'||c.relname AS qualified_name,pg_get_userbyid(c.relowner) AS owner,c.oid::bigint::text AS created_order
         FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relkind IN ('r','p','v','m') AND ${filter}
       UNION ALL
       SELECT n.nspname||'.'||p.proname||'('||pg_get_function_identity_arguments(p.oid)||')',pg_get_userbyid(p.proowner),p.oid::bigint::text
@@ -299,7 +313,7 @@ export class PostgresConnector implements ReadOnlyConnector {
     // PostgreSQL never encrypts definitions; parameters come from the declared argument names, types and modes. Mode t
     // (RETURNS TABLE) and a function's OUT arguments are the columns it returns, not parameters (decision 64); a
     // procedure's OUT arguments are output parameters.
-    const result=await this.pool.query<{qualified_name:string;kind:'function'|'procedure';definition:string;parameters:Array<{name:string;dataType:string;mode:string}>|null}>(`SELECT n.nspname||'.'||p.proname||'('||pg_get_function_identity_arguments(p.oid)||')' AS qualified_name,
+    const result=await this.query<{qualified_name:string;kind:'function'|'procedure';definition:string;parameters:Array<{name:string;dataType:string;mode:string}>|null}>(`SELECT n.nspname||'.'||p.proname||'('||pg_get_function_identity_arguments(p.oid)||')' AS qualified_name,
       CASE WHEN p.prokind='p' THEN 'procedure' ELSE 'function' END AS kind,pg_get_functiondef(p.oid) AS definition,
       (SELECT json_agg(json_build_object('name',coalesce(nullif(a.name,''),'$'||a.ord),'dataType',format_type(a.type,NULL),'mode',CASE coalesce(a.mode,'i') WHEN 'o' THEN 'out' WHEN 'b' THEN 'inout' WHEN 't' THEN 'table' ELSE 'in' END) ORDER BY a.ord)
          FROM unnest(coalesce(p.proallargtypes,p.proargtypes::oid[]),p.proargnames,p.proargmodes) WITH ORDINALITY AS a(type,name,mode,ord)) AS parameters
@@ -314,19 +328,19 @@ export class PostgresConnector implements ReadOnlyConnector {
     if (!target || !(await this.columns(target)).some(field => field.column_name === column && /^(text|character varying|character)$/.test(field.data_type))) return;
     const key = quoteIdentifier(column);
     const sql = `SELECT DISTINCT ${key} AS value FROM ${quoteIdentifier(target.schema_name)}.${quoteIdentifier(target.table_name)} WHERE ${key} IS NOT NULL ORDER BY value LIMIT 101`;
-    const result = await this.pool.query<{value: string}>(sql);
+    const result = await this.query<{value: string}>(sql);
     return {sql, values: result.rows.map(row => row.value)};
   }
 
   async executeQueryIntent(raw:unknown, includeCellSize=false):Promise<{sql:string;rows:Array<Record<string,unknown>>}>{
     const {sql,values}=await compilePostgresDialectIntent(raw,{table:name=>this.current.get(name),columns:async table=>(await this.columns(table)).map(item=>item.column_name),maxRows:this.maxRows,includeCellSize});
-    const result=await this.pool.query(sql,values);if(result.rows.length>this.maxRows)throw new Error('postgres_connector_result_limit_exceeded');return{sql,rows:result.rows as Array<Record<string,unknown>>};
+    const result=await this.query(sql,values);if(result.rows.length>this.maxRows)throw new Error('postgres_connector_result_limit_exceeded');return{sql,rows:result.rows as Array<Record<string,unknown>>};
   }
 
   async queryAggregate(key:string,metric:'count'):Promise<{metric:'count';value:number}>{
     if(metric!=='count')throw new Error('connector_query_not_supported');
     const found=[...this.current.entries()].find(([name])=>assetKey(name)===key);if(!found)throw new Error('asset_not_found');
-    const table=found[1];const result=await this.pool.query<{value:string}>(`SELECT count(*)::text AS value FROM ${quoteIdentifier(table.schema_name)}.${quoteIdentifier(table.table_name)}`);
+    const table=found[1];const result=await this.query<{value:string}>(`SELECT count(*)::text AS value FROM ${quoteIdentifier(table.schema_name)}.${quoteIdentifier(table.table_name)}`);
     return {metric:'count',value:Number(result.rows[0]!.value)};
   }
 
@@ -334,9 +348,14 @@ export class PostgresConnector implements ReadOnlyConnector {
 }
 
 /** PostgreSQL cancelled the statement because it ran past statement_timeout (SQLSTATE 57014). */
-const isTimeout=(error:unknown)=>(error as {code?:string})?.code==='57014';
+const postgresClientTimeout = (cause: unknown) => Object.assign(
+  new Error('PostgreSQL statement timeout waiting for source response', { cause }),
+  { code: 'SOURCE_QUERY_TIMEOUT' },
+);
+const isClientTimeout = (error: unknown) => error instanceof Error && error.message === 'Query read timeout';
+const isTimeout = (error: unknown) => ['57014', 'SOURCE_QUERY_TIMEOUT'].includes((error as { code?: string })?.code ?? '');
 
-export function createPostgresConnector(input:string|{connectionString:string;id?:string;name?:string;statementTimeoutMs?:number;maxRows?:number;maxCatalogRows?:number;sampling?:Partial<SamplingLimits>},name='PostgreSQL source'):PostgresConnector{
+export function createPostgresConnector(input:string|({connectionString:string;id?:string;name?:string;maxRows?:number;maxCatalogRows?:number;sampling?:Partial<SamplingLimits>} & SourceTimeoutOptions),name='PostgreSQL source'):PostgresConnector{
   const config=typeof input==='string'?{connectionString:input,name}:input;
   if(!config.connectionString)throw new Error('postgres_connection_string_required');
   return new PostgresConnector(config);

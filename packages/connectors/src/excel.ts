@@ -1,3 +1,4 @@
+import { sourceTimeouts, withSourceDeadline, type SourceTimeoutOptions } from './limits.js';
 import { columnScope, objectScope } from './scope.js';
 import { inIdSample } from './id-sample.js';
 // Read-only connector for an uploaded .xlsx workbook. Each worksheet with a header row is a table.
@@ -114,9 +115,13 @@ export class ExcelConnector implements ReadOnlyConnector {
   private sheets: WorkbookSheet[] | null = null;
   private engine: { instance: DuckDBInstance; connection: DuckDBConnection } | null = null;
 
-  constructor(readonly id: string, readonly name: string, private readonly bytes: Buffer, private readonly maxRows = 1_000) {}
+  private readonly timeouts: ReturnType<typeof sourceTimeouts>;
 
-  private async load(): Promise<WorkbookSheet[]> { this.sheets ??= await parseWorkbook(this.bytes); return this.sheets; }
+  constructor(readonly id: string, readonly name: string, private readonly bytes: Buffer, private readonly maxRows = 1_000, timeouts?: SourceTimeoutOptions) {
+    this.timeouts = sourceTimeouts(timeouts);
+  }
+
+  private async load(): Promise<WorkbookSheet[]> { this.sheets ??= await withSourceDeadline(parseWorkbook(this.bytes), this.timeouts.connect, 'source_unreachable'); return this.sheets; }
 
   async test(): Promise<{ ok: true; capabilities: ['discover', 'profile']; readOnly: true }> {
     await this.load();
@@ -203,29 +208,58 @@ export class ExcelConnector implements ReadOnlyConnector {
   }
 
   private async database(): Promise<DuckDBConnection> {
+    let connection: DuckDBConnection | undefined;
+    let expired = false;
+    const opening = this.openDatabase(next => {
+      connection = next;
+      if (expired) throw new Error('source_unreachable');
+    });
+    return withSourceDeadline(opening, this.timeouts.connect, 'source_unreachable', () => {
+      expired = true;
+      connection?.interrupt();
+    });
+  }
+
+  private async openDatabase(onConnect: (connection: DuckDBConnection) => void): Promise<DuckDBConnection> {
     if (this.engine) return this.engine.connection;
     const instance = await DuckDBInstance.create(':memory:');
-    const connection = await instance.connect();
-    for (const sheet of await this.load()) {
-      await connection.run(`CREATE TABLE ${quote(sheet.qualifiedName)} (${sheet.columns.map((column) => `${quote(column.name)} ${duckType[column.dataType]}`).join(', ')})`);
-      if (!sheet.rows.length) continue;
-      const appender = await connection.createAppender(sheet.qualifiedName);
-      for (const row of sheet.rows) {
-        for (const [position, column] of sheet.columns.entries()) {
-          const value = row[position] ?? null;
-          if (value === null) appender.appendNull();
-          else if (column.dataType === 'integer') appender.appendBigInt(BigInt(value as number));
-          else if (column.dataType === 'decimal') appender.appendDouble(value as number);
-          else if (column.dataType === 'boolean') appender.appendBoolean(value as boolean);
-          else if (column.dataType === 'date' || column.dataType === 'timestamp') appender.appendVarchar((value as Date).toISOString().slice(0, column.dataType === 'date' ? 10 : 19).replace('T', ' '));
-          else appender.appendVarchar(String(value));
+    let connection: DuckDBConnection | undefined;
+    try {
+      connection = await instance.connect();
+      onConnect(connection);
+      for (const sheet of await this.load()) {
+        await connection.run(`CREATE TABLE ${quote(sheet.qualifiedName)} (${sheet.columns.map((column) => `${quote(column.name)} ${duckType[column.dataType]}`).join(', ')})`);
+        if (!sheet.rows.length) continue;
+        const appender = await connection.createAppender(sheet.qualifiedName);
+        for (const row of sheet.rows) {
+          for (const [position, column] of sheet.columns.entries()) {
+            const value = row[position] ?? null;
+            if (value === null) appender.appendNull();
+            else if (column.dataType === 'integer') appender.appendBigInt(BigInt(value as number));
+            else if (column.dataType === 'decimal') appender.appendDouble(value as number);
+            else if (column.dataType === 'boolean') appender.appendBoolean(value as boolean);
+            else if (column.dataType === 'date' || column.dataType === 'timestamp') appender.appendVarchar((value as Date).toISOString().slice(0, column.dataType === 'date' ? 10 : 19).replace('T', ' '));
+            else appender.appendVarchar(String(value));
+          }
+          appender.endRow();
         }
-        appender.endRow();
+        appender.closeSync();
       }
-      appender.closeSync();
+      onConnect(connection);
+      this.engine = { instance, connection };
+      return connection;
+    } catch (error) {
+      connection?.closeSync();
+      instance.closeSync();
+      throw error;
     }
-    this.engine = { instance, connection };
-    return connection;
+  }
+
+  private async readQuery(sql: string, values?: never) {
+    const connection = await this.database();
+    return withSourceDeadline(
+      connection.runAndReadAll(sql, values), this.timeouts.query, 'source_query_timeout', () => connection.interrupt(),
+    );
   }
 
   async categoryValues(table: string, column: string): Promise<{sql: string; values: string[]} | undefined> {
@@ -234,7 +268,7 @@ export class ExcelConnector implements ReadOnlyConnector {
     const quoted = (value: string) => '"' + value.replaceAll('"','""') + '"';
     const key = quoted(column);
     const sql = `SELECT DISTINCT ${key} AS value FROM ${quoted(sheet.qualifiedName)} WHERE ${key} IS NOT NULL ORDER BY value LIMIT 101`;
-    const result = await (await this.database()).runAndReadAll(sql);
+    const result = await this.readQuery(sql);
     return {sql, values: result.getRowObjectsJS().map(row => String(row.value))};
   }
 
@@ -255,8 +289,7 @@ export class ExcelConnector implements ReadOnlyConnector {
       columns: async (table) => tables.get(table.table_name)?.columns ?? [],
       maxRows: this.maxRows, includeCellSize,
     });
-    const connection = await this.database();
-    const reader = await connection.runAndReadAll(sql, values as never);
+    const reader = await this.readQuery(sql, values as never);
     const rows = reader.getRowObjectsJS().map((row) => Object.fromEntries(Object.entries(row).map(([column, value]) => [column, typeof value === 'bigint' ? Number(value) : value])));
     if (rows.length > this.maxRows) throw new Error('excel_connector_result_limit_exceeded');
     return { sql, rows };
@@ -270,6 +303,6 @@ export class ExcelConnector implements ReadOnlyConnector {
   }
 }
 
-export function createExcelConnector(input: { id: string; name: string; workbook: Buffer; maxRows?: number }): ExcelConnector {
+export function createExcelConnector(input: { id: string; name: string; workbook: Buffer; maxRows?: number } & SourceTimeoutOptions): ExcelConnector {
   return new ExcelConnector(input.id, input.name, input.workbook, input.maxRows ?? 1_000);
 }

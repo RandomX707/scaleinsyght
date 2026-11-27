@@ -13,7 +13,7 @@ export function sourceErrorCode(error: unknown): string {
   const message = String(failure?.message ?? '');
   if (KNOWN.has(message)) return message;
   if (/^source_[a-z_]+$/.test(message)) return message;
-  if (code === '57014' || code === 'ETIMEOUT' || /canceling statement due to statement timeout|request timed out|timeout: request failed/i.test(message)) return 'source_query_timeout';
+  if (code === 'SOURCE_QUERY_TIMEOUT' || code === '57014' || code === 'ETIMEOUT' || /canceling statement due to statement timeout|request timed out|timeout: request failed/i.test(message)) return 'source_query_timeout';
   if (code === '42501' || /permission denied/i.test(message)) return 'source_permission_denied';
   if (code === '42P01' || code === '42P02') return 'source_object_missing';
   if (/^22/.test(code)) return 'source_object_unreadable';

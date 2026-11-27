@@ -90,11 +90,11 @@ export async function buildServer(options:ServerOptions):Promise<FastifyInstance
     if(!['postgres','sql_server'].includes(row.connector_type)||!row.ciphertext||!row.nonce||!row.auth_tag)throw new Error('source_connection_requires_credentials');
     if(row.connector_type==='sql_server'){
       const secret=decryptConnectionSecret<{host:string;port:number;database:string;username:string;password:string;trustServerCertificate:boolean}>({version:1,ciphertext:row.ciphertext.toString('base64'),nonce:row.nonce.toString('base64'),authTag:row.auth_tag.toString('base64')});
-      const connector=createSqlServerConnector({server:secret.host,port:secret.port,database:secret.database,username:secret.username,password:secret.password,encrypt:true,trustServerCertificate:secret.trustServerCertificate,id:connectionId,name:row.display_name||'SQL Server source',statementTimeoutMs:10_000,maxRows:1_000});postgresConnectors.set(connectionId,connector);return connector;
+      const connector=createSqlServerConnector({server:secret.host,port:secret.port,database:secret.database,username:secret.username,password:secret.password,encrypt:true,trustServerCertificate:secret.trustServerCertificate,id:connectionId,name:row.display_name||'SQL Server source',maxRows:1_000});postgresConnectors.set(connectionId,connector);return connector;
     }
     const secret=decryptConnectionSecret<{host:string;port:number;database:string;username:string;password:string;sslMode:'disable'|'require'|'verify-full'}>({version:1,ciphertext:row.ciphertext.toString('base64'),nonce:row.nonce.toString('base64'),authTag:row.auth_tag.toString('base64')});
     const url=new URL('postgresql://placeholder');url.hostname=secret.host;url.port=String(secret.port);url.username=secret.username;url.password=secret.password;url.pathname=`/${secret.database}`;url.searchParams.set('sslmode',secret.sslMode);
-    const connector=createPostgresConnector({connectionString:url.toString(),id:connectionId,name:row.display_name||'PostgreSQL source',statementTimeoutMs:10_000,maxRows:1_000});postgresConnectors.set(connectionId,connector);return connector;
+    const connector=createPostgresConnector({connectionString:url.toString(),id:connectionId,name:row.display_name||'PostgreSQL source',maxRows:1_000});postgresConnectors.set(connectionId,connector);return connector;
   };
   const availableConnectorSources=()=> (options.testSources??[]).filter(source=>['postgres','sql_server','snowflake','excel','lake','crm'].includes(source.type));
   app.get('/api/gateways',async(request,reply)=>{
