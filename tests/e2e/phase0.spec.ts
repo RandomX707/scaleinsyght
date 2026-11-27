@@ -6,6 +6,8 @@ async function signIn(page:import('@playwright/test').Page,email:string){
 }
 
 test('phase0_golden_login_reaches_empty_home_and_tenant_usage',async({page})=>{
+ // Decision 67 follow-up: the app serves its own fonts and calls no third-party font host.
+ const fontHosts:string[]=[];page.on('request',request=>{const host=new URL(request.url()).hostname;if(/fonts\.(googleapis|gstatic)\.com$/.test(host))fontHosts.push(host);});
  await page.goto(`/login?tenant=${encodeURIComponent(workspaceForTestEmail('phase0-login@synthetic.example'))}`);
  await expect(page.getByRole('heading',{name:'Sign in'})).toBeVisible();
  await signInToTestWorkspace(page,'phase0-login@synthetic.example');
@@ -26,6 +28,8 @@ test('phase0_golden_login_reaches_empty_home_and_tenant_usage',async({page})=>{
  // Daily model budget: USD caps per workspace and per person (decision 43).
  for(const label of ['Workspace spend today · daily cap','Your spend today · daily cap per person'])await expect(page.locator('.usage-model .usage-summary > div').filter({hasText:label}).locator('strong')).toHaveText(/^USD \d+\.\d{2} of \d+\.\d{2}$/);
  await expect(page.getByRole('menuitem',{name:'Sign out'})).toBeVisible();
+ expect(fontHosts).toEqual([]);
+ await expect.poll(()=>page.evaluate(()=>document.fonts.check('16px Inter'))).toBe(true);
 });
 
 test('phase1_connector_add_starts_with_empty_state_and_real_postgres_credentials',async({page})=>{
