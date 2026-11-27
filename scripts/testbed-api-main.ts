@@ -1,6 +1,8 @@
 import { config } from 'dotenv';
 import { resolve } from 'node:path';
 config({path:resolve('.env')});
+// Tests never pay for the model (decision 69): replay recordings unless MODEL_REPLAY=record is set explicitly.
+process.env.MODEL_REPLAY??='replay';
 const database=new URL(process.env.DATABASE_URL??'');if(!database.hostname)throw new Error('DATABASE_URL is required for the testbed API.');database.pathname=`/${process.env.SI_TEST_DATABASE??'si_test'}`;
 process.env.DATABASE_URL=database.toString();process.env.API_PORT??='3310';process.env.API_HOST??='127.0.0.1';
 process.env.PUBLIC_APP_URL??='http://127.0.0.1:4184';

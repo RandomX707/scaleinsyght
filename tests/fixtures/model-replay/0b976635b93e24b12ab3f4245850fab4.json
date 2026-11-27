@@ -1,0 +1,49 @@
+{
+ "hash": "0b976635b93e24b12ab3f4245850fab4",
+ "recordedAt": "2026-11-27T19:29:33.213Z",
+ "model": "gpt-6.2-sol",
+ "purpose": "verify",
+ "request": {
+  "max_completion_tokens": 800,
+  "messages": [
+   {
+    "content": "You check whether a typed, read-only query plan answers a question exactly: the same subject, measure, grouping, conditions, ranking and sources. You never see row values. Respond with a single JSON object.",
+    "role": "system"
+   },
+   {
+    "content": "{\"question\":\"Question: and how many of them have a discharge date?\\nPrior turns: user: How many visits are in the operations workbook?\\nassistant: The operations workbook contains 768 visits.\\nPlan: Operations workbook: the number of Visits records, where discharged_on is not null\\nDoes this plan answer this question? A plan over a loosely related object, a single total where a breakdown is asked for, or a missing condition does not. Counting the rows of a table counts its distinct records.\",\"metadata\":{\"structural\":{\"sources\":[{\"index\":0,\"name\":\"Operations workbook\",\"type\":\"excel\",\"assets\":[{\"columns\":[{\"name\":\"amount\",\"label\":\"Amount\",\"data_type\":\"decimal\",\"sensitivity_tags\":[]},{\"name\":\"charge_id\",\"label\":\"Charge ID\",\"data_type\":\"integer\",\"sensitivity_tags\":[]},{\"name\":\"charge_type\",\"label\":\"Charge Type\",\"data_type\":\"text\",\"sensitivity_tags\":[]},{\"name\":\"charged_on\",\"label\":\"Charged On\",\"data_type\":\"timestamp\",\"sensitivity_tags\":[]},{\"name\":\"department\",\"label\":\"Department\",\"data_type\":\"text\",\"sensitivity_tags\":[]},{\"name\":\"patient_id\",\"label\":\"Patient ID\",\"data_type\":\"integer\",\"sensitivity_tags\":[]},{\"name\":\"status\",\"label\":\"Status\",\"data_type\":\"text\",\"sensitivity_tags\":[]},{\"name\":\"visit_id\",\"label\":\"Visit ID\",\"data_type\":\"integer\",\"sensitivity_tags\":[]}],\"qualified_name\":\"Charges\"},{\"columns\":[{\"name\":\"date_of_birth\",\"label\":\"Date of Birth\",\"data_type\":\"date\",\"sensitivity_tags\":[\"regulated\"]},{\"name\":\"full_name\",\"label\":\"Full Name\",\"data_type\":\"text\",\"sensitivity_tags\":[\"personal\"]},{\"name\":\"mrn\",\"label\":\"MRN\",\"data_type\":\"text\",\"sensitivity_tags\":[\"identifier\"]},{\"name\":\"patient_id\",\"label\":\"Patient ID\",\"data_type\":\"integer\",\"sensitivity_tags\":[]},{\"name\":\"phone\",\"label\":\"Phone\",\"data_type\":\"text\",\"sensitivity_tags\":[\"personal\"]}],\"qualified_name\":\"Patients\"},{\"columns\":[{\"name\":\"date_of_birth\",\"label\":\"Date of Birth\",\"data_type\":\"date\",\"sensitivity_tags\":[\"regulated\"]},{\"name\":\"full_name\",\"label\":\"Full Name\",\"data_type\":\"text\",\"sensitivity_tags\":[\"personal\"]},{\"name\":\"mrn\",\"label\":\"MRN\",\"data_type\":\"text\",\"sensitivity_tags\":[\"identifier\"]},{\"name\":\"patient_id\",\"label\":\"Patient ID\",\"data_type\":\"integer\",\"sensitivity_tags\":[]},{\"name\":\"phone_number\",\"label\":\"Phone Number\",\"data_type\":\"text\",\"sensitivity_tags\":[\"personal\"]},{\"name\":\"registered_on\",\"label\":\"Registered On\",\"data_type\":\"timestamp\",\"sensitivity_tags\":[]}],\"qualified_name\":\"Registrations\"},{\"columns\":[{\"name\":\"admitted_on\",\"label\":\"Admitted On\",\"data_type\":\"timestamp\",\"sensitivity_tags\":[]},{\"name\":\"department\",\"label\":\"Department\",\"data_type\":\"text\",\"sensitivity_tags\":[]},{\"name\":\"discharged_on\",\"label\":\"Discharged On\",\"data_type\":\"timestamp\",\"sensitivity_tags\":[]},{\"name\":\"patient_id\",\"label\":\"Patient ID\",\"data_type\":\"integer\",\"sensitivity_tags\":[]},{\"name\":\"provider_id\",\"label\":\"Provider ID\",\"data_type\":\"integer\",\"sensitivity_tags\":[]},{\"name\":\"visit_id\",\"label\":\"Visit ID\",\"data_type\":\"integer\",\"sensitivity_tags\":[]}],\"qualified_name\":\"Visits\"}]}],\"relationships\":[{\"source_index\":0,\"from_name\":\"Charges.patient_id\",\"to_name\":\"Patients.patient_id\",\"evidence_method\":\"inferred\",\"confidence_score\":\"1.000\"},{\"source_index\":0,\"from_name\":\"Charges.visit_id\",\"to_name\":\"Visits.visit_id\",\"evidence_method\":\"inferred\",\"confidence_score\":\"1.000\"},{\"source_index\":0,\"from_name\":\"Registrations.mrn\",\"to_name\":\"Patients.mrn\",\"evidence_method\":\"inferred\",\"confidence_score\":\"1.000\"},{\"source_index\":0,\"from_name\":\"Registrations.patient_id\",\"to_name\":\"Patients.patient_id\",\"evidence_method\":\"inferred\",\"confidence_score\":\"1.000\"},{\"source_index\":0,\"from_name\":\"Visits.patient_id\",\"to_name\":\"Patients.patient_id\",\"evidence_method\":\"inferred\",\"confidence_score\":\"1.000\"}]},\"descriptive\":{}},\"identifier_fingerprints\":[]}",
+    "role": "user"
+   }
+  ],
+  "model": "gpt-6.2-sol",
+  "response_format": {
+   "json_schema": {
+    "name": "plan_verification",
+    "schema": {
+     "additionalProperties": false,
+     "properties": {
+      "answers_question": {
+       "type": "boolean"
+      },
+      "reason": {
+       "description": "One short sentence.",
+       "type": "string"
+      }
+     },
+     "required": [
+      "answers_question",
+      "reason"
+     ],
+     "type": "object"
+    },
+    "strict": true
+   },
+   "type": "json_schema"
+  }
+ },
+ "response": {
+  "content": "{\"answers_question\":true,\"reason\":\"The plan counts visits in the Operations workbook that have a non-null discharge date.\"}",
+  "promptTokens": 958,
+  "completionTokens": 33
+ }
+}

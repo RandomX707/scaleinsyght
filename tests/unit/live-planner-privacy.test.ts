@@ -94,3 +94,24 @@ it('never runs a plan whose declared columns do not cover the columns it reads',
   expect(complete).toHaveBeenCalledTimes(2);
   expect(complete.mock.calls[1]![0].question).toContain('plan_reads_undeclared_columns: dbo.encounters.visit_type must be in read_columns');
 });
+
+// K16: a tagged group key with an untagged shown name ends in the privacy refusal after one planning call.
+it('refuses a plan whose group key is tagged even though the shown name is not', async () => {
+  query.mockReset(); complete.mockReset();
+  query.mockResolvedValue({rows:[]});
+  query.mockResolvedValueOnce({rows:[{source_id:'source',assets:[
+    {qualified_name:'dbo.encounters',columns:[{name:'encounter_id',sensitivity_tags:[]},{name:'provider_id',sensitivity_tags:[]}]},
+    {qualified_name:'dbo.providers',columns:[{name:'provider_id',sensitivity_tags:['identifier']},{name:'provider_name',sensitivity_tags:[]}]},
+  ]}]});
+  query.mockResolvedValueOnce({rows:[{source_index:0,from_name:'dbo.encounters.provider_id',to_name:'dbo.providers.provider_id',evidence_method:'declared',confidence_score:1}]});
+  const step = {source_index:0,kind:'grouped_join',table:'dbo.encounters',join:'dbo.encounters.provider_id = dbo.providers.provider_id',groupBy:'dbo.providers.provider_name',groupKey:'dbo.providers.provider_id',
+    entityColumn:null,operation:'count',aggregateColumn:null,order:'desc',limit:null,filters:[],
+    declared:{subject_table:'dbo.encounters',measure:'count',measure_column:null,grouping_column:'dbo.providers.provider_name',filter_columns:[]}};
+  complete.mockResolvedValueOnce({model:'planner',inputTokens:1,outputTokens:1,text:JSON.stringify({privacy_refusal:null,lineage:null,intents:[step],
+    declaration:{subject:'encounters',grouping:'provider',conditions:[],comparison:false,answerable:true,
+      exposed_columns:['dbo.providers.provider_name'],read_columns:['dbo.providers.provider_name','dbo.providers.provider_id','dbo.encounters.provider_id']}})});
+  const result = await planLiveQuestion({} as Pool,'tenant','How many encounters does each provider have? Use provider names.',[
+    {source_id:'source',agent_id:'agent',group_id:'group',group_version:1,display_name:'SQL Server hospital',connector_type:'sql_server'}],[]);
+  expect(result).toMatchObject({kind:'rejected',reason:'analytic_sensitive_column'});
+  expect(complete).toHaveBeenCalledTimes(1);
+});

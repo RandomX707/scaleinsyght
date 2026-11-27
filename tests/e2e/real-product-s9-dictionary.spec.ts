@@ -97,14 +97,16 @@ test('s9_dictionary_matches_testbed_truth_for_every_connector_type_and_exports_o
   // Approve all for a search: one confirmation, then every drafted description it shows.
   await page.getByLabel('Search tables, columns or SQL code').fill('X_CENSUS');
   const approveAll = side(page).locator('.dict-approve-all');
-  await expect(approveAll).toContainText('2 drafted descriptions match this search');
+  await expect(approveAll).toContainText('Descriptions matching this search: 2 drafted');
   await approveAll.getByRole('button', { name: 'Approve all' }).click();
   const confirm = page.getByRole('dialog', { name: 'Approve all drafted descriptions' });
   await expect(confirm).toContainText('Approve 2 drafted descriptions matching “X_CENSUS” on Standard?');
   await page.screenshot({ path: screen('approve-all') });
   await confirm.getByRole('button', { name: 'Approve 2' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'approved' })).toHaveText('2 descriptions approved.');
-  await expect(approveAll).toHaveCount(0);
+  // Approved, so the line says so and there is nothing left to approve.
+  await expect(approveAll).toContainText('Descriptions matching this search: 2 approved');
+  await expect(approveAll.getByRole('button', { name: 'Approve all' })).toHaveCount(0);
   await side(page).getByRole('button', { name: 'X_CENSUS_SNAP', exact: true }).click();
   await expect(header.locator('.dict-review')).toContainText('Approved by Test Analyst');
   await page.getByLabel('Search tables, columns or SQL code').fill('');

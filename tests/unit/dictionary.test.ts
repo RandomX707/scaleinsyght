@@ -5,7 +5,7 @@ import { analyseDefinition } from '@scaleinsyght/profiler';
 import { splitRoutineArguments } from '@scaleinsyght/connectors';
 import { dictionaryDocx, dictionaryMarkdown } from '@scaleinsyght/reports';
 import JSZip from 'jszip';
-import { listTitles, objectTitle } from '../../apps/web/src/dictionary.js';
+import { descriptionLine, listTitles, objectTitle } from '../../apps/web/src/dictionary.js';
 
 describe('Standard and Custom by object type (decision 64)', () => {
   it('calls base data Standard and everything built over it Custom, whatever the name or source', () => {
@@ -52,6 +52,15 @@ describe('Markdown and Word exports carry table descriptions (decision 64)', () 
     expect(document).toContain('Drafted: Table encounters with 5 columns.');
     expect(document).toContain('>One row per ward.<');
     expect(document).not.toContain('Drafted: One row per ward.');
+  });
+});
+
+describe('description line', () => {
+  it('names every state so the counts add up to what is shown', () => {
+    expect(descriptionLine({ drafted: 271, approved: 1, edited: 0, imported: 0 })).toBe('271 drafted, 1 approved');
+    expect(descriptionLine({ drafted: 1200, approved: 0, edited: 2, imported: 5 })).toBe('1,200 drafted, 2 edited, 5 from a dictionary');
+    expect(descriptionLine({ drafted: 0, approved: 3, edited: 0, imported: 0 })).toBe('3 approved');
+    expect(descriptionLine({ drafted: 0, approved: 0, edited: 0, imported: 0 })).toBe('');
   });
 });
 

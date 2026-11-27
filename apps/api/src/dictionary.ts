@@ -199,6 +199,23 @@ async function describedNames(client: PoolClient, tenantId: string, connectionId
      UNION SELECT qualified_name FROM graph.description_reviews WHERE tenant_id=$1 AND source_id=$2 AND field_name='' AND status<>'draft'`, [tenantId, connectionId])).rows.map((row) => row.name));
 }
 
+/** How a description came to be, for each described object: from an imported dictionary or dbt, or approved or edited. */
+async function describedOrigins(client: PoolClient, tenantId: string, connectionId: string): Promise<Map<string, 'imported' | 'approved' | 'edited'>> {
+  const rows = (await client.query<{ name: string; origin: string }>(
+    `SELECT table_name AS name,'imported' AS origin FROM graph.dictionary_descriptions WHERE tenant_id=$1 AND source_id=$2 AND column_name=''
+     UNION ALL SELECT qualified_name,status FROM graph.description_reviews WHERE tenant_id=$1 AND source_id=$2 AND field_name='' AND status<>'draft'`, [tenantId, connectionId])).rows;
+  // Imported or dbt text wins over a review, as on the object itself.
+  const origins = new Map<string, 'imported' | 'approved' | 'edited'>();
+  for (const row of rows) if (row.origin === 'imported' || !origins.has(row.name)) origins.set(row.name, row.origin as 'imported' | 'approved' | 'edited');
+  return origins;
+}
+
+/** Description states of the objects shown, so the list can say "271 drafted, 1 approved" rather than leave a gap. */
+export function descriptionStates(objects: ListedObject[], origins: Map<string, 'imported' | 'approved' | 'edited'>, drafted: number) {
+  const count = (origin: string) => objects.filter((object) => origins.get(object.name) === origin).length;
+  return { drafted, approved: count('approved'), edited: count('edited'), imported: count('imported') };
+}
+
 /** Objects still showing a drafted description: ones Scale Insyght drafts that nobody has approved, edited or imported. */
 const stillDrafted = (objects: ListedObject[], described: Set<string>, source: Source) =>
   source.connector_type === 'dbt' || source.connector_type === 'tableau' ? [] : objects.filter((object) => DRAFTED_KINDS.has(object.kind) && !described.has(object.name));
@@ -290,6 +307,7 @@ export function registerDictionaryRoutes(app: FastifyInstance, deps: DictionaryD
         },
         coverage: { tables: { documented: coverageRow.documented_tables + draftedTables, drafted: draftedTables, total: coverageRow.tables }, columns: { documented: coverageRow.documented_columns, total: coverageRow.columns } },
         drafted: drafted.length,
+        descriptions: descriptionStates(objects, await describedOrigins(client, current.tenantId, source.connection_id), drafted.length),
         newerThanDictionary: latest ? { count: newerCount, names: newer!.rows.slice(0, 20).map((row) => row.qualified_name) } : null,
       };
     });
@@ -312,6 +330,7 @@ export function registerDictionaryRoutes(app: FastifyInstance, deps: DictionaryD
       const { shown: inTab, columnHits } = await objectsInView(client, current.tenantId, source, objects, { tab, search });
       // How many of the shown objects still have a drafted description, for "Approve all" on this tab or filter.
       const drafted = stillDrafted(inTab, await describedNames(client, current.tenantId, source.connection_id), source).length;
+      const descriptions = descriptionStates(inTab, await describedOrigins(client, current.tenantId, source.connection_id), drafted);
       const grouped = new Map<string, { key: string; label: string; items: ListedObject[] }>();
       for (const object of inTab) { const group = groupFor(object); const entry = grouped.get(group.key) ?? { ...group, items: [] }; entry.items.push(object); grouped.set(group.key, entry); }
       const groups = [...grouped.values()].sort((a, b) => GROUP_ORDER.indexOf(a.key) - GROUP_ORDER.indexOf(b.key))
@@ -335,7 +354,7 @@ export function registerDictionaryRoutes(app: FastifyInstance, deps: DictionaryD
       // How much procedure SQL could be read here, as the prototype shows on the Custom tab.
       const coverage = (await client.query<{ routines: number; encrypted: number }>(`SELECT count(*)::int AS routines,count(*) FILTER (WHERE encrypted)::int AS encrypted FROM graph.definitions
         WHERE tenant_id=$1 AND source_id=$2 AND active AND kind IN ('procedure','function','package')`, [current.tenantId, source.connection_id])).rows[0]!;
-      return { tab, hasVendorDictionary, counts, drafted, groups, sqlHits,
+      return { tab, hasVendorDictionary, counts, drafted, descriptions, groups, sqlHits,
         sqlCoverage: coverage.routines ? { routines: coverage.routines, captured: coverage.routines - coverage.encrypted, encrypted: coverage.encrypted } : null };
     });
     if (!body) return reply.code(404).send({ error: 'connection_not_found' });
