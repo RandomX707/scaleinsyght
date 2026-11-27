@@ -32,8 +32,8 @@ test('empty_new_tenant_has_no_canned_answer_or_saved_questions',async({page})=>{
  await expect(page.getByRole('heading',{name:'Connect a source to get started'})).toBeVisible();
  await expect(page.getByRole('button',{name:'Send question'})).toBeDisabled();
  // Saved questions live on My agent, as in the prototype.
- await page.goto('/my-agent');await expect(page.getByRole('heading',{name:'Saved questions'})).toBeVisible();
- await expect(page.getByText('No saved questions yet.')).toBeVisible();
+ await page.goto('/my-agent');await expect(page.getByRole('heading',{name:'Saved questions',exact:true})).toBeVisible();
+ await expect(page.getByRole('heading',{name:'No saved questions yet',exact:true})).toBeVisible();
 });
 
 test('c5_governed_report_exports_evidence_and_has_an_owner_scoped_daily_schedule',async({page})=>{
