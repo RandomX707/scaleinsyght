@@ -159,7 +159,8 @@ const NAV_SECTIONS: Array<{ id: 'workspace' | 'platform'; label: string; items: 
   { id: 'platform', label: 'Platform', items: [
     { href: '/agents', label: 'Agents', icon: '♙', current: (path) => path.startsWith('/agents') },
     { href: '/bi-reports', label: 'BI reports', icon: '▧', current: (path) => path.startsWith('/bi-reports') },
-    { href: '/hub', label: 'Hub integrations', icon: '◈', current: (path) => path.startsWith('/hub') },
+    // Hub integrations is not in the sidebar until phase 4 is reviewed: it came from the phase 4 spec, which is
+    // "approved by agent, pending review", and CLAUDE.md 10.2's sidebar does not list it. The /hub route stays.
     { href: '/approval-matrix', label: 'Approval matrix', icon: '✓', current: (path) => path.startsWith('/approval-matrix') },
     { href: '/controls', label: 'Controls', icon: '⚙', current: (path) => path.startsWith('/controls') },
   ] },
