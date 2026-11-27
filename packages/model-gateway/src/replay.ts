@@ -78,7 +78,7 @@ export function requestKey(body: string): { hash: string; request: unknown; map:
 }
 const purposeOf = (request: unknown) => {
   const system = (request as { messages?: Array<{ role?: string; content?: string }> }).messages?.find((message) => message.role === 'system')?.content ?? '';
-  return /check whether a typed/.test(system) ? 'verify' : /write typed, read-only query plans/.test(system) ? 'plan' : /describ/i.test(system) ? 'describe' : 'answer';
+  return /check whether a typed/.test(system) ? 'verify' : /write typed, read-only query plans/.test(system) ? 'plan' : /describ|descriptions of database objects/i.test(system) ? 'describe' : 'answer';
 };
 
 /** Wraps the live fetch for the given mode. The gateway uses this by default, so every construction site is covered. */
