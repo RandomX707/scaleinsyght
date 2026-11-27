@@ -6,7 +6,7 @@ import { withTenant } from '@scaleinsyght/db';
 import { queueNewObjectReview } from './controls.js';
 import { runIdAgent } from './id-agent.js';
 import { captureDefinitions } from './definitions.js';
-export { analyseDefinition, captureDefinitions } from './definitions.js';
+export { analyseDefinition, captureDefinitions, type DefinitionCatalog } from './definitions.js';
 import { readProfileState, recordFindings } from './findings.js';
 import { isObjectError, sourceErrorCode } from './source-errors.js';
 import { detectCopies } from './copies.js';
