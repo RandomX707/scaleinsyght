@@ -5,7 +5,7 @@ import { DEFAULT_SAMPLING, SENSITIVITY_MIN_VALUES, SENSITIVITY_VALUES, type Samp
 import { createHash } from 'node:crypto';
 import { Pool, type QueryResultRow } from 'pg';
 import { classifyColumn } from '@scaleinsyght/classification';
-import { POSSIBLE_REFERENCE_COVERAGE, REFERENCE_CHECK_SAMPLE, isSkippableCheckError, withSkippedChecks, UNMEASURED, type ColumnStatistics, type ConnectorScope, type DiscoveryResult, type Routine, type ObjectProfile, type ReadOnlyConnector , type ObjectOrigin } from './index.js';
+import { POSSIBLE_REFERENCE_COVERAGE, REFERENCE_CHECK_SAMPLE, isSkippableCheckError, isSourceQueryTimeout, withSkippedChecks, type SkippedReference, UNMEASURED, type ColumnStatistics, type ConnectorScope, type DiscoveryResult, type Routine, type ObjectProfile, type ReadOnlyConnector , type ObjectOrigin } from './index.js';
 
 export type Table = { schema_name: string; table_name: string; table_type: 'BASE TABLE' | 'VIEW'; readable?: boolean };
 type Column = { column_name: string; data_type: string; is_nullable: 'YES' | 'NO'; comment: string | null };
@@ -96,7 +96,8 @@ export class PostgresConnector implements ReadOnlyConnector {
   async discover(input:{mode:'profile'|'nightly';scope?:ConnectorScope}):Promise<DiscoveryResult>{
     const tables=await this.tables();this.current.clear();
     const estimates=await this.catalogEstimates();this.estimates=estimates;
-    const result:DiscoveryResult={objects:[],listOnlyObjects:[],excludedObjects:[],inaccessibleObjects:[],coverage:{listed:0,accessible:0,inaccessible:0},unchanged:0,unchangedObjects:[]};
+    const timedOutObjects = new Set<string>();
+    const result:DiscoveryResult={timedOutObjects,objects:[],listOnlyObjects:[],excludedObjects:[],inaccessibleObjects:[],coverage:{listed:0,accessible:0,inaccessible:0},unchanged:0,unchangedObjects:[]};
     const profiles=new Map<string,{table:Table;columns:Column[];key:string;signature:string}>();
     for(const table of tables){
       const qualifiedName=`${table.schema_name}.${table.table_name}`;this.current.set(qualifiedName,table);result.coverage.listed++;
@@ -108,10 +109,18 @@ export class PostgresConnector implements ReadOnlyConnector {
       if(mode==='list_only'){result.listOnlyObjects.push({qualifiedName,type:objectType});continue;}
       // The change signature covers the columns and, for base tables, the row count, so a nightly run re-profiles a table
       // that only gained or lost rows (decision 48).
-      const columns=await this.columns(table);
+      let columns: Column[];
+      try { columns = await this.columns(table); }
+      catch (error) {
+        if (!isSourceQueryTimeout(error)) throw error;
+        timedOutObjects.add(qualifiedName);
+        result.objects.push({ assetKey: assetKey(qualifiedName), qualifiedName, type: objectType, scopeMode: 'profile' });
+        result.coverage.accessible++;
+        continue;
+      }
       // Base tables only: a view's count runs its query, which may be slow. Unavailable counts are retried on the next refresh.
       let rows:string|null='view';
-      if(table.table_type==='BASE TABLE'){const size=await this.rowCount(table,estimates.get(qualifiedName)??null);rows=size.rows===null?null:String(size.rows);}
+      if(table.table_type==='BASE TABLE'){const size=await this.rowCount(table,estimates.get(qualifiedName)??null);rows=size.rows===null||size.timedOut?null:String(size.rows);}
       const signature=createHash('sha256').update(JSON.stringify({rows,columns:columns.map(({column_name,data_type,is_nullable,comment})=>({column_name,data_type,is_nullable,comment}))})).digest('hex');
       const key=assetKey(qualifiedName);profiles.set(qualifiedName,{table,columns,key,signature});result.coverage.accessible++;
       const object={assetKey:key,qualifiedName,type:table.table_type==='VIEW'?'view' as const:'table' as const,scopeMode:'profile' as const};
@@ -130,10 +139,12 @@ export class PostgresConnector implements ReadOnlyConnector {
   }
 
   /** A table's size: exact for small or unanalysed tables, the catalog estimate for large ones or when counting times out. */
-  private async rowCount(table:Table,estimate:number|null):Promise<{rows:number|null;estimated:boolean}>{
+  private async rowCount(table:Table,estimate:number|null):Promise<{rows:number|null;estimated:boolean;timedOut?:boolean}>{
     if(estimate!==null&&estimate>this.limits.exactCountLimit)return{rows:estimate,estimated:true};
     try{return{rows:Number((await this.query<{n:string}>(`SELECT count(*)::text AS n FROM ${quoteIdentifier(table.schema_name)}.${quoteIdentifier(table.table_name)}`)).rows[0]!.n),estimated:false};}
-    catch{return estimate===null?{rows:null,estimated:false}:{rows:estimate,estimated:true};}
+    catch(error){
+      return { rows: estimate, estimated: estimate !== null, timedOut: isSourceQueryTimeout(error) };
+    }
   }
 
   async profile(key:string,scope?:ConnectorScope):Promise<ObjectProfile>{
@@ -153,8 +164,8 @@ export class PostgresConnector implements ReadOnlyConnector {
     // A query that still runs out of time does not fail the profile (bug 6): the table keeps its columns, row count and
     // declared tags, but gets no samples or statistics. Statistics are skipped whenever sampling was cut short, so an
     // unsampled column can never get statistics (contract 7).
-    let limited:'timeout'|undefined;
-    const textColumns=rowCount===null?[]:columns.filter(column=>!columnScope(scope,qualifiedName,column.column_name)&&POSTGRES_TEXT.has(column.data_type));
+    let limited: 'timeout' | undefined = size.timedOut ? 'timeout' : undefined;
+    const textColumns=limited||rowCount===null?[]:columns.filter(column=>!columnScope(scope,qualifiedName,column.column_name)&&POSTGRES_TEXT.has(column.data_type));
     try{
       if(textColumns.length){
         const rows=(await this.query<Record<string,string|null>>(`SELECT ${textColumns.map((column,index)=>`${quoteIdentifier(column.column_name)}::text AS t${index}`).join(',')} FROM ${relation}${sampled(this.limits.sensitivitySampleRows)} LIMIT ${this.limits.sensitivitySampleRows}`)).rows;
@@ -182,7 +193,12 @@ export class PostgresConnector implements ReadOnlyConnector {
       catch(error){if(!isTimeout(error))throw error;limited='timeout';}
       const total=Number(measured?.total??0);
       if(measured&&total>0){
-        const catalog=estimated?await this.catalogDistinct(table).catch(()=>new Map<string,number|null>()):new Map<string,number|null>();
+        const catalog = estimated
+          ? await this.catalogDistinct(table).catch(error => {
+              if (isSourceQueryTimeout(error)) limited = 'timeout';
+              return new Map<string, number | null>();
+            })
+          : new Map<string, number | null>();
         measurable.forEach((column,index)=>statistics.set(column.column_name,{nullRate:1-Number(measured![`n${index}`])/total,
           distinctCount:estimated?distinctFromCatalog(catalog.get(column.column_name),rowCount):Number(measured![`d${index}`]),
           averageLength:measured![`l${index}`]===null?null:Number(measured![`l${index}`]),...(estimated?{estimated:true}:{})}));
@@ -249,7 +265,7 @@ export class PostgresConnector implements ReadOnlyConnector {
     found.sort((a,b)=>a.from.localeCompare(b.from)||a.to.localeCompare(b.to)||a.fromColumn.localeCompare(b.fromColumn));
     if(found.length>this.maxCatalogRows)throw new Error('postgres_connector_result_limit_exceeded');
     const inferredCandidates={rows:found};
-    const declared=new Set(references.map(item=>`${item.from}\0${item.fromColumn}\0${item.to}\0${item.toColumn}`));let skippedChecks=0;
+    const declared=new Set(references.map(item=>`${item.from}\0${item.fromColumn}\0${item.to}\0${item.toColumn}`));let skippedChecks=0; const timedOutChecks: SkippedReference[] = [];
     for(const candidate of inferredCandidates.rows){
       if(!permits(candidate.from,candidate.fromColumn)||!permits(candidate.to,candidate.toColumn))continue;
       if(declared.has(`${candidate.from}\0${candidate.fromColumn}\0${candidate.to}\0${candidate.toColumn}`))continue;
@@ -259,12 +275,12 @@ export class PostgresConnector implements ReadOnlyConnector {
       try{counts=await this.query<{source_count:string;matched_count:string}>(`SELECT count(*)::text AS source_count,
           count(*) FILTER (WHERE EXISTS(SELECT 1 FROM ${quoteIdentifier(toSchema)}.${quoteIdentifier(toTable)} dst WHERE dst.${to}=src.v))::text AS matched_count
         FROM (SELECT ${from} AS v FROM ${quoteIdentifier(fromSchema)}.${quoteIdentifier(fromTable)} WHERE ${from} IS NOT NULL LIMIT $1) src`,[REFERENCE_CHECK_SAMPLE]);}
-      catch(error){if(!isSkippableCheckError(error))throw error;skippedChecks++;continue;}
+      catch(error){if(!isSkippableCheckError(error))throw error;skippedChecks++;if(isSourceQueryTimeout(error))timedOutChecks.push(candidate);continue;}
       const sourceCount=Number(counts.rows[0]?.source_count??0);const matchedCount=Number(counts.rows[0]?.matched_count??0);
       if(sourceCount>0&&matchedCount/sourceCount>=POSSIBLE_REFERENCE_COVERAGE)references.push({...candidate,evidenceMethod:'inferred',confidence:matchedCount/sourceCount,matchedCount,sourceCount,sampled:sourceCount>=REFERENCE_CHECK_SAMPLE});
       if(references.length>=this.maxCatalogRows)throw new Error('postgres_connector_result_limit_exceeded');
     }
-    return withSkippedChecks(references,skippedChecks);
+    return withSkippedChecks(references,skippedChecks,timedOutChecks);
   }
 
   /** Distinct values for the ID agent; with sample, only values the consistent rule keeps (decision 61), selected in SQL. */
