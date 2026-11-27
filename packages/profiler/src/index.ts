@@ -34,7 +34,7 @@ export interface ProfileSummary {
   /** Scrubbed definitions stored for this connection (decision 53). */
   definitions?: { captured: number; changed: number; encrypted: number };
   /** ID agent: identifier fields found, fields fingerprinted and probable cross-source matches. */
-  ids?: { fields: number; fingerprinted: number; matches: number };
+  ids?: { fields: number; fingerprinted: number; reused?: number; matches: number };
   /** Findings recorded by comparing this run with the previous state (decision 48). */
   findings?: number;
   /** Objects whose owner was recorded, and procedures or functions found to be copies (decision 62). */
@@ -168,7 +168,14 @@ export async function runProfile(
       );
     });
   };
-  const discovery: DiscoveryResult = await (async () => { try { return await input.connector.discover(scope ? { mode, scope } : { mode }); } catch (error) { beat?.stop(); throw error; } })();
+  // K11: a nightly run compares each table with the change signature stored by the last run, so whichever worker runs
+  // it (a fresh connector remembers nothing) skips tables that did not change.
+  const known = mode === 'nightly' ? await withTenant(pool, input.tenantId, async (client) => new Map((await client.query<{ qualified_name: string; signature: string }>(
+    `SELECT a.qualified_name, v.structural_attributes->>'change_signature' AS signature FROM graph.assets a
+       JOIN LATERAL (SELECT structural_attributes FROM graph.asset_versions WHERE tenant_id=a.tenant_id AND asset_id=a.asset_id ORDER BY version DESC LIMIT 1) v ON true
+      WHERE a.tenant_id=$1 AND a.source_id=$2 AND a.asset_type='dataset' AND v.structural_attributes ? 'change_signature'`,
+    [input.tenantId, input.connectionId])).rows.map((row) => [row.qualified_name, row.signature] as const))) : undefined;
+  const discovery: DiscoveryResult = await (async () => { try { return await input.connector.discover({ mode, ...(scope ? { scope } : {}), ...(known ? { known } : {}) }); } catch (error) { beat?.stop(); throw error; } })();
   const retry = new Set(prior.flatMap(item => item.kind === 'table' || item.kind === 'statistics' ? [item.object] : []));
   const retried = discovery.unchangedObjects.filter(object => retry.has(object.qualifiedName));
   discovery.objects.push(...retried);
@@ -253,7 +260,8 @@ export async function runProfile(
       tableAssets.set(object.qualifiedName, datasetId);
       const keys = tableKeys?.get(object.qualifiedName);
       const structural = { object_type: object.type, columns: profile.columns.map(({ name, dataType, isNullable }) => ({ name, data_type: dataType, nullable: isNullable })),
-        ...(tableKeys ? { primary_key: keys?.primaryKey ?? [], indexes: keys?.indexes ?? [] } : {}) };
+        ...(tableKeys ? { primary_key: keys?.primaryKey ?? [], indexes: keys?.indexes ?? [] } : {}),
+        ...(discovery.signatures?.[object.qualifiedName] ? { change_signature: discovery.signatures[object.qualifiedName] } : {}) };
       const statistics = { row_count: profile.rowCount, ...(profile.rowCountEstimated ? { row_count_estimated: true } : {}) };
       const version = await ensureAssetVersion(client, input.tenantId, datasetId, structural, statistics);
       if (version.created) createdVersions += 1;
@@ -399,7 +407,7 @@ export async function runProfile(
   if(input.jobType==='nightly'&&scope?.policy?.newObjects==='approve'){
     await queueNewObjectReview(pool,input.tenantId,input.connectionId,discovery.listOnlyObjects.map(object=>object.qualifiedName));
   }
-  const ids = await runIdAgent(pool, { ...input,
+  const ids = await runIdAgent(pool, { ...input, unchangedTables: new Set(discovery.unchangedObjects.map((object) => object.qualifiedName)),
     onTimeout: object => recordSkips([{ kind: 'identifier', object, reason: 'source_query_timeout' }]), ...(scope?{scope}:{}), ...(masterKey ? { masterKey } : {}),
     ...(job ? { onProgress: (done: number, planned: number) => reportDiscovery(pool, job, { idDone: done, idPlanned: planned }) } : {}) });
   const findings: number = await recordFindings(pool, { tenantId: input.tenantId, connectionId: input.connectionId, jobId, before, inventory:new Set([...discovery.objects,...discovery.unchangedObjects,...discovery.excludedObjects,...discovery.listOnlyObjects,...discovery.inaccessibleObjects].map(object=>object.qualifiedName)), checked: discovery.objects.length + discovery.unchangedObjects.length, scannedObjects: new Set(profiles.map(({ object }) => object.qualifiedName)) });

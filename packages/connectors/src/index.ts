@@ -30,6 +30,8 @@ export interface DiscoveryResult {
   unchanged: number;
   unchangedObjects: DiscoveredObject[];
   timedOutObjects?: ReadonlySet<string>;
+  /** K11: each profiled table's change signature, stored with its asset version so any later run can tell it is unchanged. */
+  signatures?: Record<string, string>;
 }
 
 export interface ObjectProfile {
@@ -107,7 +109,8 @@ export interface ReadOnlyConnector {
   readonly name: string;
   readonly modelRequests: number;
   test(): Promise<{ ok: true; capabilities: ['discover', 'profile']; readOnly: true }>;
-  discover(input: { mode: 'profile' | 'nightly'; scope?: ConnectorScope }): Promise<DiscoveryResult>;
+  /** `known`: signatures stored by earlier runs (K11), so a nightly run skips unchanged tables whichever worker runs it. */
+  discover(input: { mode: 'profile' | 'nightly'; scope?: ConnectorScope; known?: ReadonlyMap<string, string> }): Promise<DiscoveryResult>;
   profile(assetKey: string, scope?: ConnectorScope, mode?: 'profile' | 'nightly'): Promise<ObjectProfile>;
   queryAggregate?(assetKey: string, metric: 'count'): Promise<{ metric: 'count'; value: number }>;
   /** Declared and inferred references. `sampled` marks a check made on the first REFERENCE_CHECK_SAMPLE values;
