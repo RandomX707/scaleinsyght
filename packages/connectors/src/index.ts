@@ -61,6 +61,19 @@ export const PROPOSED_REFERENCE_COVERAGE = 0.98;
 /** Lower-coverage candidates down to this share are kept as possible relationships, shown only on request and labelled
  * low confidence; plans never join on them (decision 38). */
 export const POSSIBLE_REFERENCE_COVERAGE = 0.5;
+/** Decision 63: an inferred reference is checked on at most this many non-null source values, each looked up in the
+ *  target's primary key, never by joining whole tables (a full join on test_emr exceeded the source's time limit). */
+export const REFERENCE_CHECK_SAMPLE = 10_000;
+/** Attaches the count of skipped checks without changing the list itself (not enumerable, so it never shows up as an item). */
+export function withSkippedChecks<T>(references: T[], skippedChecks: number): T[] & { skippedChecks: number } {
+  return Object.defineProperty(references, 'skippedChecks', { value: skippedChecks, enumerable: false }) as T[] & { skippedChecks: number };
+}
+/** A reference check that times out, or whose table can no longer be read, skips that candidate only (decision 63). */
+export function isSkippableCheckError(error: unknown): boolean {
+  const failure = error as { code?: unknown; number?: unknown; originalError?: { code?: unknown; number?: unknown } } | null;
+  const code = String(failure?.code ?? failure?.originalError?.code ?? ''); const number = Number(failure?.number ?? failure?.originalError?.number ?? 0);
+  return ['57014', '42501', '42P01', 'ETIMEOUT'].includes(code) || [208, 229].includes(number);
+}
 
 export interface ConnectorScope {
   profile?: string[];
@@ -79,7 +92,9 @@ export interface ReadOnlyConnector {
   discover(input: { mode: 'profile' | 'nightly'; scope?: ConnectorScope }): Promise<DiscoveryResult>;
   profile(assetKey: string, scope?: ConnectorScope, mode?: 'profile' | 'nightly'): Promise<ObjectProfile>;
   queryAggregate?(assetKey: string, metric: 'count'): Promise<{ metric: 'count'; value: number }>;
-  structuralReferences?(scope?: ConnectorScope): Promise<Array<{from:string;to:string;fromColumn:string;toColumn:string;evidenceMethod?:'declared'|'inferred';confidence?:number;matchedCount?:number;sourceCount?:number}>>;
+  /** Declared and inferred references. `sampled` marks a check made on the first REFERENCE_CHECK_SAMPLE values;
+   *  `skippedChecks` on the result counts candidates whose check timed out (decision 63). */
+  structuralReferences?(scope?: ConnectorScope): Promise<Array<{from:string;to:string;fromColumn:string;toColumn:string;evidenceMethod?:'declared'|'inferred';confidence?:number;matchedCount?:number;sourceCount?:number;sampled?:boolean}> & { skippedChecks?: number }>;
   /** Procedures and functions: definition text as the source returns it (null when withheld), whether the source
    *  encrypts it, and the declared parameters. Callers scrub the text before storing it (decision 53). */
   routines?():Promise<Routine[]>;

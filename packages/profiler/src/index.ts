@@ -157,6 +157,7 @@ export async function runProfile(
   } finally { ownBeat?.stop(); }
   const jobId = job?.jobId ?? randomUUID();
   let createdVersions = 0;
+  let referenceChecksSkipped = 0;
 
   await withTenant(pool, input.tenantId, async (client) => {
     if (job) await holdDiscovery(client, job);
@@ -231,6 +232,9 @@ export async function runProfile(
     }
 
     const structuralReferences=input.connector.structuralReferences?await input.connector.structuralReferences(scope):[];
+    // Decision 63: a candidate whose check timed out is skipped and counted, never the whole profile.
+    referenceChecksSkipped=('skippedChecks' in structuralReferences?structuralReferences.skippedChecks:0)??0;
+    if(referenceChecksSkipped)console.warn(`Profile of connection ${input.connectionId}: ${referenceChecksSkipped} relationship checks skipped (source_query_timeout)`);
     for (const reference of structuralReferences) {
       const fromId = fieldAssets.get(`${reference.from}.${reference.fromColumn}`);
       const toId = fieldAssets.get(`${reference.to}.${reference.toColumn}`);
@@ -257,7 +261,7 @@ export async function runProfile(
         await client.query(
           `INSERT INTO graph.assertions(tenant_id,relationship_id,evidence_method,evidence_ids,confidence_score,explanation,collector_version)
            VALUES($1,$2,$3,$4,$5,$6,$7)`,
-          [input.tenantId, relationship.rows[0]!.relationship_id,evidenceMethod, [evidence.rows[0]!.evidence_id], evidenceMethod==='declared'?1:reference.confidence??0.98,evidenceMethod==='declared'?null:reference.sourceCount===undefined?'Column values matched a primary key during source-local structural analysis.':`${reference.matchedCount} of ${reference.sourceCount} non-null values matched the target primary key.`, `profile-${input.connector.type}-v1`],
+          [input.tenantId, relationship.rows[0]!.relationship_id,evidenceMethod, [evidence.rows[0]!.evidence_id], evidenceMethod==='declared'?1:reference.confidence??0.98,evidenceMethod==='declared'?null:reference.sourceCount===undefined?'Column values matched a primary key during source-local structural analysis.':reference.sampled?`Checked on a sample of ${reference.sourceCount} non-null values: ${reference.matchedCount} of them matched the target primary key.`:`${reference.matchedCount} of ${reference.sourceCount} non-null values matched the target primary key.`, `profile-${input.connector.type}-v1`],
         );
       }
     }
@@ -306,6 +310,7 @@ export async function runProfile(
       inaccessible: discovery.coverage.inaccessible,
       limited: profiles.filter(({ profile }) => profile.limited).length,
       failed: failed.size,
+      relationship_checks_skipped: referenceChecksSkipped,
     };
     await client.query(
       // A background job stays RUNNING while relationships, lineage and findings are mapped; it completes after them.

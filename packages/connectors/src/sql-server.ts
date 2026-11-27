@@ -5,7 +5,7 @@ import { DEFAULT_SAMPLING, SENSITIVITY_MIN_VALUES, SENSITIVITY_VALUES, type Samp
 import { createHash } from 'node:crypto';
 import sql from 'mssql';
 import { classifyColumn } from '@scaleinsyght/classification';
-import { POSSIBLE_REFERENCE_COVERAGE, UNMEASURED, type ColumnStatistics, type ConnectorScope, type DiscoveryResult, type ObjectProfile, type ReadOnlyConnector , type ObjectOrigin } from './index.js';
+import { POSSIBLE_REFERENCE_COVERAGE, REFERENCE_CHECK_SAMPLE, isSkippableCheckError, withSkippedChecks, UNMEASURED, type ColumnStatistics, type ConnectorScope, type DiscoveryResult, type ObjectProfile, type ReadOnlyConnector , type ObjectOrigin } from './index.js';
 
 const SQL_SERVER_TEXT = new Set(['nvarchar', 'varchar', 'nchar', 'char']);
 const SQL_SERVER_MEASURABLE = new Set([...SQL_SERVER_TEXT, 'tinyint', 'smallint', 'int', 'bigint', 'decimal', 'numeric', 'float', 'real', 'bit', 'date', 'datetime', 'datetime2', 'uniqueidentifier']);
@@ -173,7 +173,8 @@ export class SqlServerConnector implements ReadOnlyConnector {
       JOIN sys.schemas rs ON rs.schema_id=rt.schema_id JOIN sys.columns rc ON rc.object_id=f.referenced_object_id AND rc.column_id=f.referenced_column_id ORDER BY [from],[to]`);
     if (rows.recordset.length > this.maxCatalogRows) throw new Error('sqlserver_connector_result_limit_exceeded');
     const permits=(table:string,column:string)=>objectScope(scope,table,'table')==='profile'&&!columnScope(scope,table,column);
-    const references: Array<{ from: string; to: string; fromColumn: string; toColumn: string; evidenceMethod: 'declared' | 'inferred'; confidence?:number; matchedCount?:number; sourceCount?:number }> = rows.recordset.filter(item=>permits(item.from,item.fromColumn)&&permits(item.to,item.toColumn)).map((row) => ({ ...row, evidenceMethod: 'declared' }));
+    let skippedChecks = 0;
+    const references: Array<{ from: string; to: string; fromColumn: string; toColumn: string; evidenceMethod: 'declared' | 'inferred'; confidence?:number; matchedCount?:number; sourceCount?:number; sampled?:boolean }> = rows.recordset.filter(item=>permits(item.from,item.fromColumn)&&permits(item.to,item.toColumn)).map((row) => ({ ...row, evidenceMethod: 'declared' }));
     const candidates = await (await this.request()).query<{ from: string; to: string; fromColumn: string; toColumn: string }>(`SELECT TOP (${this.maxCatalogRows}) ss.name+'.'+st.name AS [from],ts.name+'.'+tt.name AS [to],sc.name AS fromColumn,tc.name AS toColumn
       FROM sys.columns sc JOIN sys.tables st ON st.object_id=sc.object_id JOIN sys.schemas ss ON ss.schema_id=st.schema_id
       JOIN sys.columns tc ON tc.name=sc.name JOIN sys.tables tt ON tt.object_id=tc.object_id JOIN sys.schemas ts ON ts.schema_id=tt.schema_id
@@ -187,13 +188,18 @@ export class SqlServerConnector implements ReadOnlyConnector {
       if (references.some((item) => item.from === candidate.from && item.fromColumn === candidate.fromColumn && item.to === candidate.to && item.toColumn === candidate.toColumn)) continue;
       const [fromSchema, fromName] = candidate.from.split('.'); const [toSchema, toName] = candidate.to.split('.');
       if (!fromSchema || !fromName || !toSchema || !toName) continue;
-      const count = await (await this.request()).query<{ source_count: number; matched_count: number }>(`SELECT COUNT_BIG(src.${quote(candidate.fromColumn)}) AS source_count,COUNT_BIG(dst.${quote(candidate.toColumn)}) AS matched_count
-        FROM ${quote(fromSchema)}.${quote(fromName)} src LEFT JOIN ${quote(toSchema)}.${quote(toName)} dst ON src.${quote(candidate.fromColumn)}=dst.${quote(candidate.toColumn)}`);
+      // Decision 63: the first REFERENCE_CHECK_SAMPLE non-null values, each looked up in the target's primary key (a
+      // single-column key, so the join cannot repeat a source value).
+      let count;
+      try { count = await (await this.request()).query<{ source_count: number; matched_count: number }>(`SELECT COUNT_BIG(*) AS source_count, COUNT_BIG(dst.${quote(candidate.toColumn)}) AS matched_count
+        FROM (SELECT TOP (${REFERENCE_CHECK_SAMPLE}) ${quote(candidate.fromColumn)} AS v FROM ${quote(fromSchema)}.${quote(fromName)} WHERE ${quote(candidate.fromColumn)} IS NOT NULL) src
+        LEFT JOIN ${quote(toSchema)}.${quote(toName)} dst ON dst.${quote(candidate.toColumn)} = src.v`); }
+      catch (error) { if (!isSkippableCheckError(error)) throw error; skippedChecks++; continue; }
       const sourceCount = Number(count.recordset[0]?.source_count ?? 0); const matchedCount = Number(count.recordset[0]?.matched_count ?? 0);
-      if (sourceCount > 0 && matchedCount / sourceCount >= POSSIBLE_REFERENCE_COVERAGE) references.push({ ...candidate, evidenceMethod: 'inferred',confidence:matchedCount/sourceCount,matchedCount,sourceCount });
+      if (sourceCount > 0 && matchedCount / sourceCount >= POSSIBLE_REFERENCE_COVERAGE) references.push({ ...candidate, evidenceMethod: 'inferred',confidence:matchedCount/sourceCount,matchedCount,sourceCount,sampled:sourceCount>=REFERENCE_CHECK_SAMPLE });
       if (references.length > this.maxCatalogRows) throw new Error('sqlserver_connector_result_limit_exceeded');
     }
-    return references;
+    return withSkippedChecks(references, skippedChecks);
   }
 
   /** Distinct values for the ID agent; with sample, only values the consistent rule keeps (decision 61), selected in SQL. */
