@@ -45,7 +45,7 @@ type Detail = {
   tests: Array<{ column: string | null; test: string }>;
   usedBy: Array<{ name: string; kind: string; how: string; source: string }>;
   definition: null | { kind: string; encrypted: boolean; text: string | null; literalsHidden: boolean; version: number; capturedAt: string; parameters: Array<{ name: string; dataType: string; mode: string; declared: boolean }>; returns?: Array<{ name: string; dataType: string }>;
-    writes: Array<{ table: string; mode: string }>; reads: string[]; calls: string[]; steps: string[]; calledBy: string[]; runBy: string[];
+    writes: Array<{ table: string; mode: string }>; reads: string[]; calls: string[]; unresolved?: string[]; steps: string[]; calledBy: string[]; runBy: string[];
     tablesAndColumns: Array<{ table: string; access: string; columns: Array<{ name: string; used: boolean; dropped: boolean }> }>; originalAvailable: boolean };
 };
 
@@ -393,6 +393,7 @@ function ObjectView(props: { detail: Detail; base: string; isOpen: (id: string) 
           ['Writes', definition.writes.length ? <span className="dict-names">{definition.writes.map((write) => <Button variant="ghost" size="small" key={write.table} className="dict-name mono" onClick={() => props.onOpen(write.table)}>{shortName(write.table)}</Button>)}</span> : 'Nothing; it returns a result'],
           ...(definition.writes.length ? [['How', <span key="h">{[...new Set(definition.writes.map((write) => HOW[write.mode] ?? write.mode))].join(', ')} <Badge tone="muted">Parsed from SQL</Badge></span>]] as Array<[string, ReactNode]> : []),
           ['Reads', definition.reads.length ? <span className="dict-names">{definition.reads.map((read) => <Button variant="ghost" size="small" key={read} className="dict-name mono" onClick={() => props.onOpen(read)}>{shortName(read)}</Button>)}</span> : 'No tables'],
+          ...(definition.unresolved?.length ? [['Unresolved', <span key="u"><span className="mono">{definition.unresolved.map(shortName).join(', ')}</span> <span className="dict-note">named in the SQL but not found in this source</span></span>]] as Array<[string, ReactNode]> : []),
         ]} />}
         {definition.steps.length > 0 && <><h4>Logic, parsed from the SQL</h4><ol className="dict-steps">{definition.steps.map((step, index) => <li key={index}>{step.split(/(\b[\w]+\.[\w$#]+\b)/).map((part, partIndex) => partIndex % 2 ? <span key={partIndex} className="mono">{shortName(part)}</span> : part)}</li>)}</ol></>}
       </Section>

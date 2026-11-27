@@ -132,7 +132,8 @@ export function draftDescription(input: { kind: ObjectKind; name: string; encryp
     const parts = input.analysis.writes.map((write) => `${how[write.mode] ?? 'writes'} ${short(write.table)}`);
     let text = parts.length ? `${input.kind === 'procedure' ? 'Procedure' : 'Routine'} that ${list(parts)}` : `${input.kind === 'procedure' ? 'Procedure' : 'Function'} that returns a result and changes no tables`;
     if (input.analysis.reads.length) text += `, reading ${list(input.analysis.reads.slice(0, 4))}${input.analysis.reads.length > 4 ? ` and ${input.analysis.reads.length - 4} more` : ''}`;
-    if (input.analysis.calls.length) text += `. It runs ${list(input.analysis.calls)}`;
+    // Routines by name, without their argument lists.
+    if (input.analysis.calls.length) text += `. It runs ${list([...new Set(input.analysis.calls.map((call) => call.replace(/\(.*\)$/s, '')))])}`;
     return `${text}.`;
   }
   const columns = (count: number) => `${count} ${count === 1 ? 'column' : 'columns'}`;
@@ -560,18 +561,19 @@ async function objectDetail(client: PoolClient, tenantId: string, connectionId: 
        LEFT JOIN LATERAL(SELECT statistics,structural_attributes FROM graph.asset_versions WHERE tenant_id=a.tenant_id AND asset_id=a.asset_id ORDER BY version DESC LIMIT 1)v ON true
      WHERE a.tenant_id=$1 AND a.source_id=ANY($2::uuid[]) AND a.qualified_name=$3 AND a.active AND a.asset_type IN ('dataset','report','field')
      ORDER BY (a.source_id=$4) DESC LIMIT 1`, [tenantId, [datasetSource, connectionId], name, datasetSource])).rows[0] ?? null;
-  const definition = (await client.query<{ kind: string; scrubbed_text: string | null; encrypted: boolean; parameters: Array<{ name: string; dataType: string; mode: string }>; returned_columns: Array<{ name: string; dataType: string }>; analysis: { writes?: Array<{ table: string; mode: string }>; reads?: string[]; calls?: string[]; steps?: string[]; kind?: string }; captured_at: Date; version: number }>(
+  const definition = (await client.query<{ kind: string; scrubbed_text: string | null; encrypted: boolean; parameters: Array<{ name: string; dataType: string; mode: string }>; returned_columns: Array<{ name: string; dataType: string }>; analysis: { writes?: Array<{ table: string; mode: string }>; reads?: string[]; calls?: string[]; unresolved?: string[]; steps?: string[]; kind?: string }; captured_at: Date; version: number }>(
     `SELECT kind,scrubbed_text,encrypted,parameters,returned_columns,analysis,captured_at,version FROM graph.definitions WHERE tenant_id=$1 AND source_id=$2 AND qualified_name=$3 AND active`, [tenantId, connectionId, name])).rows[0] ?? null;
   const lower = name.toLowerCase();
   // Stored definitions of this source that read, write or call this object (parsed from SQL).
   const related = (await client.query<{ qualified_name: string; kind: string; analysis: { writes?: Array<{ table: string; mode: string }>; reads?: string[]; calls?: string[] } }>(
     `SELECT qualified_name,kind,analysis FROM graph.definitions WHERE tenant_id=$1 AND source_id=$2 AND active AND qualified_name<>$3 AND kind<>'calculated_field'
        AND (EXISTS(SELECT 1 FROM jsonb_array_elements_text(analysis->'reads') x WHERE lower(x)=$4) OR EXISTS(SELECT 1 FROM jsonb_array_elements(analysis->'writes') w WHERE lower(w->>'table')=$4)
-         OR EXISTS(SELECT 1 FROM jsonb_array_elements_text(analysis->'calls') c WHERE lower(c)=lower(regexp_replace($3,'\\(.*\\)$',''))))
+         OR EXISTS(SELECT 1 FROM jsonb_array_elements_text(analysis->'calls') c WHERE lower(regexp_replace(c,'\\(.*\\)$',''))=lower(regexp_replace($3,'\\(.*\\)$',''))))
      ORDER BY qualified_name LIMIT 500`, [tenantId, connectionId, name, lower])).rows;
   const builtBy = related.flatMap((row) => (row.analysis.writes ?? []).filter((write) => write.table.toLowerCase() === lower).map((write) => ({ name: row.qualified_name, kind: row.kind, mode: write.mode })));
   const readBy = related.filter((row) => (row.analysis.reads ?? []).some((read) => read.toLowerCase() === lower)).map((row) => ({ name: row.qualified_name, kind: row.kind }));
-  const calledBy = related.filter((row) => (row.analysis.calls ?? []).some((call) => call.toLowerCase() === name.replace(/\(.*\)$/, '').toLowerCase())).map((row) => row.qualified_name);
+  // Calls name a routine by its catalog name, with arguments when the source has them; match on the name alone.
+  const calledBy = related.filter((row) => (row.analysis.calls ?? []).some((call) => call.replace(/\(.*\)$/s, '').toLowerCase() === name.replace(/\(.*\)$/s, '').toLowerCase())).map((row) => row.qualified_name);
 
   let columns: Array<Record<string, unknown>> = []; let keys: Array<Record<string, unknown>> = []; let joins: Array<Record<string, unknown>> = [];
   let flowUsers: Array<{ name: string; source: string; type: string }> = []; let dependentReports = 0; let lastProfiled: Date | null = null;
@@ -669,7 +671,7 @@ async function objectDetail(client: PoolClient, tenantId: string, connectionId: 
       kind: definition.kind, encrypted: definition.encrypted, text: definition.scrubbed_text, literalsHidden: true, version: definition.version, capturedAt: definition.captured_at,
       // Inputs (and a procedure's OUT parameters) apart from the columns a function returns (decision 64).
       parameters: definition.parameters.map((parameter) => ({ ...parameter, declared: true })), returns: definition.returned_columns,
-      writes: definition.analysis.writes ?? [], reads: definition.analysis.reads ?? [], calls: definition.analysis.calls ?? [], steps: definition.analysis.steps ?? [],
+      writes: definition.analysis.writes ?? [], reads: definition.analysis.reads ?? [], calls: definition.analysis.calls ?? [], unresolved: definition.analysis.unresolved ?? [], steps: definition.analysis.steps ?? [],
       calledBy, runBy: [] as string[], tablesAndColumns,
       originalAvailable: !definition.encrypted && definition.kind !== 'calculated_field',
     } : null,
