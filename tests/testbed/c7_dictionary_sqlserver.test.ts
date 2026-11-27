@@ -37,12 +37,13 @@ describe('Dictionary on the SQL Server testbed', () => {
   afterAll(async () => { await server?.close(); await connector.close(); await app.end(); await migrate.end(); });
 
   it('c7_dictionary_lists_standard_and_custom_objects_as_in_the_testbed', async () => {
+    // Decision 62: no vendor dictionary is imported here, so the vendor's tables are "Not classified yet", never Standard.
     const standard = await get(`/api/connections/${connectionId}/dictionary/objects?tab=standard`);
+    const unclassified = await get(`/api/connections/${connectionId}/dictionary/objects?tab=unclassified`);
     const custom = await get(`/api/connections/${connectionId}/dictionary/objects?tab=custom`);
     const names = (body: { groups: Array<{ label: string; items: Array<{ name: string }> }> }, label: string) => body.groups.find((group) => group.label === label)?.items.map((item) => item.name) ?? [];
-    expect(names(standard, 'Tables')).toEqual(truth.standardTables);
-    expect(names(custom, 'Custom tables')).toEqual(truth.customTables);
-    expect(names(custom, 'Custom views')).toEqual(truth.customViews);
+    expect(standard.counts.standard).toBe(0);
+    expect(names(unclassified, 'Tables')).toEqual(truth.standardTables);
     for (const [name, procedure] of Object.entries(truth.procedures)) expect(names(custom, procedure.group), name).toContain(name);
     expect(standard.hasVendorDictionary).toBe(false);
   });
@@ -92,7 +93,7 @@ describe('Dictionary on the SQL Server testbed', () => {
   it('c7_dictionary_search_finds_names_columns_and_sql_lines', async () => {
     const byName = await get(`/api/connections/${connectionId}/dictionary/objects?tab=custom&q=census`);
     expect(byName.groups.flatMap((group: { items: Array<{ name: string }> }) => group.items.map((item) => item.name))).toEqual(expect.arrayContaining(['dbo.X_CENSUS_SNAP', 'dbo.usp_X_MERGE_CENSUS']));
-    const byColumn = await get(`/api/connections/${connectionId}/dictionary/objects?tab=standard&q=admitted`);
+    const byColumn = await get(`/api/connections/${connectionId}/dictionary/objects?tab=unclassified&q=admitted`);
     expect(byColumn.groups[0].items).toEqual([expect.objectContaining({ name: 'dbo.encounters', matchedColumns: 1 })]);
     const inSql = await get(`/api/connections/${connectionId}/dictionary/objects?tab=custom&q=${truth.sqlSearch.query}`);
     const hit = inSql.sqlHits.find((item: { name: string }) => item.name === truth.sqlSearch.object);

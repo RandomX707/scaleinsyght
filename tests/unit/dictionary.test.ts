@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { draftDescription, groupFor, hasCustomPrefix, isCustom, sqlSnippets } from '@scaleinsyght/api/dictionary';
+import { classifyObject, draftDescription, groupFor, hasCustomPrefix, sqlSnippets } from '@scaleinsyght/api/dictionary';
 import { renderDictionaryHtml, scriptJson } from '@scaleinsyght/api/dictionary-html';
 import { analyseDefinition } from '@scaleinsyght/profiler';
 
@@ -8,14 +8,29 @@ describe('Dictionary custom detection (spec 2.1)', () => {
     for (const name of ['dbo.X_READMIT_FLAGS', 'dbo.usp_X_LOAD', 'dbo.rpt_X_BY_DEPT', 'public.x_census', 'X_JOB_LOG']) expect(hasCustomPrefix(name), name).toBe(true);
     for (const name of ['dbo.encounters', 'dbo.max_value', 'dbo.tax_rate', 'X_schema.encounters', 'dbo.idx_patients', 'public.f(x_a integer)']) expect(hasCustomPrefix(name), name).toBe(false);
   });
-  it('treats objects missing from an imported vendor dictionary as custom, and never custom for sheets or dbt', () => {
-    const imported = new Set(['dbo.patients']);
-    expect(isCustom('dbo.patients', 'table', imported)).toBe(false);
-    expect(isCustom('dbo.local_extract', 'table', imported)).toBe(true);
-    expect(isCustom('dbo.local_extract', 'table', null)).toBe(false);
-    expect(isCustom('X_budget', 'sheet', null)).toBe(false);
-    expect(isCustom('analytics.stg_orders', 'model', imported)).toBe(false);
-    expect(isCustom('Long stay', 'calculated_field', null)).toBe(true);
+  // Decision 62: Standard means vendor-delivered, Custom customer-built; never Standard by default.
+  const none = { vendor: null, rules: { customPrefixes: ['X_'], customSchemas: [] as string[], ownerPatterns: [] as string[] }, owner: null, copy: null };
+  it('uses an imported vendor dictionary for the tables and views it lists', () => {
+    const vendor = new Set(['dbo.patients']);
+    expect(classifyObject({ name: 'dbo.patients', kind: 'table' }, { ...none, vendor })).toEqual({ origin: 'standard', reason: 'in_vendor_dictionary' });
+    expect(classifyObject({ name: 'dbo.local_extract', kind: 'table' }, { ...none, vendor })).toEqual({ origin: 'custom', reason: 'not_in_vendor_dictionary' });
+    // The dictionary lists tables and views, so a procedure it does not mention is decided by the rules.
+    expect(classifyObject({ name: 'dbo.usp_load', kind: 'procedure' }, { ...none, vendor })).toEqual({ origin: 'unclassified', reason: null });
+  });
+  it('never calls an object Standard without a vendor dictionary', () => {
+    for (const kind of ['table', 'view', 'procedure', 'function', 'sheet', 'model'] as const)
+      expect(classifyObject({ name: 'dbo.local_extract', kind }, none)).toEqual({ origin: 'unclassified', reason: null });
+    expect(classifyObject({ name: 'Long stay', kind: 'calculated_field' }, none)).toEqual({ origin: 'custom', reason: 'built_in_bi_tool' });
+  });
+  it('marks custom by name prefix, schema and owner rules from Controls', () => {
+    expect(classifyObject({ name: 'dbo.usp_X_LOAD', kind: 'procedure' }, none)).toMatchObject({ origin: 'custom', reason: 'name_prefix' });
+    expect(classifyObject({ name: 'dbo.Z_TEMP', kind: 'table' }, { ...none, rules: { ...none.rules, customPrefixes: ['Z_'] } })).toMatchObject({ reason: 'name_prefix' });
+    expect(classifyObject({ name: 'local.extract', kind: 'table' }, { ...none, rules: { ...none.rules, customSchemas: ['LOCAL'] } })).toMatchObject({ origin: 'custom', reason: 'schema' });
+    expect(classifyObject({ name: 'dbo.extract', kind: 'table' }, { ...none, owner: 'etl_nightly', rules: { ...none.rules, ownerPatterns: ['etl_*'] } })).toMatchObject({ origin: 'custom', reason: 'owner' });
+    expect(classifyObject({ name: 'dbo.extract', kind: 'table' }, { ...none, owner: 'vendor_admin', rules: { ...none.rules, ownerPatterns: ['etl_*'] } })).toMatchObject({ origin: 'unclassified' });
+  });
+  it('marks a near-identical copy of another routine as custom', () => {
+    expect(classifyObject({ name: 'dbo.fn_admit_copy', kind: 'function' }, { ...none, copy: { copyOf: 'dbo.usp_admit', similarity: 0.97 } })).toEqual({ origin: 'custom', reason: 'copy' });
   });
   it('groups custom procedures by their parsed kind', () => {
     expect(groupFor({ name: 'dbo.usp_X_LOAD', kind: 'procedure', procedureKind: 'fact_loader', columns: null, custom: true }).label).toBe('Procedures · Fact loaders');

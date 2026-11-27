@@ -67,8 +67,9 @@ test('s9_dictionary_matches_testbed_truth_for_every_connector_type_and_exports_o
 
   // Every connector is in the Source dropdown.
   await openSource(page, sql);
-  const options = await page.getByLabel('Source').locator('option').allTextContents();
-  for (const name of ['PostgreSQL testbed', 'SQL Server dictionary testbed', 'Operations workbook', 'Hospital dbt project', 'Riverside operations']) expect(options.join('|')).toContain(name);
+  // The list arrives separately from the page (the current source shows alone until then), so wait for it.
+  for (const name of ['PostgreSQL testbed', 'SQL Server dictionary testbed', 'Operations workbook', 'Hospital dbt project', 'Riverside operations'])
+    await expect.poll(async () => (await page.getByLabel('Source').locator('option').allTextContents()).join('|'), name).toContain(name);
 
   // SQL Server: landing, standard and custom objects, procedure tabs, encrypted state, SQL search, Show original.
   await expect(page.locator('.dict-card').first()).toContainText('No vendor dictionary imported');
@@ -90,6 +91,12 @@ test('s9_dictionary_matches_testbed_truth_for_every_connector_type_and_exports_o
   await expect.poll(() => names(page, 'Custom tables')).toEqual(truth.sqlserver.customTables.map(short).sort());
   await expect.poll(() => names(page, 'Custom views')).toEqual(truth.sqlserver.customViews.map(short).sort());
   for (const [name, procedure] of Object.entries(truth.sqlserver.procedures)) await expect.poll(() => names(page, procedure.group), name).toContain(short(name));
+  // Decision 62: no vendor dictionary is imported, so the vendor's tables are "Not classified yet", never Standard.
+  await side(page).getByRole('tab', { name: /^Not classified yet/ }).click();
+  await expect.poll(() => names(page, 'Tables')).toEqual(truth.sqlserver.standardTables.map(short).sort());
+  await expect(page.locator('.dict-classify-note')).toContainText('Nothing is called Standard until it is known to be.');
+  await page.screenshot({ path: screen('not-classified') });
+  await side(page).getByRole('tab', { name: /^Custom/ }).click();
   const routines = Object.values(truth.sqlserver.procedures); const encrypted = routines.filter((procedure) => procedure.encrypted).length;
   await expect(side(page)).toContainText(`SQL captured for ${routines.length - encrypted} of ${routines.length} procedures and functions · ${encrypted} encrypted`);
   const loader = 'dbo.usp_X_LOAD_READMIT_FLAGS'; const expected = truth.sqlserver.procedures[loader]!;
@@ -132,6 +139,8 @@ test('s9_dictionary_matches_testbed_truth_for_every_connector_type_and_exports_o
 
   // PostgreSQL: tables, views and functions; tagged columns show withheld statistics.
   await openSource(page, pg);
+  // No vendor dictionary: the page opens on what is not classified yet, grouped by type (decision 62).
+  await expect(side(page).getByRole('tab', { name: /^Not classified yet/ })).toHaveAttribute('aria-selected', 'true');
   await expect.poll(() => names(page, 'Tables')).toEqual(truth.postgres.tables.map(short).sort());
   await expect.poll(() => names(page, 'Views')).toEqual(truth.postgres.views.map(short).sort());
   await expect.poll(() => names(page, 'Functions')).toEqual(Object.keys(truth.postgres.functions).map(short).sort());

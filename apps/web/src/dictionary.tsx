@@ -16,13 +16,19 @@ type Summary = {
   coverage: { tables: { documented: number; total: number }; columns: { documented: number; total: number } };
   newerThanDictionary: { count: number; names: string[] } | null;
 };
-type ListItem = { name: string; kind: string; columns: number | null; matchedColumns?: number };
+type ListItem = { name: string; kind: string; columns: number | null; matchedColumns?: number; copyOf?: string; copySimilarity?: number; originReason?: string };
 type Group = { key: string; label: string; total: number; items: ListItem[]; nextOffset: number | null };
-type ObjectList = { tab: 'standard' | 'custom'; hasVendorDictionary: boolean; counts: { standard: number; custom: number }; sqlCoverage: { routines: number; captured: number; encrypted: number } | null; groups: Group[]; sqlHits: Array<{ name: string; kind: string; matches: number; lines: Array<{ line: number; text: string }> }> };
+type Tab = 'standard' | 'custom' | 'unclassified';
+const TAB_LABEL: Record<Tab, string> = { standard: 'Standard', custom: 'Custom', unclassified: 'Not classified yet' };
+/** Why an object is Custom or Standard, in plain words (decision 62). */
+const REASON: Record<string, string> = { in_vendor_dictionary: 'in the vendor dictionary', not_in_vendor_dictionary: 'not in the vendor dictionary', name_prefix: 'custom name prefix',
+  schema: 'custom schema', owner: 'custom owner', copy: 'copy of another routine', built_in_bi_tool: 'built in the BI tool' };
+const copyLabel = (copyOf: string, similarity?: number) => `Custom copy of ${shortName(copyOf)}${similarity ? ` · ${Math.round(similarity * 100)}% similar` : ''}`;
+type ObjectList = { tab: Tab; hasVendorDictionary: boolean; counts: { standard: number; custom: number; unclassified?: number }; sqlCoverage: { routines: number; captured: number; encrypted: number } | null; groups: Group[]; sqlHits: Array<{ name: string; kind: string; matches: number; lines: Array<{ line: number; text: string }> }> };
 type Column = { statisticsEstimated?: boolean; name: string; label: string | null; dataType: string | null; nullable: boolean | null; tags: string[]; inferredTags?: string[]; key: boolean; statsWithheld: boolean; withheldReason?: string; nullRate: number | null; distinctCount: number | null; description: string | null; usedBy: number };
 type Detail = {
   source: { connectionId: string; name: string; type: string };
-  name: string; kind: string; custom: boolean; procedureKind: string | null;
+  name: string; kind: string; custom: boolean; origin?: Tab; originReason?: string | null; copyOf?: string; copySimilarity?: number; procedureKind: string | null;
   description: { text: string; origin: 'imported' | 'dbt' | 'drafted' | 'approved' | 'edited'; by?: string | null; at?: string | null } | null;
   stats: { rows: number | null; rowsEstimated?: boolean; lastProfiled: string | null; dependentReports: number; builtBy: string[] } | null;
   columns: Column[]; keys: Array<{ column: string; references: string; evidence: string }>;
@@ -80,7 +86,8 @@ function Kv(props: { rows: Array<[string, ReactNode]> }) {
 export function DictionaryPage(props: { connectionId: string; navigate: (path: string) => void }) {
   const [sources, setSources] = useState<Source[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
-  const [tab, setTab] = useState<'standard' | 'custom'>('standard');
+  // Decision 62: the first view is the one the API picks (Standard when anything is, otherwise Not classified yet).
+  const [tab, setTab] = useState<Tab | null>(null);
   const [query, setQuery] = useState(''); const [debounced, setDebounced] = useState('');
   const [list, setList] = useState<ObjectList | null>(null);
   const [open, setOpen] = useState<string[]>([]); const [active, setActive] = useState<string>('');
@@ -101,14 +108,14 @@ export function DictionaryPage(props: { connectionId: string; navigate: (path: s
   useEffect(() => { const timer = setTimeout(() => setDebounced(query.trim()), 250); return () => clearTimeout(timer); }, [query]);
   useEffect(() => {
     const request = ++listRequest.current;
-    void get<ObjectList>(`${base}/dictionary/objects?tab=${tab}${debounced ? `&q=${encodeURIComponent(debounced)}` : ''}`)
-      .then((body) => { if (request === listRequest.current) setList(body); })
+    void get<ObjectList>(`${base}/dictionary/objects?${tab ? `tab=${tab}` : ''}${debounced ? `&q=${encodeURIComponent(debounced)}` : ''}`)
+      .then((body) => { if (request === listRequest.current) { setList(body); if (!tab) setTab(body.tab); } })
       .catch((reason) => { if (request === listRequest.current) setError(reason instanceof Error ? reason.message : 'Objects could not be loaded.'); });
   }, [props.connectionId, tab, debounced]);
 
   async function showMore(group: Group) {
     if (group.nextOffset === null) return;
-    const body = await get<ObjectList>(`${base}/dictionary/objects?tab=${tab}&group=${group.key}&offset=${group.nextOffset}${debounced ? `&q=${encodeURIComponent(debounced)}` : ''}`);
+    const body = await get<ObjectList>(`${base}/dictionary/objects?tab=${tab ?? list?.tab ?? 'standard'}&group=${group.key}&offset=${group.nextOffset}${debounced ? `&q=${encodeURIComponent(debounced)}` : ''}`);
     const more = body.groups[0]; if (!more) return;
     setList((current) => current && { ...current, groups: current.groups.map((item) => item.key === group.key ? { ...item, items: [...item.items, ...more.items], nextOffset: more.nextOffset } : item) });
   }
@@ -130,7 +137,7 @@ export function DictionaryPage(props: { connectionId: string; navigate: (path: s
     if (!response.ok) { setError(`The dictionary could not be imported: ${(body.error ?? 'unknown error').replaceAll('_', ' ')}.`); return; }
     setMessage(`${number(body.imported ?? 0)} descriptions imported.`);
     setSummary(await get<Summary>(`${base}/dictionary/summary`)); setDetails({});
-    setList(await get<ObjectList>(`${base}/dictionary/objects?tab=${tab}`));
+    setList(await get<ObjectList>(`${base}/dictionary/objects?tab=${tab ?? list?.tab ?? 'standard'}`));
   }
   /** Markdown and Word for the whole source (S7), and Copy as Markdown. */
   async function exportSource(format: 'markdown' | 'docx' | 'copy') {
@@ -155,8 +162,8 @@ export function DictionaryPage(props: { connectionId: string; navigate: (path: s
   const setAll = (value: boolean) => setCards((current) => ({ ...current, ...Object.fromEntries(cardIds.map((id) => [id, value])) }));
 
   const source = summary?.source;
-  const groupingNote = list && !list.hasVendorDictionary && summary && !['excel', 'dbt', 'tableau'].includes(summary.source.type)
-    ? 'No vendor dictionary imported, so objects are grouped by type. Custom objects are found by your X_ naming convention.' : null;
+  const shownTab = tab ?? list?.tab ?? null;
+  const unclassified = list?.counts.unclassified ?? 0;
 
   return <section className="dictionary-page">
     <div className="page-heading dict-heading">
@@ -175,17 +182,22 @@ export function DictionaryPage(props: { connectionId: string; navigate: (path: s
             : <><strong>{summary.source.name}</strong><p>{TYPE_LABEL[summary.source.type] ?? summary.source.type} · {number(summary.counts.standard + summary.counts.custom)} objects</p></>}
           <Button size="small" onClick={() => setActive('')}>Details</Button>
         </div>}
-        <SegmentedControl label="Standard or custom" selected={tab} onSelect={(id) => setTab(id === 'custom' ? 'custom' : 'standard')}
-          items={(['standard', 'custom'] as const).map((item) => ({ id: item, label: <>{item === 'standard' ? 'Standard' : 'Custom'} <span className="dict-seg-count">{number(list?.counts[item] ?? (item === 'standard' ? summary?.counts.standard ?? 0 : summary?.counts.custom ?? 0))}</span></> }))} />
+        <SegmentedControl label="Standard, custom or not classified" selected={shownTab ?? 'standard'} onSelect={(id) => setTab(id as Tab)}
+          items={(['standard', 'custom', ...(unclassified ? ['unclassified' as const] : [])] as Tab[]).map((item) => ({ id: item, label: <>{TAB_LABEL[item]} <span className="dict-seg-count">{number(list?.counts[item] ?? 0)}</span></> }))} />
         <Input type="search" aria-label="Search tables, columns or SQL code" placeholder="Search tables, columns or SQL code" value={query} onChange={(event) => setQuery(event.target.value)} />
-        {groupingNote && <p className="dict-note">{groupingNote}</p>}
+        {shownTab === 'unclassified' && <div className="dict-note dict-classify-note">
+          <p>Scale Insyght can’t yet tell which of these objects the vendor delivered and which your team built, so they are grouped by type. Nothing is called Standard until it is known to be.</p>
+          <p>To classify them, import the vendor’s dictionary (objects in it are Standard, the rest Custom), or add rules in Controls: custom name prefixes, custom schemas or owners. Procedures and functions that copy another are marked as custom copies automatically.</p>
+          <Button size="small" onClick={() => props.navigate(`/controls?connection=${props.connectionId}`)}>Classification rules in Controls</Button>
+        </div>}
         {list?.sqlCoverage && !debounced && <p className="dict-note">SQL captured for {number(list.sqlCoverage.captured)} of {number(list.sqlCoverage.routines)} procedures and functions{list.sqlCoverage.encrypted ? ` · ${number(list.sqlCoverage.encrypted)} encrypted` : ''}</p>}
         {!list && <p role="status" className="dict-note">Loading objects…</p>}
-        {list && !list.groups.length && !list.sqlHits.length && <p className="dict-note">{debounced ? `Nothing matches “${debounced}” here.` : tab === 'custom' ? 'No custom objects in this source.' : 'No standard objects in this source.'}</p>}
+        {list && !list.groups.length && !list.sqlHits.length && <p className="dict-note">{debounced ? `Nothing matches “${debounced}” here.` : shownTab === 'custom' ? 'No custom objects in this source.' : shownTab === 'unclassified' ? 'Every object in this source is classified.' : 'No standard objects in this source.'}</p>}
         {list?.groups.map((group) => <div className="dict-group" key={group.key}>
           <h3><span>{group.label}</span><span>{group.items.length < group.total ? `${number(group.items.length)} of ${number(group.total)}` : number(group.total)}</span></h3>
           <ul>{group.items.map((item) => <li key={item.name}><Button variant="ghost" size="small" className={`dict-item${active === item.name ? ' is-active' : ''}`} aria-current={active === item.name ? 'true' : undefined} title={item.name} onClick={() => void openObject(item.name)}>
-            <span className="mono">{shortName(item.name)}</span>{item.matchedColumns ? <span className="dict-count">{item.matchedColumns} col</span> : null}</Button></li>)}</ul>
+            <span className="mono">{shortName(item.name)}</span>{item.matchedColumns ? <span className="dict-count">{item.matchedColumns} col</span> : null}
+            {item.copyOf ? <span className="dict-copy" title={copyLabel(item.copyOf, item.copySimilarity)}>copy of {shortName(item.copyOf)} · {Math.round((item.copySimilarity ?? 0) * 100)}%</span> : null}</Button></li>)}</ul>
           {group.nextOffset !== null && <Button size="small" onClick={() => void showMore(group)}>Show more</Button>}
         </div>)}
         {list && list.sqlHits.length > 0 && <div className="dict-group">
@@ -285,7 +297,10 @@ function ObjectView(props: { detail: Detail; base: string; isOpen: (id: string) 
     <article className="dict-header">
       <div className="dict-header-top">
         <div><p className="dict-eyebrow">{detail.source.name}</p><h2 className="mono">{shortName(detail.name)}</h2></div>
-        <div className="dict-chips"><Badge tone={detail.custom ? 'warn' : 'primary'}>{detail.custom || ['dbt', 'tableau', 'excel'].includes(detail.source.type) ? KIND_LABEL[detail.kind] ?? detail.kind : `Standard ${(KIND_LABEL[detail.kind] ?? detail.kind).toLowerCase()}`}</Badge>
+        <div className="dict-chips"><Badge tone={detail.origin === 'custom' || detail.custom ? 'warn' : detail.origin === 'unclassified' ? 'muted' : 'primary'}>{detail.origin === 'standard' ? `Standard ${(KIND_LABEL[detail.kind] ?? detail.kind).toLowerCase()}` : KIND_LABEL[detail.kind] ?? detail.kind}</Badge>
+          {detail.origin === 'unclassified' && <Badge tone="muted">Not classified yet</Badge>}
+          {detail.origin === 'custom' && !detail.copyOf && detail.originReason && <Badge tone="warn">Custom · {REASON[detail.originReason] ?? detail.originReason}</Badge>}
+          {detail.copyOf && <Badge tone="warn">{copyLabel(detail.copyOf, detail.copySimilarity)}</Badge>}
           {detail.procedureKind && detail.custom && <Badge tone="muted">{PROCEDURE_KIND[detail.procedureKind]}</Badge>}
           {definition?.encrypted && <Badge tone="bad">Encrypted</Badge>}
           <Button size="small" aria-expanded={!hidden} onClick={() => setHidden(!hidden)}>{hidden ? 'Show details' : 'Hide details'}</Button></div>
