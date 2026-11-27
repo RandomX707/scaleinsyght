@@ -105,6 +105,16 @@ test('s9_dictionary_matches_testbed_truth_for_every_connector_type_and_exports_o
   await header.getByRole('button', { name: 'Show in ER diagram' }).click();
   await expect(page.getByText('Showing dbo.encounters and its direct neighbours')).toBeVisible();
   await expect(page.locator('.er-node h3')).toContainText(['dbo.encounters']);
+  // Grid layout with a profile panel below (prototype): the panel follows the selected table.
+  const profile = page.getByRole('region', { name: 'Profile of dbo.encounters' });
+  await expect(profile.getByRole('table', { name: 'Columns of dbo.encounters' })).toContainText('admitted_at');
+  await page.getByTitle('Show the profile of dbo.patients below').click();
+  const patients = page.getByRole('region', { name: 'Profile of dbo.patients' });
+  await expect(patients.getByRole('table', { name: 'Columns of dbo.patients' })).toContainText('Withheld'); // tagged fields keep their statistics withheld
+  for (const action of ['Ask about this table', 'Open in Dictionary']) await expect(patients.getByRole('button', { name: action })).toBeVisible();
+  const boxes = await page.locator('.er-node').evaluateAll((nodes) => nodes.map((node) => { const box = node.getBoundingClientRect(); return { x: Math.round(box.x), y: Math.round(box.y) }; }));
+  expect(new Set(boxes.map((box) => box.x)).size).toBeGreaterThan(1); // more than one column: a grid, not a single lane
+  await page.getByTitle('Show the profile of dbo.encounters below').click();
   await page.screenshot({ path: screen('er') });
   // A jump across pages offers a way back that names where it came from (CLAUDE.md 10.2).
   await page.getByRole('button', { name: 'Back to Dictionary · encounters' }).click();
