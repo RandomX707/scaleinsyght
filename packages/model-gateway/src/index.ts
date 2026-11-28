@@ -2,14 +2,18 @@ import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { prepareMetadataForModel, type ModelMetadataInput } from '@scaleinsyght/classification';
 import { withTenant } from '@scaleinsyght/db';
 import type { Pool } from 'pg';
+import { ModelReplayMissingError, REPLAY_HEADER, replayFetcher, replayModeFrom } from './replay.js';
+export * from './replay.js';
 
 export type ModelAlias='cheap'|'default'|'planning';
 export type ModelPrice={inputPerMillionUsd:number;outputPerMillionUsd:number};
 export type GatewayConfig={baseUrl:string;apiKey:string;cheapModel:string;defaultModel:string;planningModel:string;dailyCostCapUsd:number;dailyUserCostCapUsd:number;fingerprintKey:string;prices:Record<string,ModelPrice>};
-export type GatewayRequest={tenantId:string;/** The person the call is made for; their own daily USD cap applies. */principalId?:string;alias:ModelAlias;question:string;metadata:ModelMetadataInput;identifierValues?:string[];maxOutputTokens?:number;purpose?:'answer'|'plan'|'verify';responseSchema?:Record<string,unknown>};
+export type GatewayRequest={tenantId:string;/** The person the call is made for; their own daily USD cap applies. */principalId?:string;alias:ModelAlias;question:string;metadata:ModelMetadataInput;identifierValues?:string[];maxOutputTokens?:number;purpose?:'answer'|'plan'|'verify'|'describe';responseSchema?:Record<string,unknown>};
 const SYSTEM_INSTRUCTIONS={
   answer:'Answer only from the disclosed metadata. Do not infer hidden row values. If metadata is insufficient, say so.',
   verify:'You check whether a typed, read-only query plan answers a question exactly: the same subject, measure, grouping, conditions, ranking and sources. You never see row values. Respond with a single JSON object.',
+  // Decision 66: plain-language Dictionary descriptions from structural metadata and scrubbed SQL only.
+  describe:'You write short, plain descriptions of database objects for people who are not engineers, from disclosed metadata only: names, column names, keys and SQL with literal values hidden. You never see row values or statistics. Say what each object is or does in one or two sentences, in sentence case, without jargon or a list of tables. Respond with a single JSON object.',
   plan:'You write typed, read-only query plans from disclosed metadata. You never see row values, and you do not need to: a category, label or date named in the question is used as a filter value on the matching column, and is bound as a query parameter. Return an empty plan only when no table or column in the metadata can express the request. Never return SQL. Respond with a single JSON object.',
 } as const;
 export type GatewayResponse={text:string;requestId:string;model:string;inputTokens:number;outputTokens:number;costUsd:number};
@@ -78,7 +82,9 @@ function priceTokens(price:ModelPrice,input:number,output:number):number{return 
 
 export class OpenAIModelGateway{
   private readonly config:GatewayConfig;
-  constructor(private readonly pool:Pool,env:NodeJS.ProcessEnv=process.env,private readonly fetcher:FetchLike=fetch){this.config=readConfig(env);if(!Number.isFinite(this.config.dailyCostCapUsd)||this.config.dailyCostCapUsd<=0||!Number.isFinite(this.config.dailyUserCostCapUsd)||this.config.dailyUserCostCapUsd<=0)throw new ModelGatewayError('invalid_model_budget_config');}
+  // The default fetcher honours MODEL_REPLAY (decision 69): tests replay recordings and never reach the live model.
+  private readonly fetcher:FetchLike;
+  constructor(private readonly pool:Pool,env:NodeJS.ProcessEnv=process.env,fetcher?:FetchLike){this.fetcher=fetcher??replayFetcher(replayModeFrom(env),fetch,env);this.config=readConfig(env);if(!Number.isFinite(this.config.dailyCostCapUsd)||this.config.dailyCostCapUsd<=0||!Number.isFinite(this.config.dailyUserCostCapUsd)||this.config.dailyUserCostCapUsd<=0)throw new ModelGatewayError('invalid_model_budget_config');}
 
   async complete(input:GatewayRequest):Promise<GatewayResponse>{
     if(!input.tenantId||input.question.length>4000||!input.question.trim())throw new ModelGatewayError('invalid_model_request');
@@ -90,7 +96,7 @@ export class OpenAIModelGateway{
     const question=safeQuestion(input.question,rawIdentifiers);
     const fingerprints=[...rawIdentifiers].map(value=>fingerprint(this.config.fingerprintKey,input.tenantId,value));
     const maxOutputTokens=Math.min(2048,Math.max(64,input.maxOutputTokens??1000));
-    const payload={model,messages:[{role:'system',content:SYSTEM_INSTRUCTIONS[input.purpose??'answer']},{role:'user',content:JSON.stringify({question,metadata:safeMetadata,identifier_fingerprints:fingerprints})}],max_completion_tokens:maxOutputTokens,...(input.purpose==='plan'||input.purpose==='verify'?{response_format:input.responseSchema ? {type:'json_schema',json_schema:{name:input.purpose==='verify'?'plan_verification':'typed_analytic_plan',strict:true,schema:input.responseSchema}} : {type:'json_object'}}:{})};
+    const payload={model,messages:[{role:'system',content:SYSTEM_INSTRUCTIONS[input.purpose??'answer']},{role:'user',content:JSON.stringify({question,metadata:safeMetadata,identifier_fingerprints:fingerprints})}],max_completion_tokens:maxOutputTokens,...(input.purpose==='plan'||input.purpose==='verify'||input.purpose==='describe'?{response_format:input.responseSchema ? {type:'json_schema',json_schema:{name:input.purpose==='verify'?'plan_verification':input.purpose==='describe'?'dictionary_descriptions':'typed_analytic_plan',strict:true,schema:input.responseSchema}} : {type:'json_object'}}:{})};
     const body=JSON.stringify(payload);const estimatedInput=estimateTokens(body);const estimatedTokens=estimatedInput+maxOutputTokens;
     const reservedCost=priceTokens(price,estimatedInput,maxOutputTokens);const id=requestId();
     const reservation=await withTenant(this.pool,input.tenantId,async(client)=>{
@@ -116,14 +122,15 @@ export class OpenAIModelGateway{
       const text=typeof data.choices?.[0]?.message?.content==='string'?data.choices[0].message.content:null;
       const inputTokens=data.usage?.prompt_tokens,outputTokens=data.usage?.completion_tokens;
       if(text===null||typeof inputTokens!=='number'||typeof outputTokens!=='number'||!Number.isInteger(inputTokens)||!Number.isInteger(outputTokens)||inputTokens<0||outputTokens<0)throw new ModelGatewayError('model_provider_response_invalid');
-      const costUsd=priceTokens(price,inputTokens,outputTokens);
+      // A replayed response costs nothing; its recorded token counts are kept.
+      const costUsd=response.headers.get(REPLAY_HEADER)==='1'?0:priceTokens(price,inputTokens,outputTokens);
       await withTenant(this.pool,input.tenantId,async(client)=>{
         await client.query('INSERT INTO core.model_usage(tenant_id,request_id,model_alias,model_name,input_tokens,output_tokens,cost_usd,outcome,principal_id) VALUES($1,$2,$3,$4,$5,$6,$7,\'completed\',$8)',[input.tenantId,id,input.alias,model,inputTokens,outputTokens,costUsd,input.principalId??null]);
         await client.query('DELETE FROM core.model_budget_reservations WHERE tenant_id=$1 AND request_id=$2',[input.tenantId,id]);
       });
       return {text,requestId:id,model,inputTokens,outputTokens,costUsd};
     }catch(error){
-      const code=error instanceof ModelGatewayError?error.code:'model_provider_request_failed';
+      const code=error instanceof ModelGatewayError||error instanceof ModelReplayMissingError?error.code:'model_provider_request_failed';
       await withTenant(this.pool,input.tenantId,async(client)=>{
         await client.query('INSERT INTO core.model_usage(tenant_id,request_id,model_alias,model_name,input_tokens,output_tokens,cost_usd,outcome,safe_error_code,principal_id) VALUES($1,$2,$3,$4,0,0,0,\'failed\',$5,$6)',[input.tenantId,id,input.alias,model,code,input.principalId??null]);
         await client.query('DELETE FROM core.model_budget_reservations WHERE tenant_id=$1 AND request_id=$2',[input.tenantId,id]);

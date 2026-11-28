@@ -1,0 +1,69 @@
+{
+ "hash": "48e4f3c237e364e00de7f17d87909800",
+ "recordedAt": "2026-11-27T21:43:36.784Z",
+ "model": "gpt-6-luna",
+ "purpose": "describe",
+ "request": {
+  "max_completion_tokens": 1040,
+  "messages": [
+   {
+    "content": "You write short, plain descriptions of database objects for people who are not engineers, from disclosed metadata only: names, column names, keys and SQL with literal values hidden. You never see row values or statistics. Say what each object is or does in one or two sentences, in sentence case, without jargon or a list of tables. Respond with a single JSON object.",
+    "role": "system"
+   },
+   {
+    "content": "{\"question\":\"Describe each listed object in one or two plain sentences: what it holds or does and what it is for, as a business reader would understand it. Do not list its columns or tables. Use only the metadata given. Objects: dbo.departments, dbo.encounters, dbo.patients, dbo.X_CENSUS_SNAP, dbo.X_CENSUS_SNAP_ARCH, dbo.X_JOB_LOG, dbo.X_READMIT_FLAGS\",\"metadata\":{\"structural\":{\"objects\":[{\"name\":\"dbo.departments\",\"kind\":\"table\",\"columns\":[\"department_id\",\"department_name\"],\"keys\":[],\"parameters\":[],\"returns\":[],\"reads\":[],\"writes\":[],\"calls\":[]},{\"name\":\"dbo.encounters\",\"kind\":\"table\",\"columns\":[\"admitted_at\",\"department_id\",\"discharged_at\",\"encounter_id\",\"patient_id\"],\"keys\":[\"department_id references dbo.departments.department_id\",\"patient_id references dbo.patients.patient_id\"],\"parameters\":[],\"returns\":[],\"reads\":[],\"writes\":[],\"calls\":[]},{\"name\":\"dbo.patients\",\"kind\":\"table\",\"columns\":[\"full_name\",\"mrn\",\"patient_id\"],\"keys\":[],\"parameters\":[],\"returns\":[],\"reads\":[],\"writes\":[],\"calls\":[]},{\"name\":\"dbo.X_CENSUS_SNAP\",\"kind\":\"table\",\"columns\":[\"census_count\",\"department_id\",\"snap_date\"],\"keys\":[],\"parameters\":[],\"returns\":[],\"reads\":[],\"writes\":[],\"calls\":[]},{\"name\":\"dbo.X_CENSUS_SNAP_ARCH\",\"kind\":\"table\",\"columns\":[\"census_count\",\"department_id\",\"snap_date\"],\"keys\":[],\"parameters\":[],\"returns\":[],\"reads\":[],\"writes\":[],\"calls\":[]},{\"name\":\"dbo.X_JOB_LOG\",\"kind\":\"table\",\"columns\":[\"job_name\",\"ran_at\",\"row_count\"],\"keys\":[],\"parameters\":[],\"returns\":[],\"reads\":[],\"writes\":[],\"calls\":[]},{\"name\":\"dbo.X_READMIT_FLAGS\",\"kind\":\"table\",\"columns\":[\"encounter_id\",\"flagged_at\",\"readmitted\"],\"keys\":[],\"parameters\":[],\"returns\":[],\"reads\":[],\"writes\":[],\"calls\":[]}]},\"descriptive\":{}},\"identifier_fingerprints\":[]}",
+    "role": "user"
+   }
+  ],
+  "model": "gpt-6-luna",
+  "response_format": {
+   "json_schema": {
+    "name": "dictionary_descriptions",
+    "schema": {
+     "additionalProperties": false,
+     "properties": {
+      "descriptions": {
+       "items": {
+        "additionalProperties": false,
+        "properties": {
+         "name": {
+          "enum": [
+           "dbo.departments",
+           "dbo.encounters",
+           "dbo.patients",
+           "dbo.X_CENSUS_SNAP",
+           "dbo.X_CENSUS_SNAP_ARCH",
+           "dbo.X_JOB_LOG",
+           "dbo.X_READMIT_FLAGS"
+          ],
+          "type": "string"
+         },
+         "text": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "name",
+         "text"
+        ],
+        "type": "object"
+       },
+       "type": "array"
+      }
+     },
+     "required": [
+      "descriptions"
+     ],
+     "type": "object"
+    },
+    "strict": true
+   },
+   "type": "json_schema"
+  }
+ },
+ "response": {
+  "content": "{\"descriptions\":[{\"name\":\"dbo.departments\",\"text\":\"Holds department names and their identifiers, providing a reference for associating encounters and census counts with departments.\"},{\"name\":\"dbo.encounters\",\"text\":\"Holds patient encounter admission and discharge times and the associated patient and department. It provides a record of encounters over time.\"},{\"name\":\"dbo.patients\",\"text\":\"Holds patient names and identifiers, including a medical record number, to identify patients associated with encounters.\"},{\"name\":\"dbo.X_CENSUS_SNAP\",\"text\":\"Holds dated census counts by department, providing snapshots of department census over time.\"},{\"name\":\"dbo.X_CENSUS_SNAP_ARCH\",\"text\":\"Holds dated census counts by department in an archive, preserving census snapshots separately from the current snapshot records.\"},{\"name\":\"dbo.X_JOB_LOG\",\"text\":\"Records job names, run times, and row counts, providing a history of job runs and their recorded counts.\"},{\"name\":\"dbo.X_READMIT_FLAGS\",\"text\":\"Holds readmission indicators for encounters and when they were flagged, providing a record of readmission status.\"}]}",
+  "promptTokens": 610,
+  "completionTokens": 291
+ }
+}

@@ -32,7 +32,9 @@ export function formatPattern(values: string[]): string {
 export async function runIdAgent(pool: Pool, input: { tenantId: string; connectionId: string; connector: ReadOnlyConnector; masterKey?: Uint8Array; scope?:ConnectorScope;
   /** K13: called after each step (a field fingerprinted, then a field matched), so a long run shows progress. */
   onTimeout?: (field: string) => Promise<void>;
-  onProgress?: (done: number, planned: number) => Promise<void> }): Promise<{ fields: number; fingerprinted: number; skipped: number; matches: number } | undefined> {
+  onProgress?: (done: number, planned: number) => Promise<void>;
+  /** K11: tables the nightly run found unchanged; their identifier fields keep the fingerprints stored last time. */
+  unchangedTables?: ReadonlySet<string> }): Promise<{ fields: number; fingerprinted: number; reused: number; skipped: number; matches: number } | undefined> {
   if (!input.masterKey || input.masterKey.byteLength < 32 || !input.connector.distinctValues) return undefined;
   const candidates = await withTenant(pool, input.tenantId, async (client) => {
     const fields = await client.query<{ asset_id: string; qualified_name: string; table_name: string; tags: string[] | null; evidence: Array<{ tag: string; detection: string }> | null}>(
@@ -60,10 +62,22 @@ export async function runIdAgent(pool: Pool, input: { tenantId: string; connecti
   // set (replaced atomically, never mixed across runs); matching then runs field by field. Nothing waits for one long
   // transaction at the end, and progress is reported after every step.
   const fields = candidates.filter((candidate) => !columnScope(input.scope, candidate.table, candidate.column));
-  const planned = fields.length * 2; let done = 0; let fingerprinted = 0; let skipped = 0;
+  const planned = fields.length * 2; let done = 0; let fingerprinted = 0; let skipped = 0; let reused = 0;
+  // K11: a field of an unchanged table that already has its value set stored is not read again; its fingerprints are
+  // the same values' fingerprints (same tenant key), so reading them would only repeat the work.
+  const stored = input.unchangedTables?.size ? new Set(await withTenant(pool, input.tenantId, async (client) => (await client.query<{ key: string }>(
+    `SELECT i.asset_id||'|'||i.field_name AS key FROM graph.id_fields i WHERE i.tenant_id=$1 AND i.active AND i.asset_id=ANY($2::uuid[])`,
+    [input.tenantId, fields.filter((candidate) => input.unchangedTables!.has(candidate.table)).map((candidate) => candidate.assetId)])).rows.map((row) => row.key))) : new Set<string>();
   const step = async () => { done++; await input.onProgress?.(done, planned); };
   await input.onProgress?.(0, planned);
   for (const candidate of fields) {
+    if (input.unchangedTables?.has(candidate.table) && stored.has(`${candidate.assetId}|${candidate.name}`)) {
+      // What the field is (hint, detection, confidence) can change with a review even when its values did not.
+      await withTenant(pool, input.tenantId, (client) => client.query(
+        'UPDATE graph.id_fields SET entity_hint=$4,detection=$5,confidence=$6,active=true WHERE tenant_id=$1 AND asset_id=$2 AND field_name=$3',
+        [input.tenantId, candidate.assetId, candidate.name, candidate.home ?? candidate.table, candidate.declared ? 'declared' : 'inferred', candidate.tagged ? 1 : 0.9]));
+      reused++; await step(); continue;
+    }
     // A field whose values cannot be read in time (a very large table) is skipped and counted, never fatal (decision
     // 58): its earlier fingerprints stay as they were, because its current values are unknown. A connection-level
     // failure still stops the step.
@@ -177,7 +191,7 @@ export async function runIdAgent(pool: Pool, input: { tenantId: string; connecti
        WHERE a.tenant_id=$1 AND r.tenant_id=a.tenant_id AND r.relationship_id=a.relationship_id AND r.relationship_type='SAME_AS' AND a.collector_version=$3 AND a.valid_to IS NULL
          AND (f.source_id=$2 OR t.source_id=$2) AND NOT (r.relationship_id=ANY($4::uuid[]))`, [input.tenantId, input.connectionId, COLLECTOR, [...kept]]);
     // Logged against the tenant's ID agent (decision 52): counts only, never identifier values.
-    await recordAgentRun(client, { tenantId: input.tenantId, agentId: await tenantAgent(client, input.tenantId, 'id'), connectionId: input.connectionId, payload: { action: 'detect_and_match', fields: candidates.length, fingerprinted, skipped, matches: best.size } });
-    return { fields: candidates.length, fingerprinted, skipped, matches: best.size };
+    await recordAgentRun(client, { tenantId: input.tenantId, agentId: await tenantAgent(client, input.tenantId, 'id'), connectionId: input.connectionId, payload: { action: 'detect_and_match', fields: candidates.length, fingerprinted, reused, skipped, matches: best.size } });
+    return { fields: candidates.length, fingerprinted, reused, skipped, matches: best.size };
   });
 }

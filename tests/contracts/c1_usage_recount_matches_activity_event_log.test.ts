@@ -51,4 +51,15 @@ describe('contract 1 usage accounting', () => {
     expect(usage.computed_from_event_ids_range.first).toBeTruthy();
     expect(usage.computed_from_event_ids_range.last).toBeTruthy();
   });
+
+  it('c1_usage_reports_the_plan_allowances_and_no_user_allowance_unless_set', async () => {
+    // Decision 71: users against the plan's user allowance (null when none is set), connectors against the connector allowance.
+    const tenantId = `usage-allowance-${crypto.randomUUID()}`;
+    await withTenant(migrate, tenantId, (db) => db.query('INSERT INTO core.tenants(tenant_id,name) VALUES($1,$1)', [tenantId]));
+    const from = new Date(Date.UTC(2026, 0, 1)); const to = new Date(Date.UTC(2100, 0, 1));
+    expect((await getUsage(app, tenantId, from, to)).allowance).toEqual({ users: null, connectors: 10 });
+    await withTenant(migrate, tenantId, (db) => db.query('UPDATE core.tenants SET user_allowance=20, connector_allowance=12 WHERE tenant_id=$1', [tenantId]));
+    expect((await getUsage(app, tenantId, from, to)).allowance).toEqual({ users: 20, connectors: 12 });
+    await expect(withTenant(migrate, tenantId, (db) => db.query('UPDATE core.tenants SET user_allowance=-1 WHERE tenant_id=$1', [tenantId]))).rejects.toThrow();
+  });
 });

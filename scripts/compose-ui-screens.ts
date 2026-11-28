@@ -7,12 +7,19 @@ import { chromium } from '@playwright/test';
 // A prototype image wider than 1440 px (an existing pair) contributes its right half.
 type Pair = { out: string; app: string; prototype: string };
 const pairs: Pair[] = [
+  { out: 'my-agent', app: 'docs/acceptance/phase5/my-agent.png', prototype: 'docs/acceptance/phase5/prototype/my-agent.png' },
+
+  { out: 'usage', app: 'docs/acceptance/phase5/usage.png', prototype: 'docs/acceptance/phase5/prototype/usage.png' },
+  { out: 'bi-reports', app: 'docs/acceptance/s8/bi-reports.png', prototype: 'docs/acceptance/s8/prototype/bi-reports.png' },
+  { out: 'login', app: 'docs/acceptance/phase0/login.png', prototype: 'docs/acceptance/phase0/prototype/login.png' },
   { out: 'dictionary-landing', app: 'docs/acceptance/s9/landing.png', prototype: 'docs/acceptance/s9/prototype/landing.png' },
   { out: 'dictionary-table', app: 'docs/acceptance/s9/table.png', prototype: 'docs/acceptance/s9/prototype/table.png' },
   { out: 'dictionary-procedure', app: 'docs/acceptance/s9/procedure.png', prototype: 'docs/acceptance/s9/prototype/proc.png' },
   { out: 'dictionary-procedure-sql', app: 'docs/acceptance/s9/procedure-sql.png', prototype: 'docs/acceptance/s9/prototype/proc-sql.png' },
   { out: 'dictionary-encrypted', app: 'docs/acceptance/s9/encrypted.png', prototype: 'docs/acceptance/s9/prototype/encrypted.png' },
   { out: 'dictionary-search', app: 'docs/acceptance/s9/search.png', prototype: 'docs/acceptance/s9/prototype/search.png' },
+  // Item 5: the offline export (left) beside the app's Dictionary (right), not the prototype.
+  { out: 'dictionary-export-vs-app', app: 'docs/acceptance/s9/export-viewer.png', prototype: 'docs/acceptance/s9/procedure.png' },
   { out: 'dictionary-export-notice', app: 'docs/acceptance/s9/export-notice.png', prototype: 'docs/acceptance/s9/prototype/landing.png' },
   { out: 'agents', app: 'docs/acceptance/s13/agents.png', prototype: 'docs/acceptance/s13/prototype/agents.png' },
   { out: 'dictionary-function-returns', app: 'docs/acceptance/s9/function-returns.png', prototype: 'docs/acceptance/s9/prototype/proc.png' },

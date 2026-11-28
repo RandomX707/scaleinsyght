@@ -1,12 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import { EncryptedArtifactStore, type StoredArtifact } from '@scaleinsyght/artifacts';
-import { objectScope, type ControlsPolicy, type ConnectorScope, type DiscoveryResult, type ObjectProfile, type ReadOnlyConnector, type ScopeMode, type SkippedReference } from '@scaleinsyght/connectors';
+import { objectScope, type ControlsPolicy, type ConnectorScope, type DiscoveryResult, type ObjectProfile, type ReadOnlyConnector, type ScopeMode, type SkippedReference, type TableKeys } from '@scaleinsyght/connectors';
 import { withTenant } from '@scaleinsyght/db';
 import { queueNewObjectReview } from './controls.js';
 import { runIdAgent } from './id-agent.js';
 import { captureDefinitions } from './definitions.js';
-export { analyseDefinition, captureDefinitions } from './definitions.js';
+export { analyseDefinition, captureDefinitions, classifyCatalogReferences, type DefinitionCatalog } from './definitions.js';
 import { readProfileState, recordFindings } from './findings.js';
 import { isObjectError, sourceErrorCode } from './source-errors.js';
 import { detectCopies } from './copies.js';
@@ -34,7 +34,7 @@ export interface ProfileSummary {
   /** Scrubbed definitions stored for this connection (decision 53). */
   definitions?: { captured: number; changed: number; encrypted: number };
   /** ID agent: identifier fields found, fields fingerprinted and probable cross-source matches. */
-  ids?: { fields: number; fingerprinted: number; matches: number };
+  ids?: { fields: number; fingerprinted: number; reused?: number; matches: number };
   /** Findings recorded by comparing this run with the previous state (decision 48). */
   findings?: number;
   /** Objects whose owner was recorded, and procedures or functions found to be copies (decision 62). */
@@ -168,7 +168,14 @@ export async function runProfile(
       );
     });
   };
-  const discovery: DiscoveryResult = await (async () => { try { return await input.connector.discover(scope ? { mode, scope } : { mode }); } catch (error) { beat?.stop(); throw error; } })();
+  // K11: a nightly run compares each table with the change signature stored by the last run, so whichever worker runs
+  // it (a fresh connector remembers nothing) skips tables that did not change.
+  const known = mode === 'nightly' ? await withTenant(pool, input.tenantId, async (client) => new Map((await client.query<{ qualified_name: string; signature: string }>(
+    `SELECT a.qualified_name, v.structural_attributes->>'change_signature' AS signature FROM graph.assets a
+       JOIN LATERAL (SELECT structural_attributes FROM graph.asset_versions WHERE tenant_id=a.tenant_id AND asset_id=a.asset_id ORDER BY version DESC LIMIT 1) v ON true
+      WHERE a.tenant_id=$1 AND a.source_id=$2 AND a.asset_type='dataset' AND v.structural_attributes ? 'change_signature'`,
+    [input.tenantId, input.connectionId])).rows.map((row) => [row.qualified_name, row.signature] as const))) : undefined;
+  const discovery: DiscoveryResult = await (async () => { try { return await input.connector.discover({ mode, ...(scope ? { scope } : {}), ...(known ? { known } : {}) }); } catch (error) { beat?.stop(); throw error; } })();
   const retry = new Set(prior.flatMap(item => item.kind === 'table' || item.kind === 'statistics' ? [item.object] : []));
   const retried = discovery.unchangedObjects.filter(object => retry.has(object.qualifiedName));
   discovery.objects.push(...retried);
@@ -200,6 +207,13 @@ export async function runProfile(
     if (discovery.objects.length && !profiles.length && !timeSkips.length) throw new Error([...failed.values()][0] ?? 'discovery_failed');
   } finally { ownBeat?.stop(); }
   const jobId = job?.jobId ?? randomUUID();
+  // Primary keys and indexes, from the catalog (Dictionary "Keys and indexes"). Auxiliary: if they cannot be read the
+  // profile carries on and the Dictionary says they were not read.
+  let tableKeys: Map<string, TableKeys> | null = null;
+  if (input.connector.keysAndIndexes) {
+    try { tableKeys = new Map((await input.connector.keysAndIndexes()).map((entry) => [entry.table, entry])); }
+    catch (error) { console.error(`Keys and indexes not read for connection ${input.connectionId}: ${sourceErrorCode(error)}`); }
+  }
   let createdVersions = 0;
   const structuralReferences = await input.connector.structuralReferences?.(scope) ?? [];
   const referenceChecksSkipped = ('skippedChecks' in structuralReferences ? structuralReferences.skippedChecks : 0) ?? 0;
@@ -244,7 +258,10 @@ export async function runProfile(
     for (const { object, profile } of profiles) {
       const datasetId = await ensureAsset(client, input.tenantId, input.connectionId, object.assetKey, 'dataset', object.qualifiedName);
       tableAssets.set(object.qualifiedName, datasetId);
-      const structural = { object_type: object.type, columns: profile.columns.map(({ name, dataType, isNullable }) => ({ name, data_type: dataType, nullable: isNullable })) };
+      const keys = tableKeys?.get(object.qualifiedName);
+      const structural = { object_type: object.type, columns: profile.columns.map(({ name, dataType, isNullable }) => ({ name, data_type: dataType, nullable: isNullable })),
+        ...(tableKeys ? { primary_key: keys?.primaryKey ?? [], indexes: keys?.indexes ?? [] } : {}),
+        ...(discovery.signatures?.[object.qualifiedName] ? { change_signature: discovery.signatures[object.qualifiedName] } : {}) };
       const statistics = { row_count: profile.rowCount, ...(profile.rowCountEstimated ? { row_count_estimated: true } : {}) };
       const version = await ensureAssetVersion(client, input.tenantId, datasetId, structural, statistics);
       if (version.created) createdVersions += 1;
@@ -390,7 +407,7 @@ export async function runProfile(
   if(input.jobType==='nightly'&&scope?.policy?.newObjects==='approve'){
     await queueNewObjectReview(pool,input.tenantId,input.connectionId,discovery.listOnlyObjects.map(object=>object.qualifiedName));
   }
-  const ids = await runIdAgent(pool, { ...input,
+  const ids = await runIdAgent(pool, { ...input, unchangedTables: new Set(discovery.unchangedObjects.map((object) => object.qualifiedName)),
     onTimeout: object => recordSkips([{ kind: 'identifier', object, reason: 'source_query_timeout' }]), ...(scope?{scope}:{}), ...(masterKey ? { masterKey } : {}),
     ...(job ? { onProgress: (done: number, planned: number) => reportDiscovery(pool, job, { idDone: done, idPlanned: planned }) } : {}) });
   const findings: number = await recordFindings(pool, { tenantId: input.tenantId, connectionId: input.connectionId, jobId, before, inventory:new Set([...discovery.objects,...discovery.unchangedObjects,...discovery.excludedObjects,...discovery.listOnlyObjects,...discovery.inaccessibleObjects].map(object=>object.qualifiedName)), checked: discovery.objects.length + discovery.unchangedObjects.length, scannedObjects: new Set(profiles.map(({ object }) => object.qualifiedName)) });
@@ -667,6 +684,7 @@ export async function retireConnection(
 }
 
 export { runIdAgent, formatPattern, ID_FINGERPRINT_LIMIT } from './id-agent.js';
+export { DESCRIPTION_LIMITS, descriptionBatches, descriptionSubjects, describeInput, describeRequest, draftModelDescriptions, inputHash, validDraft, type DescribeCall, type DescribeRequest, type DescriptionSubject } from './descriptions.js';
 export { isObjectError, sourceErrorCode } from './source-errors.js';
 export { COPY_SIMILARITY, detectCopies, normaliseRoutine, routineSimilarity } from './copies.js';
 export { queueProfileJob, type ProfileJobType } from './discovery-jobs.js';
@@ -682,7 +700,9 @@ export { getControls, saveControls, listControlChanges, decideControlChange } fr
  * the job by code: FAILED before anything was written, PARTIAL when the profile was stored but relationships, lineage
  * or findings could not be mapped. A job this worker no longer holds is left to its new owner.
  */
-export async function runNextDiscovery(pool: Pool, connectorFor: (tenantId: string, connectionId: string) => Promise<ReadOnlyConnector>, onlyTenant?: string, leaseMs?: number): Promise<boolean> {
+export async function runNextDiscovery(pool: Pool, connectorFor: (tenantId: string, connectionId: string) => Promise<ReadOnlyConnector>, onlyTenant?: string, leaseMs?: number,
+  /** Runs after a profile has been stored (decision 67: description drafting). It can never fail the profile. */
+  afterProfile?: (tenantId: string, connectionId: string) => Promise<void>): Promise<boolean> {
   const job = await claimDiscovery(pool, leaseMs, onlyTenant);
   if (!job) return false;
   let connector: ReadOnlyConnector | undefined;
@@ -692,6 +712,10 @@ export async function runNextDiscovery(pool: Pool, connectorFor: (tenantId: stri
   try {
     connector = await connectorFor(job.tenantId, job.connectionId);
     await runProfile(pool, { tenantId: job.tenantId, connectionId: job.connectionId, connector, jobType: job.jobType ?? 'discovery', job, beat });
+    if (afterProfile) {
+      try { await afterProfile(job.tenantId, job.connectionId); }
+      catch (error) { console.error(`After-profile step failed for connection ${job.connectionId}: ${error instanceof Error && /^[\w:-]{1,80}$/.test(error.message) ? error.message : 'after_profile_failed'}`); }
+    }
   } catch (error) {
     if (error instanceof StaleDiscoveryJobError) return true;
     const code = sourceErrorCode(error);

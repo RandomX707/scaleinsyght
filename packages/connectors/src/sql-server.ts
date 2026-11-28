@@ -1,3 +1,4 @@
+import { groupTableKeys } from './postgres.js';
 import { columnScope, objectScope } from './scope.js';
 import { CATALOG_ROW_LIMIT, sourceTimeouts, withSourceDeadline, type SourceTimeoutOptions } from './limits.js';
 import { inIdSample, sqlServerIdSampleCondition } from './id-sample.js';
@@ -5,12 +6,12 @@ import { DEFAULT_SAMPLING, SENSITIVITY_MIN_VALUES, SENSITIVITY_VALUES, type Samp
 import { createHash } from 'node:crypto';
 import sql from 'mssql';
 import { classifyColumn } from '@scaleinsyght/classification';
-import { POSSIBLE_REFERENCE_COVERAGE, REFERENCE_CHECK_SAMPLE, isSkippableCheckError, isSourceQueryTimeout, withSkippedChecks, type SkippedReference, UNMEASURED, type ColumnStatistics, type ConnectorScope, type DiscoveryResult, type ObjectProfile, type ReadOnlyConnector , type ObjectOrigin } from './index.js';
+import { POSSIBLE_REFERENCE_COVERAGE, REFERENCE_CHECK_SAMPLE, isSkippableCheckError, isSourceQueryTimeout, withSkippedChecks, type SkippedReference, type DiscoveredObject, UNMEASURED, type ColumnStatistics, type ConnectorScope, type DiscoveryResult, type ObjectProfile, type ReadOnlyConnector , type ObjectOrigin } from './index.js';
 
 const SQL_SERVER_TEXT = new Set(['nvarchar', 'varchar', 'nchar', 'char']);
 const SQL_SERVER_MEASURABLE = new Set([...SQL_SERVER_TEXT, 'tinyint', 'smallint', 'int', 'bigint', 'decimal', 'numeric', 'float', 'real', 'bit', 'date', 'datetime', 'datetime2', 'uniqueidentifier']);
 
-type CatalogObject = { schema_name: string; object_name: string; object_type: 'U' | 'V' };
+type CatalogObject = { schema_name: string; object_name: string; object_type: 'U' | 'V'; modify_date?: Date | string | null; partition_rows?: number | string | null; properties_checksum?: number | null };
 type CatalogColumn = { column_name: string; data_type: string; is_nullable: boolean; sensitivity: string | null };
 const quote = (value: string) => `[${value.replaceAll(']', ']]')}]`;
 const keyFor = (name: string) => createHash('sha256').update(`sql_server\0${name}`).digest('hex');
@@ -107,7 +108,9 @@ export class SqlServerConnector implements ReadOnlyConnector {
   }
 
   private async catalog(): Promise<CatalogObject[]> {
-    const result = await (await this.request()).query<CatalogObject>(`SELECT TOP (${this.maxCatalogRows + 1}) s.name AS schema_name,o.name AS object_name,RTRIM(o.type) AS object_type
+    const result = await (await this.request()).query<CatalogObject>(`SELECT TOP (${this.maxCatalogRows + 1}) s.name AS schema_name,o.name AS object_name,RTRIM(o.type) AS object_type,o.modify_date,
+        (SELECT SUM(p.rows) FROM sys.partitions p WHERE p.object_id=o.object_id AND p.index_id IN (0,1)) AS partition_rows,
+        (SELECT CHECKSUM_AGG(CHECKSUM(ep.minor_id,ep.name,CONVERT(nvarchar(4000),ep.value))) FROM sys.extended_properties ep WHERE ep.major_id=o.object_id) AS properties_checksum
       FROM sys.objects o JOIN sys.schemas s ON s.schema_id=o.schema_id WHERE o.type IN ('U','V') AND s.name NOT IN ('sys','INFORMATION_SCHEMA') ORDER BY s.name,o.name`);
     if (result.recordset.length > this.maxCatalogRows) throw new Error('sqlserver_connector_result_limit_exceeded');
     return result.recordset;
@@ -123,8 +126,8 @@ export class SqlServerConnector implements ReadOnlyConnector {
     return result.recordset;
   }
 
-  async discover(input: { mode: 'profile'|'nightly'; scope?: ConnectorScope }): Promise<DiscoveryResult> {
-    const result: DiscoveryResult = { objects: [], listOnlyObjects: [], excludedObjects: [], inaccessibleObjects: [], coverage: { listed: 0, accessible: 0, inaccessible: 0 }, unchanged: 0, unchangedObjects: [] };
+  async discover(input: { mode: 'profile'|'nightly'; scope?: ConnectorScope; known?: ReadonlyMap<string, string> }): Promise<DiscoveryResult> {
+    const result: DiscoveryResult = { objects: [], listOnlyObjects: [], excludedObjects: [], inaccessibleObjects: [], coverage: { listed: 0, accessible: 0, inaccessible: 0 }, unchanged: 0, unchangedObjects: [], signatures: {} };
     this.objects.clear();
     for (const object of await this.catalog()) {
       const qualifiedName = `${object.schema_name}.${object.object_name}`;
@@ -135,7 +138,15 @@ export class SqlServerConnector implements ReadOnlyConnector {
       const mode=objectScope(input.scope,qualifiedName,objectType);
       if(mode==='exclude'){result.excludedObjects.push({qualifiedName,type:objectType});continue;}
       if(mode==='list_only'){result.listOnlyObjects.push({qualifiedName,type:objectType});continue;}
-      result.objects.push({ assetKey: key, qualifiedName, type, scopeMode: 'profile' }); result.coverage.accessible++;
+      // K11: a table's change signature comes from the catalog alone (schema change date, partition row count and its
+      // extended properties, where sensitivity labels live), so an unchanged table is skipped without reading it.
+      // Views are always profiled: their rows can change while their definition does not.
+      const signature = createHash('sha256').update(JSON.stringify({ modified: object.modify_date ? new Date(object.modify_date).toISOString() : null,
+        rows: object.partition_rows == null ? null : String(object.partition_rows), properties: object.properties_checksum ?? null })).digest('hex');
+      result.signatures![qualifiedName] = signature; result.coverage.accessible++;
+      const discovered: DiscoveredObject = { assetKey: key, qualifiedName, type, scopeMode: 'profile' };
+      if (input.mode === 'nightly' && type === 'table' && object.partition_rows != null && input.known?.get(qualifiedName) === signature) { result.unchanged++; result.unchangedObjects.push(discovered); continue; }
+      result.objects.push(discovered);
     }
     return result;
   }
@@ -261,6 +272,30 @@ export class SqlServerConnector implements ReadOnlyConnector {
       FROM sys.objects o JOIN sys.schemas s ON s.schema_id=o.schema_id WHERE o.type IN ('U','V','P','FN','IF','TF') AND o.is_ms_shipped=0`);
     if (rows.recordset.length > this.maxCatalogRows) throw new Error('sqlserver_connector_result_limit_exceeded');
     return rows.recordset.map((row) => ({ qualifiedName: row.qualified_name, owner: row.owner, createdOrder: row.created_order === null ? null : Number(row.created_order) }));
+  }
+
+  async keysAndIndexes() {
+    // Catalog only (sys.indexes): key columns in key order; included columns are not part of a key.
+    const rows = await (await this.request()).query<{ table_name: string; index_name: string; is_primary_key: boolean; is_unique: boolean; columns: string }>(`SELECT TOP (${this.maxCatalogRows + 1}) s.name+'.'+t.name AS table_name,i.name AS index_name,i.is_primary_key,i.is_unique,
+        STRING_AGG(c.name, NCHAR(31)) WITHIN GROUP (ORDER BY ic.key_ordinal) AS columns
+      FROM sys.indexes i JOIN sys.tables t ON t.object_id=i.object_id JOIN sys.schemas s ON s.schema_id=t.schema_id
+      JOIN sys.index_columns ic ON ic.object_id=i.object_id AND ic.index_id=i.index_id AND ic.is_included_column=0
+      JOIN sys.columns c ON c.object_id=ic.object_id AND c.column_id=ic.column_id
+      WHERE i.type>0 AND i.is_hypothetical=0 AND t.is_ms_shipped=0 GROUP BY s.name,t.name,i.name,i.is_primary_key,i.is_unique ORDER BY 1,2`);
+    if (rows.recordset.length > this.maxCatalogRows) throw new Error('sqlserver_connector_result_limit_exceeded');
+    return groupTableKeys(rows.recordset.map((row) => ({ table: row.table_name, name: row.index_name, columns: row.columns.split(String.fromCharCode(31)), unique: Boolean(row.is_unique), primary: Boolean(row.is_primary_key) })));
+  }
+
+  async routineDependencies() {
+    // sys.sql_expression_dependencies is recorded at create time, so it is there for encrypted modules too.
+    const rows = await (await this.request()).query<{ routine: string; referenced: string }>(`SELECT TOP (${this.maxCatalogRows + 1}) s.name+'.'+o.name AS routine,
+        COALESCE(d.referenced_schema_name, SCHEMA_NAME(ro.schema_id), s.name)+'.'+d.referenced_entity_name AS referenced
+      FROM sys.sql_expression_dependencies d JOIN sys.objects o ON o.object_id=d.referencing_id JOIN sys.schemas s ON s.schema_id=o.schema_id LEFT JOIN sys.objects ro ON ro.object_id=d.referenced_id
+      WHERE o.type IN ('P','FN','IF','TF') AND d.referenced_database_name IS NULL AND d.referenced_server_name IS NULL ORDER BY 1,2`);
+    if (rows.recordset.length > this.maxCatalogRows) throw new Error('sqlserver_connector_result_limit_exceeded');
+    const byRoutine = new Map<string, string[]>();
+    for (const row of rows.recordset) byRoutine.set(row.routine, [...new Set([...(byRoutine.get(row.routine) ?? []), row.referenced])]);
+    return [...byRoutine].map(([routine, references]) => ({ routine, references }));
   }
 
   async routines() {
