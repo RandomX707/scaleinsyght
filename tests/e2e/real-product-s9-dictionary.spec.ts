@@ -299,6 +299,20 @@ test('s9_dictionary_matches_testbed_truth_for_every_connector_type_and_exports_o
   await expect(viewer.locator('.dict-card', { hasText: 'What it does' })).toContainText(`Reads${exportLoaderTruth.reads.map(short).join('')}`);
   await viewer.getByRole('tab', { name: 'Calls' }).click();
   for (const call of exportLoaderTruth.calls) await expect(viewer.locator('.dict-card', { hasText: 'Called by' })).toContainText(short(call));
+  // The encrypted procedure: what the database catalog records it refers to (#83), as on the page.
+  const exportSecret = Object.entries(truth.sqlserver.procedures).find(([, procedure]) => procedure.encrypted)![0];
+  await exportSide.getByRole('button', { name: new RegExp(`^${title(exportSecret)}`) }).click();
+  const exportEncrypted = viewer.locator('.dict-card', { hasText: 'What it does' });
+  await expect(exportEncrypted).toContainText('Usesencounters');
+  await expect(exportEncrypted).toContainText('From the database catalog');
+  // A table: its primary key and indexes (#76), as on the page.
+  await exportSide.getByRole('tab', { name: /^Standard/ }).click();
+  await exportSide.getByRole('button', { name: /^encounters/ }).click();
+  const exportKeys = viewer.locator('.dict-card', { hasText: 'Keys and indexes' });
+  await expect(exportKeys).toContainText('Primary key');
+  await expect(exportKeys).toContainText('encounter_id');
+  await exportSide.getByRole('tab', { name: /^Custom/ }).click();
+  await exportSide.getByRole('button', { name: new RegExp(`^${title(exportLoader)}`) }).click();
   await viewer.getByRole('tab', { name: 'Overview' }).last().click();
   await viewer.screenshot({ path: screen('export-viewer') });
   await viewer.getByRole('button', { name: 'Collapse all' }).click();
